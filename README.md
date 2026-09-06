@@ -4,6 +4,8 @@
 
 直接读取 `/proc`，零外部命令，14档滞后差分偏离度。
 
+---
+
 ## 快速部署
 
 ### 0. 解压
@@ -17,49 +19,77 @@ cd nodedata-v0.1.0-linux-amd64
 
 ```
 nodedata          # 采集器二进制（静态，无依赖）
-index.html        # 前端单页面
+index.html        # 前端热力图页面
 schema.sql        # ClickHouse 建表 SQL
-Caddyfile         # Caddy 配置（监听 :8888，反代内置 HTTP）
+Caddyfile         # Caddy 配置（监听 :8888）
 README.md         # 本文件
 ```
 
-> **caddy / clickhouse 不包含在压缩包内。** 需要自行下载并放到 PATH 或当前目录。
-> - Caddy：https://caddyserver.com/docs/install
-> - ClickHouse：https://clickhouse.com/docs/en/install
+---
+
+### 1. 安装并启动 ClickHouse
+
+**方式 A：官方一键安装（推荐）**
+
+```bash
+curl https://clickhouse.com/ | sh
+./clickhouse server &          # 前台启动，默认 TCP 9000，HTTP 8123
+```
+
+**方式 B：已有 ClickHouse 服务**
+
+直接跳到下一步，通过 `--dsn` 指向你的实例即可。
+
+**自定义端口启动示例（TCP 改为 19000）：**
+
+```bash
+./clickhouse server -- --tcp_port=19000 &
+```
+
+此时 `--dsn` 对应改为：
+
+```bash
+./nodedata --dsn="clickhouse://localhost:19000/nodedata" ...
+```
 
 ---
 
-### 1. ClickHouse 建库
+### 2. 建库建表
 
 ```bash
-clickhouse-client --query "CREATE DATABASE IF NOT EXISTS nodedata"
-clickhouse-client --database nodedata < schema.sql
+./clickhouse client --query "CREATE DATABASE IF NOT EXISTS nodedata"
+./clickhouse client --database nodedata < schema.sql
 ```
 
-### 2. 启动采集器
+> 如果用系统安装的 ClickHouse，把 `./clickhouse client` 换成 `clickhouse-client`。
+
+---
+
+### 3. 启动 nodedata
 
 ```bash
 ./nodedata \
-  --web=.          \
+  --web=.                                      \
   --dsn="clickhouse://localhost:9000/nodedata" \
-  --interval=30s   \
-  --addr=127.0.0.1:9701 \
+  --interval=30s                               \
+  --addr=127.0.0.1:9701                        \
   --wal-dir=/var/lib/nodedata
 ```
 
 启动后会：
 - 每 30 秒采集一次 `/proc`，写入 ClickHouse
-- 同时将最近 1h/6h/24h/7d/30d 数据序列化为 `data/*.json`
-- 在 `127.0.0.1:9701` 提供 HTTP API
+- 将最近 1h/6h/24h/7d/30d 序列化为 `data/*.json`（供前端静态读取）
+- 在 `127.0.0.1:9701` 提供 HTTP API 和静态文件服务
 
-### 3. 用 Caddy 对外暴露（可选）
+---
+
+### 4. 用 Caddy 对外暴露（可选）
 
 ```bash
-# 让 Caddy 在 :8888 同时伺服 index.html 和 /api/*
 NODEDATA_WEB=$(pwd) caddy run --config Caddyfile
 ```
 
-浏览器访问 `http://<host>:8888` 即可看到热力图。
+浏览器访问 `http://<host>:8888`。
 
 **不想装 Caddy？** 直接访问 `http://127.0.0.1:9701` 也可以（内置静态服务）。
 
@@ -69,11 +99,11 @@ NODEDATA_WEB=$(pwd) caddy run --config Caddyfile
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
+| `--dsn` | `clickhouse://localhost:9000/nodedata` | ClickHouse 连接串，端口在这里改 |
 | `--interval` | `30s` | 采样周期，范围 [10s, 300s] |
 | `--web` | `.` | 前端文件根目录（含 index.html） |
-| `--dsn` | `clickhouse://localhost:9000/nodedata` | ClickHouse 连接串 |
 | `--addr` | `127.0.0.1:9701` | 内置 HTTP 监听地址 |
-| `--wal-dir` | `.` | WAL 目录（断网时缓冲写入） |
+| `--wal-dir` | `.` | WAL 目录（ClickHouse 断连时本地缓冲） |
 | `--host` | `os.Hostname()` | 上报主机名 |
 | `--no-serve` | `false` | 只写文件，不启 HTTP 服务 |
 
