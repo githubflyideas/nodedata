@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>整机偏离度快照</title>
+<style>
+  :root {
+    --bg: #0f1620;
+    --panel: #151d29;
+    --line: #22303f;
+    --line-soft: #1a2431;
+    --ink: #c6d2de;
+    --ink-dim: #7b8b9c;
+    --ink-faint: #4e5d6d;
+    --cpu: #6ba3d6;
+    --mem: #9b8ad4;
+    --io: #d98a4a;
+    --net: #5fb89a;
+    --self: #a8c5a0;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 13px; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 28px 24px 60px; }
+
+  /* header */
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; margin: 0; color: #e4ecf4; }
+  .meta { display: flex; flex-wrap: wrap; gap: 14px 22px; font-size: 11.5px; color: var(--ink-dim); }
+  .meta b { color: var(--ink); font-weight: 500; }
+
+  /* status / degraded */
+  .statusbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; font-size: 11px; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 2px; border: 1px solid; }
+  .badge.ok   { color: #5fa870; border-color: #1e3a26; background: #101e16; }
+  .badge.warn { color: #d4a24a; border-color: #3a2e14; background: #1e1a0d; }
+  .badge.err  { color: #e06060; border-color: #3a1e1e; background: #1e1010; }
+  .badge.info { color: var(--ink-dim); border-color: var(--line); background: var(--panel); }
+  .stale-warn { color: #e06060; font-size: 12px; margin: 8px 0 0; }
+
+  /* controls */
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; margin: 16px 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+  .seg button { background: transparent; border: 0; border-right: 1px solid var(--line); color: var(--ink-dim); font: inherit; font-size: 12px; padding: 6px 13px; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: #1e2a38; color: #e4ecf4; }
+  .thresh { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--ink-dim); }
+  .thresh input { width: 130px; accent-color: var(--io); }
+  .thresh output { color: var(--ink); min-width: 2.4em; }
+  .scale { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+  .ramp { display: flex; }
+  .ramp i { width: 13px; height: 11px; display: block; }
+
+  /* PSI alert row */
+  .psi-row { display: grid; grid-template-columns: 168px 1fr; align-items: center; margin-bottom: 10px; }
+  .psi-cells { display: flex; gap: 6px; flex-wrap: wrap; }
+  .psi-cell { font-size: 11px; padding: 2px 7px; border-radius: 2px; border: 1px solid; }
+  .psi-cell.ok  { color: var(--ink-dim); border-color: var(--line); }
+  .psi-cell.hot { color: #f2603c; border-color: #5c2b1e; background: #1e1210; }
+
+  /* heatmap */
+  .grid-shell { position: relative; }
+  .rulebar { display: grid; margin-left: 168px; height: 20px; gap: 0; margin-bottom: 3px; }
+  .rulebar span { align-self: end; height: 0; border-top: 3px solid transparent; }
+  .rowline { display: grid; grid-template-columns: 168px 1fr; align-items: center; }
+  .rowlabel { font-size: 11px; color: var(--ink-dim); padding-right: 12px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
+  .rowlabel .unit { color: var(--ink-faint); }
+  .cells { display: grid; gap: 0; }
+  .cells i { display: block; height: 11px; cursor: crosshair; }
+  .domhead { display: grid; grid-template-columns: 168px 1fr; margin: 14px 0 4px; }
+  .domhead:first-of-type { margin-top: 0; }
+  .domhead .name { text-align: right; padding-right: 12px; font-size: 11px; letter-spacing: .06em; color: var(--ink); }
+  .domhead .rule { border-bottom: 1px solid var(--line-soft); align-self: end; }
+  .axis { display: grid; grid-template-columns: 168px 1fr; margin-top: 8px; }
+  .ticks { position: relative; height: 16px; border-top: 1px solid var(--line); }
+  .ticks span { position: absolute; top: 4px; font-size: 10.5px; color: var(--ink-faint); transform: translateX(-50%); }
+  .cursor { position: absolute; top: 0; bottom: 0; width: 1px; background: #fff; opacity: .5; pointer-events: none; }
+
+  /* absolute wall */
+  .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); }
+  .spark { background: var(--bg); padding: 7px 8px 4px; }
+  .spark .n { font-size: 10px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+  .spark svg { display: block; width: 100%; height: 30px; }
+
+  /* readout */
+  .readout { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 16px; min-height: 190px; }
+  .readout h2 { font-size: 12px; font-weight: 500; color: var(--ink); margin: 0 0 4px; }
+  .readout .sub { font-size: 11.5px; color: var(--ink-dim); margin: 0 0 14px; }
+  .verdict { display: inline-block; font-size: 12px; padding: 5px 11px; border-radius: 2px; margin-bottom: 14px; border: 1px solid; }
+
+  /* lag bar */
+  .lagbar { display: inline-flex; gap: 1px; margin: 4px 0 2px; }
+  .lagbar i { display: inline-block; width: 11px; height: 11px; border-radius: 1px; vertical-align: middle; }
+  .lagbar .gap { display: inline-block; width: 5px; }
+  .lagbar .hollow { box-sizing: border-box; border: 1px solid; }
+
+  table { border-collapse: collapse; font-size: 11.5px; width: 100%; max-width: 780px; }
+  th { text-align: left; font-weight: 500; color: var(--ink-faint); border-bottom: 1px solid var(--line); padding: 0 14px 5px 0; font-size: 10.5px; }
+  td { padding: 4px 14px 4px 0; color: var(--ink-dim); border-bottom: 1px solid var(--line-soft); }
+  td.m { color: var(--ink); }
+  td.z { text-align: right; font-variant-numeric: tabular-nums; }
+  td.v { text-align: right; font-variant-numeric: tabular-nums; }
+  td.lagcol { padding: 4px 0; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+
+  /* lag help */
+  .help-tip { font-size: 11px; color: var(--ink-dim); margin: 14px 0 0; }
+  .help-tip table { max-width: 600px; }
+  .help-tip td, .help-tip th { font-size: 11px; }
+
+  /* tooltip */
+  .tip { position: fixed; pointer-events: none; background: #050a11; border: 1px solid var(--line); padding: 7px 10px; font-size: 11px; line-height: 1.55; color: var(--ink); white-space: nowrap; z-index: 20; opacity: 0; transition: opacity .08s; }
+  .tip b { font-weight: 500; color: #fff; }
+  .tip s { display: block; text-decoration: none; color: var(--ink-faint); }
+
+  /* loading / error */
+  .loading { text-align: center; padding: 60px 0; color: var(--ink-dim); }
+  .errmsg { color: #e06060; padding: 20px 0; }
+
+  @media (max-width: 700px) {
+    .rowline, .domhead, .axis { grid-template-columns: 104px 1fr; }
+    .rulebar { margin-left: 104px; }
+    .rowlabel { font-size: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>整机偏离度快照</h1>
+    <div class="meta" id="meta">
+      <span>加载中…</span>
+    </div>
+    <div id="statusbar" class="statusbar"></div>
+  </header>
+  <div id="stale" style="display:none" class="stale-warn">⚠ 数据已超过 90 秒未更新</div>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="视图选择">
+      <button id="btnAcute" aria-pressed="true" title="急性视图：这台机器现在怎么了（L1–L8）">急性</button>
+      <button id="btnChron" aria-pressed="false" title="劣化视图：这台机器最近是不是在变差（L9–L14）">劣化</button>
+      <button id="btnAbs"   aria-pressed="false" title="绝对值折线">绝对值</button>
+    </div>
+    <div class="seg" role="group" aria-label="时间窗口">
+      <button class="winbtn" data-win="1h"  aria-pressed="true">1h</button>
+      <button class="winbtn" data-win="6h"  aria-pressed="false">6h</button>
+      <button class="winbtn" data-win="24h" aria-pressed="false">24h</button>
+      <button class="winbtn" data-win="7d"  aria-pressed="false">7d</button>
+      <button class="winbtn" data-win="30d" aria-pressed="false">30d</button>
+    </div>
+    <label class="thresh">
+      判定阈值 |z| ≥
+      <input type="range" id="th" min="2" max="6" step="0.5" value="3">
+      <output id="thv">3.0</output>
+    </label>
+    <div class="scale">
+      <span>−6</span>
+      <div class="ramp" id="ramp"></div>
+      <span>+6</span>
+    </div>
+  </div>
+
+  <div id="view"><div class="loading">正在加载数据…</div></div>
+
+  <div class="readout" id="readout">
+    <h2>点击热力图任意一列</h2>
+    <p class="sub">显示该时刻偏离基线最远的指标，按 |z| 排序，含十四档档位条。</p>
+    <div class="help-tip" id="helpblock" style="display:none">
+      <table>
+        <tr><th>档位条形状</th><th>含义</th></tr>
+        <tr><td>最左亮格的位置</td><td>故障大约起始于该档位的 H 之前</td></tr>
+        <tr><td>左段亮、右段全暗</td><td>周期性事件（每天此时都发生）</td></tr>
+        <tr><td>左段暗、右段亮</td><td>持续数天的慢性劣化</td></tr>
+        <tr><td>全亮</td><td>breadth=14，按任何时间尺度量都在变化</td></tr>
+        <tr><td>全暗但 PSI 越线</td><td>恒定故障盲区（机器一直是坏的）</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+(() => {
+'use strict';
+
+// ────────────────────────────────────────────────────────────
+// 常量
+// ────────────────────────────────────────────────────────────
+const LAGS     = ['L1','L2','L3','L4','L5','L6','L7','L8','L9','L10','L11','L12','L13','L14'];
+const LAG_SEC  = [300,600,1200,2400,5400,10800,21600,43200,86400,172800,345600,604800,1209600,2419200];
+const LAG_LABELS = ['5m','10m','20m','40m','1.5h','3h','6h','12h','1d','2d','4d','7d','14d','28d'];
+
+const DOMAINS = [
+  { id:'cpu',  name:'CPU',  hex:'#6ba3d6' },
+  { id:'mem',  name:'MEM',  hex:'#9b8ad4' },
+  { id:'io',   name:'IO',   hex:'#d98a4a' },
+  { id:'net',  name:'NET',  hex:'#5fb89a' },
+  { id:'self', name:'SELF', hex:'#a8c5a0' },
+];
+const DOMAIN_MAP = {};
+DOMAINS.forEach(d => DOMAIN_MAP[d.id] = d);
+
+const PSI_THRESH = { 'psi.cpu.some10': 30, 'psi.io.some10': 20, 'psi.mem.some10': 10 };
+
+// ────────────────────────────────────────────────────────────
+// 颜色
+// ────────────────────────────────────────────────────────────
+const NEUTRAL = [19,26,36];
+const COOL = [[27,62,84],[30,110,128],[42,168,174],[128,224,216]];
+const WARM = [[92,56,30],[166,104,32],[214,122,44],[242,96,60],[255,152,120]];
+const lerp = (a,b,t) => a.map((x,i) => Math.round(x+(b[i]-x)*t));
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+function colorFor(z) {
+  if (z === null || isNaN(z)) return 'transparent';
+  const a = Math.min(Math.abs(z), 6) / 6;
+  if (a < 0.06) return rgb(NEUTRAL);
+  const ramp = z < 0 ? COOL : WARM;
+  const p = a * (ramp.length - 1);
+  const i = Math.min(Math.floor(p), ramp.length - 2);
+  const base = lerp(NEUTRAL, ramp[0], Math.min(a * 3.2, 1));
+  return rgb(a < 0.3 ? base : lerp(ramp[i], ramp[i+1], p-i));
+}
+
+// ramp legend
+const rampEl = document.getElementById('ramp');
+for (let i = -6; i <= 6; i++) {
+  const s = document.createElement('i');
+  s.style.background = colorFor(i);
+  rampEl.appendChild(s);
+}
+
+// ────────────────────────────────────────────────────────────
+// 状态
+// ────────────────────────────────────────────────────────────
+let mode = 'acute';    // acute | chronic | abs
+let currentWin = '1h';
+let threshold = 3;
+let selectedT = null;
+let DATA = null;       // current HeatmapJSON
+
+// ────────────────────────────────────────────────────────────
+// 数据加载
+// ────────────────────────────────────────────────────────────
+async function loadData(win) {
+  try {
+    const r = await fetch(`data/${win}.json`, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(r.statusText);
+    // 服务端返回 gzip，浏览器自动解压
+    return await r.json();
+  } catch(e) {
+    return null;
+  }
+}
+
+async function refresh() {
+  const raw = await loadData(currentWin);
+  if (!raw) {
+    document.getElementById('view').innerHTML = '<div class="errmsg">无法加载数据，请检查服务是否运行。</div>';
+    return;
+  }
+  DATA = raw;
+  updateMeta(raw);
+  updateStatus(raw);
+  checkStale(raw);
+  render();
+}
+
+function updateMeta(d) {
+  const from = new Date(d.from * 1000).toLocaleString('zh-CN', {hour12:false});
+  const to   = new Date(d.to   * 1000).toLocaleString('zh-CN', {hour12:false});
+  const npts = d.metrics[0] ? d.metrics[0].points.length : 0;
+  document.getElementById('meta').innerHTML = `
+    <span>主机 <b>${d.host}</b></span>
+    <span>${from} – ${new Date(d.to*1000).toLocaleTimeString('zh-CN',{hour12:false})}</span>
+    <span>${d.resolution}s 采样</span>
+    <span><b>${d.metrics.length}</b> 指标 × <b>${npts}</b> 点</span>
+  `;
+}
+
+function checkStale(d) {
+  const age = Date.now()/1000 - d.generated_at;
+  document.getElementById('stale').style.display = age > 90 ? '' : 'none';
+}
+
+function updateStatus(d) {
+  const sb = document.getElementById('statusbar');
+  let html = '';
+  const deg = d.degraded || {};
+  if (deg.psi)       html += '<span class="badge warn">⚠ PSI 不可用</span>';
+  if (deg.taskstats) html += '<span class="badge info">短命进程不可见</span>';
+  if (deg.collector) html += '<span class="badge err">采集器降级</span>';
+  const notReady = (d.lag_ready||[]).filter(v=>!v).length;
+  if (notReady > 0)  html += `<span class="badge info">${notReady} 档位未就绪</span>`;
+  if (d.low_confidence && d.low_confidence.length > 0)
+    html += `<span class="badge info">低置信: ${d.low_confidence.join(' ')}</span>`;
+  if (!html)         html = '<span class="badge ok">正常</span>';
+  sb.innerHTML = html;
+}
+
+// ────────────────────────────────────────────────────────────
+// 渲染
+// ────────────────────────────────────────────────────────────
+function render() {
+  if (!DATA) return;
+  if (mode === 'abs') renderAbs();
+  else renderHeatmap();
+}
+
+// ─── PSI 绝对阈值行 ──────────────────────────────────────────
+function renderPSIRow(metrics) {
+  // 从最新点读 PSI 值
+  const psiMetrics = metrics.filter(m => PSI_THRESH[m.metric_id]);
+  if (psiMetrics.length === 0) return '';
+
+  let cells = '';
+  for (const m of psiMetrics) {
+    if (!m.points.length) continue;
+    const last = m.points[m.points.length-1];
+    const v = last.v;
+    const th = PSI_THRESH[m.metric_id];
+    const hot = v > th;
+    const cls = hot ? 'hot' : 'ok';
+    cells += `<span class="psi-cell ${cls}">${m.metric_id} = ${v.toFixed(1)} (阈值 ${th})</span>`;
+  }
+  return `<div class="psi-row">
+    <div class="rowlabel" style="font-size:10px;color:var(--ink-faint)">PSI 绝对阈值</div>
+    <div class="psi-cells">${cells}</div>
+  </div>`;
+}
+
+// ─── 规则条颜色 ─────────────────────────────────────────────
+function ruleColorAt(t, rules) {
+  if (!rules) return 'transparent';
+  const ts = DATA.metrics[0] && DATA.metrics[0].points[t] ? DATA.metrics[0].points[t].ts : 0;
+  if (!ts) return 'transparent';
+  const rule = rules.find(r => r.ts === ts);
+  if (!rule) return 'transparent';
+  if (rule.cascade) return '#f2603c';
+  const dom = rule.domains[0];
+  return DOMAIN_MAP[dom] ? DOMAIN_MAP[dom].hex : '#888';
+}
+
+function renderHeatmap() {
+  const d = DATA;
+  const lags = d.lags || LAGS;
+  const lagReady = d.lag_ready || new Array(14).fill(true);
+  const lowConf  = new Set(d.low_confidence || []);
+
+  // 选 L1-L8（急性）or L9-L14（劣化）的 z 最大值用于着色
+  const isAcute = mode === 'acute';
+  const lagRange = isAcute ? [0,7] : [8,13];
+
+  // 从 metric points 计算每个格子颜色
+  const metrics = d.metrics || [];
+  const N = metrics[0] ? metrics[0].points.length : 0;
+  if (!N) {
+    document.getElementById('view').innerHTML = '<div class="loading">暂无数据点</div>';
+    return;
+  }
+
+  const cols = `repeat(${N}, 1fr)`;
+  let html = '<div class="grid-shell" id="shell">';
+
+  // PSI 行
+  html += renderPSIRow(metrics);
+
+  // 规则条
+  html += `<div class="rulebar" style="grid-template-columns:${cols}">`;
+  for (let t = 0; t < N; t++) {
+    const col = ruleColorAt(t, d.rules);
+    html += `<span style="border-top-color:${col}"></span>`;
+  }
+  html += '</div>';
+
+  // 按域分组
+  const byDomain = {};
+  for (const dom of DOMAINS) byDomain[dom.id] = [];
+  for (const m of metrics) {
+    const dom = m.domain || 'cpu';
+    if (!byDomain[dom]) byDomain[dom] = [];
+    byDomain[dom].push(m);
+  }
+
+  for (const dom of DOMAINS) {
+    const rows = byDomain[dom.id];
+    if (!rows.length) continue;
+    html += `<div class="domhead"><div class="name" style="color:${dom.hex}">${dom.name}</div><div class="rule"></div></div>`;
+    for (const m of rows) {
+      html += `<div class="rowline"><div class="rowlabel">${m.metric_id}${m.unit ? ` <span class="unit">${m.unit}</span>` : ''}</div>`;
+      html += `<div class="cells" style="grid-template-columns:${cols}" data-mid="${m.metric_id}">`;
+      for (let t = 0; t < m.points.length; t++) {
+        const pt = m.points[t];
+        // 取档位范围内 |z| 最大值
+        let maxZ = null;
+        let maxSignZ = null;
+        for (let li = lagRange[0]; li <= lagRange[1]; li++) {
+          const zv = pt.z[li];
+          if (zv === null) continue;
+          // z stored as Int8×20, decode
+          const zf = zv / 20;
+          if (maxZ === null || Math.abs(zf) > maxZ) {
+            maxZ = Math.abs(zf);
+            maxSignZ = zf;
+          }
+        }
+        // marking: opposite range has triggers → special border
+        const hasCross = checkCrossRange(pt, isAcute);
+        const bg = colorFor(maxSignZ);
+        const border = hasCross ? '1px solid rgba(255,255,255,0.25)' : '0';
+        html += `<i data-t="${t}" style="background:${bg};outline:${border}"></i>`;
+      }
+      html += '</div></div>';
+    }
+  }
+
+  // X 轴
+  html += `<div class="axis"><div></div><div class="ticks">`;
+  const ticks = Math.min(Math.floor(N/10), 12);
+  const step = Math.floor(N/(ticks+1));
+  for (let t = 0; t < N; t += step) {
+    const ts = metrics[0].points[t].ts;
+    const lbl = new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit'});
+    html += `<span style="left:${(t+.5)/N*100}%">${lbl}</span>`;
+  }
+  html += `<span style="left:100%;transform:translateX(-100%)">${new Date(metrics[0].points[N-1].ts*1000).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit'})}</span>`;
+  html += '</div></div>';
+
+  html += '</div>'; // grid-shell
+  document.getElementById('view').innerHTML = html;
+  if (selectedT !== null) drawCursor(N);
+}
+
+function checkCrossRange(pt, isAcute) {
+  // isAcute → check if L9-L14 has any trigger
+  // !isAcute → check if L1-L8 has any trigger
+  const range = isAcute ? [8,13] : [0,7];
+  for (let li = range[0]; li <= range[1]; li++) {
+    if (pt.z[li] !== null && Math.abs(pt.z[li]/20) >= threshold) return true;
+  }
+  return false;
+}
+
+function renderAbs() {
+  const d = DATA;
+  const metrics = d.metrics || [];
+  let html = '<div class="wall">';
+  for (const m of metrics) {
+    if (!m.points.length) continue;
+    const vals = m.points.map(p => p.v);
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    const span = (hi-lo) || 1;
+    const N = vals.length;
+    const pts = vals.map((v,t) => `${(t/(N-1)*100).toFixed(2)},${(28-(v-lo)/span*26).toFixed(2)}`).join(' ');
+    const dom = DOMAIN_MAP[m.domain] || DOMAIN_MAP['cpu'];
+    html += `<div class="spark"><div class="n">${m.metric_id}${m.unit?' '+m.unit:''}</div>
+      <svg viewBox="0 0 100 30" preserveAspectRatio="none">
+      <polyline points="${pts}" fill="none" stroke="${dom.hex}" stroke-width="0.8" vector-effect="non-scaling-stroke"/>
+      </svg></div>`;
+  }
+  document.getElementById('view').innerHTML = html + '</div>';
+}
+
+// ────────────────────────────────────────────────────────────
+// 游标与读数
+// ────────────────────────────────────────────────────────────
+function drawCursor(N) {
+  const shell = document.getElementById('shell');
+  if (!shell || selectedT === null) return;
+  const old = shell.querySelector('.cursor');
+  if (old) old.remove();
+  const anyRow = shell.querySelector('.cells');
+  if (!anyRow) return;
+  const el = document.createElement('div');
+  el.className = 'cursor';
+  const left = anyRow.getBoundingClientRect().left - shell.getBoundingClientRect().left;
+  const w = anyRow.getBoundingClientRect().width;
+  el.style.left = `${left + (selectedT + .5) / N * w}px`;
+  shell.appendChild(el);
+}
+
+function showReadout(tIdx) {
+  const d = DATA;
+  if (!d) return;
+  const metrics = d.metrics;
+  if (!metrics.length || !metrics[0].points[tIdx]) return;
+  const ts = metrics[0].points[tIdx].ts;
+  const lags = d.lags || LAGS;
+  const lagReady = d.lag_ready || new Array(14).fill(true);
+  const lowConf  = new Set(d.low_confidence || []);
+
+  // 偏离排名：取 onset 档位的 z
+  const ranked = [];
+  for (const m of metrics) {
+    const pt = m.points[tIdx];
+    if (!pt) continue;
+    const onset = pt.onset_lag;
+    // find max |z|
+    let maxZ = 0, signZ = 0;
+    for (let li = 0; li < 14; li++) {
+      if (pt.z[li] === null) continue;
+      const zf = pt.z[li]/20;
+      if (Math.abs(zf) > maxZ) { maxZ = Math.abs(zf); signZ = zf; }
+    }
+    if (maxZ >= 1.5) ranked.push({m, pt, maxZ, signZ});
+  }
+  ranked.sort((a,b) => b.maxZ - a.maxZ);
+  const top = ranked.slice(0, 12);
+
+  // rules
+  const rule = (d.rules||[]).find(r => r.ts === ts);
+  let verdict = '';
+  if (rule && rule.cascade) {
+    verdict = `<div class="verdict" style="color:#f2603c;border-color:#5c2b1e;background:#1e1210">跨域级联 · ${rule.domains.join(' + ')} · ${rule.domains.length} 个域</div>`;
+  } else if (rule) {
+    const hex = DOMAIN_MAP[rule.domains[0]] ? DOMAIN_MAP[rule.domains[0]].hex : '#888';
+    verdict = `<div class="verdict" style="color:${hex};border-color:var(--line);background:#141c26">单域偏离 · ${rule.domains[0]}</div>`;
+  } else {
+    verdict = `<div class="verdict" style="color:var(--ink-dim);border-color:var(--line);background:#141c26">无域达到判定阈值</div>`;
+  }
+
+  let rows = '';
+  for (const {m, pt, maxZ, signZ} of top) {
+    const dom = DOMAIN_MAP[m.domain] || DOMAIN_MAP['cpu'];
+    const sign = signZ >= 0 ? '+' : '−';
+    const vfmt = formatVal(pt.v, m.unit);
+    const lagHTML = renderLagBar(pt.z, lagReady, lowConf, threshold);
+    rows += `<tr>
+      <td class="m"><span class="dot" style="background:${dom.hex}"></span>${m.metric_id}</td>
+      <td class="v">${vfmt}${m.unit?' '+m.unit:''}</td>
+      <td class="z" style="color:${colorFor(signZ)};filter:brightness(1.5)">${sign}${maxZ.toFixed(1)}σ</td>
+      <td class="lagcol">${lagHTML}<br><span style="font-size:10px;color:var(--ink-faint)">${pt.onset_lag ? '起病 ≈'+lagLabel(pt.onset_lag)+' 前' : ''} breadth ${pt.breadth}</span></td>
+    </tr>`;
+  }
+  if (!rows) rows = `<tr><td colspan="4" style="padding-top:10px">该时刻所有指标均在基线 1.5σ 内。</td></tr>`;
+
+  const timeStr = new Date(ts*1000).toLocaleString('zh-CN',{hour12:false});
+  document.getElementById('readout').innerHTML = `
+    <h2>${timeStr}</h2>
+    <p class="sub">偏离基线 ≥1.5σ 的指标，按幅度排序，含十四档档位条</p>
+    ${verdict}
+    <table>
+      <tr><th>指标</th><th style="text-align:right">当前</th><th style="text-align:right">偏离</th><th>档位条 (L1–L8 · L9–L14)</th></tr>
+      ${rows}
+    </table>
+    <div class="help-tip" id="helpblock">
+      <p style="color:var(--ink-faint);font-size:11px;margin:12px 0 6px">档位条读法：● 亮格，○ 低置信，□ 未就绪。最左亮格 = 故障起始时刻。</p>
+    </div>`;
+}
+
+function renderLagBar(z14, lagReady, lowConf, th) {
+  let html = '<span class="lagbar">';
+  for (let li = 0; li < 14; li++) {
+    if (li === 8) html += '<span class="gap"></span>'; // 日内段/对齐段分隔
+    const lag = LAGS[li];
+    if (!lagReady[li] || z14[li] === null) {
+      html += `<i style="background:var(--line)" title="${lag}"></i>`;
+      continue;
+    }
+    const zf = z14[li] / 20;
+    const col = colorFor(zf);
+    if (lowConf.has(lag)) {
+      html += `<i class="hollow" style="border-color:${col}" title="${lag} low-conf"></i>`;
+    } else {
+      html += `<i style="background:${col}" title="${lag} z=${zf.toFixed(1)}"></i>`;
+    }
+  }
+  return html + '</span>';
+}
+
+function lagLabel(lagID) {
+  const idx = LAGS.indexOf(lagID);
+  if (idx < 0) return lagID;
+  return LAG_LABELS[idx];
+}
+
+function formatVal(v, unit) {
+  if (!unit) return v >= 1000 ? Math.round(v).toLocaleString() : v.toFixed(1);
+  if (unit === '%' || unit === 'ms') return v.toFixed(1);
+  if (v >= 1e9) return (v/1e9).toFixed(2)+'G';
+  if (v >= 1e6) return (v/1e6).toFixed(2)+'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1)+'k';
+  return v.toFixed(v < 10 ? 2 : 1);
+}
+
+// ────────────────────────────────────────────────────────────
+// 事件绑定
+// ────────────────────────────────────────────────────────────
+const viewEl = document.getElementById('view');
+const tipEl  = document.getElementById('tip');
+
+viewEl.addEventListener('mousemove', e => {
+  const cell = e.target.closest('.cells i');
+  if (!cell) { tipEl.style.opacity = 0; return; }
+  const t = +cell.dataset.t;
+  const mid = cell.closest('.cells').dataset.mid;
+  if (!DATA) return;
+  const m = DATA.metrics.find(x => x.metric_id === mid);
+  if (!m || !m.points[t]) { tipEl.style.opacity = 0; return; }
+  const pt = m.points[t];
+  const ts = new Date(pt.ts*1000).toLocaleTimeString('zh-CN',{hour12:false});
+  let maxZ = 0, signZ = 0;
+  for (let li = 0; li < 14; li++) {
+    if (pt.z[li] === null) continue;
+    const zf = pt.z[li]/20;
+    if (Math.abs(zf) > maxZ) { maxZ = Math.abs(zf); signZ = zf; }
+  }
+  tipEl.innerHTML = `<b>${mid}</b> ${ts}<s>当前 ${formatVal(pt.v,m.unit)}${m.unit?' '+m.unit:''}</s><s>最大偏离 ${signZ>=0?'+':'−'}${maxZ.toFixed(1)}σ · ${pt.onset_lag||'正常'}</s>`;
+  tipEl.style.opacity = 1;
+  const r = tipEl.getBoundingClientRect();
+  tipEl.style.left = Math.min(e.clientX+14, innerWidth-r.width-8)+'px';
+  tipEl.style.top  = Math.max(e.clientY-r.height-10, 8)+'px';
+});
+viewEl.addEventListener('mouseleave', () => tipEl.style.opacity = 0);
+
+viewEl.addEventListener('click', e => {
+  const cell = e.target.closest('.cells i');
+  if (!cell) return;
+  selectedT = +cell.dataset.t;
+  const N = DATA ? DATA.metrics[0].points.length : 0;
+  drawCursor(N);
+  showReadout(selectedT);
+});
+
+document.getElementById('btnAcute').onclick = () => setMode('acute');
+document.getElementById('btnChron').onclick = () => setMode('chronic');
+document.getElementById('btnAbs').onclick   = () => setMode('abs');
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('btnAcute').setAttribute('aria-pressed', m==='acute');
+  document.getElementById('btnChron').setAttribute('aria-pressed', m==='chronic');
+  document.getElementById('btnAbs').setAttribute('aria-pressed',   m==='abs');
+  render();
+}
+
+document.querySelectorAll('.winbtn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.winbtn').forEach(b => b.setAttribute('aria-pressed','false'));
+    btn.setAttribute('aria-pressed','true');
+    currentWin = btn.dataset.win;
+    refresh();
+  };
+});
+
+document.getElementById('th').oninput = function() {
+  threshold = +this.value;
+  document.getElementById('thv').textContent = threshold.toFixed(1);
+  render();
+  if (selectedT !== null) showReadout(selectedT);
+};
+
+addEventListener('resize', () => {
+  if (DATA && mode !== 'abs' && selectedT !== null) {
+    drawCursor(DATA.metrics[0].points.length);
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// 定时刷新（每 30 秒检查数据新鲜度）
+// ────────────────────────────────────────────────────────────
+setInterval(() => {
+  if (DATA) checkStale(DATA);
+}, 10000);
+
+setInterval(() => {
+  loadData(currentWin).then(d => {
+    if (d && d.generated_at !== (DATA && DATA.generated_at)) {
+      DATA = d;
+      updateMeta(d);
+      updateStatus(d);
+      checkStale(d);
+      render();
+    }
+  });
+}, 30000);
+
+// 首次加载
+refresh();
+})();
+</script>

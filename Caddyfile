@@ -1,0 +1,11 @@
+:8888 {
+    root * {$NODEDATA_WEB:.}
+    encode gzip
+    file_server {
+        precompressed gz
+    }
+    @api path /api/*
+    handle @api {
+        reverse_proxy 127.0.0.1:9701
+    }
+}
