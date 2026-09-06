@@ -1,4 +1,4 @@
-:8888 {
+0.0.0.0:8888 {
     root * {$NODEDATA_WEB:.}
     encode gzip
     file_server {
