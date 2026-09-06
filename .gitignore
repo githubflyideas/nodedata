@@ -1,6 +1,6 @@
 nodedata
 nodedata-arm64
-/bin/
+
 *.tmp
 nodedata-wal.jsonl
 vendor/
