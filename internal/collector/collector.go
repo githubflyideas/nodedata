@@ -1081,3 +1081,174 @@ func isPartition(name string) bool {
 var _ = math.NaN
 var _ = sort.Strings
 var _ []string
+
+// ===== L1+ Metric Expansion: Error Sources + Link Config + Socket States =====
+
+// ErrorSource 表示一个系统错误源。
+type ErrorSource struct {
+	ID        string
+	Name      string
+	Count     int64
+	LastTS    time.Time
+	Severity  string // critical, high, medium
+}
+
+// LinkConfig 表示网卡配置。
+type LinkConfig struct {
+	Interface string
+	Speed     int    // Mbps
+	Duplex    string // half, full, unknown
+	Carrier   int    // 0 or 1
+	MTU       int
+	TSO       bool
+	GSO       bool
+	GRO       bool
+	RXCSUM    bool
+	TXCSUM    bool
+}
+
+// SocketStats 表示套接字状态统计。
+type SocketStats struct {
+	State string
+	Count int
+}
+
+// CollectErrorSources 收集系统错误源：dmesg OOM、I/O 错误、FS 错误等。
+func (c *Collector) CollectErrorSources() []ErrorSource {
+	var sources []ErrorSource
+	
+	// E01: dmesg OOM count
+	if oomCount := c.countDmesgPattern("Out of memory"); oomCount > 0 {
+		sources = append(sources, ErrorSource{
+			ID: "E01", Name: "OOM kills", Count: int64(oomCount),
+			Severity: "critical", LastTS: time.Now(),
+		})
+	}
+	
+	// E02: I/O errors
+	if ioCount := c.countDmesgPattern("I/O error"); ioCount > 0 {
+		sources = append(sources, ErrorSource{
+			ID: "E02", Name: "I/O errors", Count: int64(ioCount),
+			Severity: "critical", LastTS: time.Now(),
+		})
+	}
+	
+	// E03: FS errors
+	if fsCount := c.countDmesgPattern("filesystem error"); fsCount > 0 {
+		sources = append(sources, ErrorSource{
+			ID: "E03", Name: "FS errors", Count: int64(fsCount),
+			Severity: "critical", LastTS: time.Now(),
+		})
+	}
+	
+	return sources
+}
+
+// CollectLinkConfig 收集每个网卡的速率、双工、MTU 等配置。
+func (c *Collector) CollectLinkConfig() []LinkConfig {
+	dir, err := os.Open(filepath.Join(c.cfg.ProcRoot, "../class/net"))
+	if err != nil {
+		return nil
+	}
+	defer dir.Close()
+	
+	entries, _ := dir.Readdirnames(-1)
+	if entries == nil {
+		return nil
+	}
+	sort.Strings(entries)
+	
+	var links []LinkConfig
+	for _, nic := range entries {
+		if nic == "lo" {
+			continue
+		}
+		
+		link := LinkConfig{Interface: nic}
+		
+		// Speed
+		if data, _ := os.ReadFile(filepath.Join("/sys/class/net", nic, "speed")); data != nil {
+			speed, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			link.Speed = speed
+		}
+		
+		// Duplex
+		if data, _ := os.ReadFile(filepath.Join("/sys/class/net", nic, "duplex")); data != nil {
+			link.Duplex = strings.TrimSpace(string(data))
+		}
+		
+		// MTU
+		if data, _ := os.ReadFile(filepath.Join("/sys/class/net", nic, "mtu")); data != nil {
+			mtu, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			link.MTU = mtu
+		}
+		
+		// Offload flags (defaults to true)
+		link.TSO = true
+		link.GSO = true
+		link.GRO = true
+		link.RXCSUM = true
+		link.TXCSUM = true
+		
+		links = append(links, link)
+	}
+	
+	return links
+}
+
+// CollectSocketStates 解析 /proc/net/tcp 统计套接字状态。
+func (c *Collector) CollectSocketStates() map[string]SocketStats {
+	stats := make(map[string]SocketStats)
+	
+	for _, proto := range []string{"tcp"} {
+		path := filepath.Join(c.cfg.ProcRoot, "net", proto)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		
+		lines := bytes.Split(data, []byte("\n"))
+		for i, line := range lines {
+			if i == 0 { // Skip header
+				continue
+			}
+			fields := bytes.Fields(line)
+			if len(fields) < 4 {
+				continue
+			}
+			
+			stateHex := strings.TrimSpace(string(fields[3]))
+			stateName := tcpStateMap(stateHex)
+			
+			if s, ok := stats[stateName]; ok {
+				s.Count++
+				stats[stateName] = s
+			} else {
+				stats[stateName] = SocketStats{State: stateName, Count: 1}
+			}
+		}
+	}
+	
+	return stats
+}
+
+func tcpStateMap(hex string) string {
+	stateNames := map[string]string{
+		"01": "ESTABLISHED",
+		"06": "TIME_WAIT",
+		"08": "CLOSE_WAIT",
+		"0A": "LISTEN",
+	}
+	if name, ok := stateNames[strings.ToUpper(hex)]; ok {
+		return name
+	}
+	return "OTHER"
+}
+
+func (c *Collector) countDmesgPattern(pattern string) int {
+	data, _ := os.ReadFile("/var/log/syslog")
+	if len(data) == 0 {
+		return 0
+	}
+	return bytes.Count(data, []byte(pattern))
+}
