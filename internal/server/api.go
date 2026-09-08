@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,7 +9,7 @@ import (
 	"time"
 )
 
-type HeatmapJSON struct {
+type HeatmapJSONLive struct {
 	Data interface{} `json:"data"`
 }
 
@@ -43,7 +42,6 @@ func (cr *CheckRunner) run() {
 	ticker := time.NewTicker(cr.interval)
 	defer ticker.Stop()
 
-	// 首次立即运行
 	cr.runCheck()
 
 	for {
@@ -57,7 +55,6 @@ func (cr *CheckRunner) run() {
 }
 
 func (cr *CheckRunner) runCheck() {
-	// 简单的 L0 检查（演示）
 	result := map[string]interface{}{
 		"timestamp": time.Now(),
 		"status":    "ok",
@@ -74,10 +71,9 @@ func (cr *CheckRunner) runCheck() {
 	cr.latest = data
 	cr.mu.Unlock()
 
-	// 写到文件
 	checkPath := filepath.Join(cr.dataDir, "check.json")
 	tmpPath := checkPath + ".tmp"
-	io.WriteFile(tmpPath, data, 0644)
+	os.WriteFile(tmpPath, data, 0644)
 	os.Rename(tmpPath, checkPath)
 }
 
@@ -101,11 +97,9 @@ func CheckHandler(w http.ResponseWriter, r *http.Request, dataDir string) {
 func NewMuxWithCheck(webRoot, dataDir string) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// 静态文件服务
 	fs := http.FileServer(http.Dir(webRoot))
 	mux.Handle("/", fs)
 
-	// /api/check — L0 状态
 	mux.HandleFunc("/api/check", func(w http.ResponseWriter, r *http.Request) {
 		CheckHandler(w, r, dataDir)
 	})
