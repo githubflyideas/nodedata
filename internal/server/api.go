@@ -115,3 +115,37 @@ func respondJSON(w http.ResponseWriter, r *http.Request, v interface{}) {
 	enc := json.NewEncoder(w)
 	enc.Encode(v)
 }
+
+// CheckHandler 返回最新的 L0 检查结果（从 data/check.json）
+func CheckHandler(webRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Try to read check.json
+		import (
+			"os"
+			"path/filepath"
+		)
+		checkFile := filepath.Join(webRoot, "data", "check.json")
+		data, err := os.ReadFile(checkFile)
+		if err != nil {
+			// Return empty result if file doesn't exist yet
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"Categories":null,"Timestamp":"2026-01-01T00:00:00Z"}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	}
+}
+
+// NewMuxWithCheck 构建 HTTP 路由（含 /api/check 端点）
+func NewMuxWithCheck(webRoot string, qfns QueryFns) *http.ServeMux {
+	mux := NewMux(webRoot, qfns)
+	mux.HandleFunc("/api/check", CheckHandler(webRoot))
+	return mux
+}

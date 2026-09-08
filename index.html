@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nodedata — L0 Sanity Check</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #fafafa;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 30px;
+      color: #222;
+    }
+    .check-panel {
+      background: white;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 20px;
+      border-left: 4px solid #3498db;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .check-panel.pass {
+      border-left-color: #27ae60;
+    }
+    .check-panel.warn {
+      border-left-color: #f39c12;
+    }
+    .check-panel.fail {
+      border-left-color: #e74c3c;
+    }
+    .check-panel h2 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      color: #333;
+    }
+    .check-content {
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      color: #333;
+      background: #f9f9f9;
+      padding: 12px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+    .check-meta {
+      color: #999;
+      font-size: 12px;
+      margin-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .check-refresh {
+      display: inline-block;
+      cursor: pointer;
+      color: #3498db;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 3px;
+      transition: background 0.2s;
+    }
+    .check-refresh:hover {
+      background: #ecf0f1;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 nodedata L0 Sanity Check</h1>
+    
+    <div id="sanity-check-panel" class="check-panel">
+      <h2>System Health Status</h2>
+      <div id="check-content" class="check-content">Loading...</div>
+      <div class="check-meta">
+        <span>Last update: <span id="check-timestamp">—</span></span>
+        <span class="check-refresh" onclick="updateCheckStatus()">⟲ Refresh</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function updateCheckStatus() {
+      try {
+        const response = await fetch('/api/check');
+        if (!response.ok) {
+          document.getElementById('check-content').textContent = 'Error: Failed to fetch';
+          return;
+        }
+        
+        const result = await response.json();
+        if (!result.Categories || result.Categories.length === 0) {
+          document.getElementById('check-content').textContent = 'No check data available yet (initializing...)';
+          return;
+        }
+
+        // Format output
+        let output = '';
+        for (const cat of result.Categories) {
+          const symbols = ['✓', '⚠', '✗'];
+          const statuses = ['OK', 'WARN', 'FAIL'];
+          
+          const symbol = symbols[cat.Level] || '?';
+          const status = statuses[cat.Level] || 'UNKNOWN';
+          
+          output += `${symbol} ${(cat.Name || 'Unknown').padEnd(18)} ${status} (${cat.Passed}/${cat.Total})\n`;
+          
+          // Show failures/warnings
+          if (cat.Checks) {
+            for (const check of cat.Checks) {
+              if (check.Level !== 0) {
+                const checkSymbol = symbols[check.Level] || '?';
+                output += `  ${checkSymbol} ${check.ID}: ${check.Msg}\n`;
+              }
+            }
+          }
+        }
+
+        output += '\n';
+        const hasFailure = result.Categories.some(c => c.Level === 2);
+        const hasWarn = result.Categories.some(c => c.Level === 1);
+        
+        if (!hasFailure && !hasWarn) {
+          output += '✓ All checks passed\n';
+        } else if (hasFailure) {
+          output += '✗ System has failures\n';
+        } else {
+          output += '⚠ System has warnings\n';
+        }
+
+        document.getElementById('check-content').textContent = output;
+        document.getElementById('check-timestamp').textContent = 
+          new Date(result.Timestamp).toLocaleString();
+
+        // Update panel color
+        const panel = document.getElementById('sanity-check-panel');
+        panel.classList.remove('pass', 'warn', 'fail');
+        if (hasFailure) {
+          panel.classList.add('fail');
+        } else if (hasWarn) {
+          panel.classList.add('warn');
+        } else {
+          panel.classList.add('pass');
+        }
+
+      } catch (error) {
+        console.error('Check status error:', error);
+        document.getElementById('check-content').textContent = 'Error loading check status\n\n' + error.message;
+      }
+    }
+
+    // Initial load and periodic refresh
+    updateCheckStatus();
+    setInterval(updateCheckStatus, 5000);
+  </script>
+</body>
+</html>
