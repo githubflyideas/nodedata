@@ -11,72 +11,146 @@
       box-sizing: border-box;
     }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #fafafa;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Courier New", monospace;
+      background: #0f0f0f;
+      color: #e0e0e0;
       padding: 20px;
     }
     .container {
-      max-width: 1200px;
+      max-width: 1000px;
       margin: 0 auto;
     }
     h1 {
       font-size: 28px;
       margin-bottom: 30px;
-      color: #222;
+      color: #fff;
+      letter-spacing: 1px;
     }
-    .check-panel {
-      background: white;
-      border-radius: 8px;
-      padding: 24px;
+    .controls {
+      display: flex;
+      gap: 12px;
       margin-bottom: 20px;
-      border-left: 4px solid #3498db;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .check-panel.pass {
-      border-left-color: #27ae60;
-    }
-    .check-panel.warn {
-      border-left-color: #f39c12;
-    }
-    .check-panel.fail {
-      border-left-color: #e74c3c;
-    }
-    .check-panel h2 {
-      font-size: 18px;
-      margin-bottom: 16px;
-      color: #333;
-    }
-    .check-content {
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-      font-size: 13px;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      word-wrap: break-word;
-      color: #333;
-      background: #f9f9f9;
-      padding: 12px;
-      border-radius: 4px;
-      overflow-x: auto;
-    }
-    .check-meta {
-      color: #999;
       font-size: 12px;
-      margin-top: 12px;
+    }
+    .control-btn {
+      background: #222;
+      border: 1px solid #444;
+      color: #0f0;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: monospace;
+      transition: all 0.2s;
+    }
+    .control-btn:hover {
+      background: #333;
+      border-color: #555;
+    }
+    .timestamp {
+      color: #666;
+      font-size: 12px;
+    }
+    .category-panel {
+      background: #1a1a1a;
+      border-left: 3px solid #444;
+      margin-bottom: 12px;
+      padding: 16px;
+      border-radius: 4px;
+      transition: all 0.3s;
+    }
+    .category-panel.pass {
+      border-left-color: #0f0;
+      background: #0f0f1a;
+    }
+    .category-panel.warn {
+      border-left-color: #fa0;
+      background: #1a1510;
+    }
+    .category-panel.fail {
+      border-left-color: #f00;
+      background: #1a0f0f;
+    }
+    .category-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-    }
-    .check-refresh {
-      display: inline-block;
-      cursor: pointer;
-      color: #3498db;
+      margin-bottom: 8px;
+      font-size: 14px;
       font-weight: 600;
-      padding: 4px 8px;
-      border-radius: 3px;
-      transition: background 0.2s;
+      font-family: monospace;
     }
-    .check-refresh:hover {
-      background: #ecf0f1;
+    .category-name {
+      flex: 1;
+    }
+    .category-status {
+      color: #0f0;
+      min-width: 50px;
+      text-align: right;
+    }
+    .category-panel.warn .category-status {
+      color: #fa0;
+    }
+    .category-panel.fail .category-status {
+      color: #f00;
+    }
+    .category-checks {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+      font-family: monospace;
+      margin-top: 8px;
+    }
+    .check-item {
+      padding: 6px 8px;
+      background: #0f0f0f;
+      border-radius: 3px;
+      display: flex;
+      gap: 8px;
+    }
+    .check-symbol {
+      width: 16px;
+      color: #0f0;
+      font-weight: bold;
+    }
+    .check-symbol.warn {
+      color: #fa0;
+    }
+    .check-symbol.fail {
+      color: #f00;
+    }
+    .check-id {
+      width: 35px;
+      color: #666;
+      font-weight: 600;
+    }
+    .check-msg {
+      flex: 1;
+      color: #aaa;
+    }
+    .summary {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      padding: 16px;
+      margin-top: 20px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 13px;
+      text-align: center;
+    }
+    .summary.pass {
+      color: #0f0;
+      border-color: #0f0;
+      background: #0f0f1a;
+    }
+    .summary.warn {
+      color: #fa0;
+      border-color: #fa0;
+      background: #1a1510;
+    }
+    .summary.fail {
+      color: #f00;
+      border-color: #f00;
+      background: #1a0f0f;
     }
   </style>
 </head>
@@ -84,89 +158,101 @@
   <div class="container">
     <h1>🔍 nodedata L0 Sanity Check</h1>
     
-    <div id="sanity-check-panel" class="check-panel">
-      <h2>System Health Status</h2>
-      <div id="check-content" class="check-content">Loading...</div>
-      <div class="check-meta">
-        <span>Last update: <span id="check-timestamp">—</span></span>
-        <span class="check-refresh" onclick="updateCheckStatus()">⟲ Refresh</span>
-      </div>
+    <div class="controls">
+      <button class="control-btn" onclick="manualRefresh()">⟲ Refresh Now</button>
+      <span class="timestamp">Last: <span id="ts">—</span></span>
     </div>
+
+    <div id="categories-container"></div>
+    <div id="summary" class="summary"></div>
   </div>
 
   <script>
-    async function updateCheckStatus() {
+    async function updateStatus() {
       try {
         const response = await fetch('/api/check');
         if (!response.ok) {
-          document.getElementById('check-content').textContent = 'Error: Failed to fetch';
+          document.getElementById('summary').textContent = 'Error: Failed to fetch /api/check';
           return;
         }
         
         const result = await response.json();
-        if (!result.Categories || result.Categories.length === 0) {
-          document.getElementById('check-content').textContent = 'No check data available yet (initializing...)';
+        if (!result.categories || result.categories.length === 0) {
+          document.getElementById('summary').textContent = 'Initializing...';
           return;
         }
 
-        // Format output
-        let output = '';
-        for (const cat of result.Categories) {
-          const symbols = ['✓', '⚠', '✗'];
-          const statuses = ['OK', 'WARN', 'FAIL'];
-          
-          const symbol = symbols[cat.Level] || '?';
-          const status = statuses[cat.Level] || 'UNKNOWN';
-          
-          output += `${symbol} ${(cat.Name || 'Unknown').padEnd(18)} ${status} (${cat.Passed}/${cat.Total})\n`;
-          
-          // Show failures/warnings
-          if (cat.Checks) {
-            for (const check of cat.Checks) {
-              if (check.Level !== 0) {
-                const checkSymbol = symbols[check.Level] || '?';
-                output += `  ${checkSymbol} ${check.ID}: ${check.Msg}\n`;
-              }
+        renderCategories(result);
+        renderSummary(result);
+        document.getElementById('ts').textContent = new Date(result.timestamp).toLocaleTimeString();
+
+      } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('summary').textContent = 'Error: ' + error.message;
+      }
+    }
+
+    function renderCategories(result) {
+      const container = document.getElementById('categories-container');
+      container.innerHTML = '';
+
+      for (const cat of result.categories) {
+        const level = cat.level || 0;
+        const levelName = level === 0 ? 'pass' : level === 1 ? 'warn' : 'fail';
+        const levelSymbol = level === 0 ? '✓' : level === 1 ? '⚠' : '✗';
+        const levelText = level === 0 ? 'OK' : level === 1 ? 'WARN' : 'FAIL';
+
+        const panel = document.createElement('div');
+        panel.className = `category-panel ${levelName}`;
+
+        const header = `
+          <div class="category-header">
+            <span class="category-name">${levelSymbol} ${cat.name}</span>
+            <span class="category-status">${cat.passed}/${cat.total}</span>
+          </div>
+        `;
+
+        let checks = '';
+        if (cat.checks && cat.checks.length > 0) {
+          for (const check of cat.checks) {
+            if (check.level > 0) {
+              const checkLevel = check.level === 1 ? 'warn' : 'fail';
+              const checkSymbol = check.level === 1 ? '⚠' : '✗';
+              checks += `
+                <div class="check-item">
+                  <span class="check-symbol ${checkLevel}">${checkSymbol}</span>
+                  <span class="check-id">${check.id}</span>
+                  <span class="check-msg">${check.message}</span>
+                </div>
+              `;
             }
           }
         }
 
-        output += '\n';
-        const hasFailure = result.Categories.some(c => c.Level === 2);
-        const hasWarn = result.Categories.some(c => c.Level === 1);
-        
-        if (!hasFailure && !hasWarn) {
-          output += '✓ All checks passed\n';
-        } else if (hasFailure) {
-          output += '✗ System has failures\n';
-        } else {
-          output += '⚠ System has warnings\n';
-        }
-
-        document.getElementById('check-content').textContent = output;
-        document.getElementById('check-timestamp').textContent = 
-          new Date(result.Timestamp).toLocaleString();
-
-        // Update panel color
-        const panel = document.getElementById('sanity-check-panel');
-        panel.classList.remove('pass', 'warn', 'fail');
-        if (hasFailure) {
-          panel.classList.add('fail');
-        } else if (hasWarn) {
-          panel.classList.add('warn');
-        } else {
-          panel.classList.add('pass');
-        }
-
-      } catch (error) {
-        console.error('Check status error:', error);
-        document.getElementById('check-content').textContent = 'Error loading check status\n\n' + error.message;
+        panel.innerHTML = header + (checks ? `<div class="category-checks">${checks}</div>` : '');
+        container.appendChild(panel);
       }
     }
 
-    // Initial load and periodic refresh
-    updateCheckStatus();
-    setInterval(updateCheckStatus, 5000);
+    function renderSummary(result) {
+      const summary = document.getElementById('summary');
+      const hasFailure = result.categories.some(c => c.level === 2);
+      const hasWarn = result.categories.some(c => c.level === 1);
+      const statusClass = hasFailure ? 'fail' : hasWarn ? 'warn' : 'pass';
+      const statusText = hasFailure ? '✗ Some checks FAILED' : hasWarn ? '⚠ Warnings detected' : '✓ All checks PASSED';
+      
+      summary.className = `summary ${statusClass}`;
+      summary.textContent = statusText;
+    }
+
+    function manualRefresh() {
+      updateStatus();
+    }
+
+    // Initial load
+    updateStatus();
+    // Auto-refresh every 5 seconds
+    setInterval(updateStatus, 5000);
   </script>
 </body>
 </html>
