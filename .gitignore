@@ -1,10 +1,8 @@
-nodedata
-nodedata-arm64
+/nodedata
+/nodedata-amd64
+/nodedata-arm64
 
 *.tmp
 nodedata-wal.jsonl
 vendor/
-
-# Keep cmd/ and internal/
-!cmd/
-!internal/
+data/
