@@ -2,6 +2,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,11 +51,11 @@ type Point struct {
 }
 
 type RuleHit struct {
-	TS         int64          `json:"ts"`
-	Domains    []string       `json:"domains"`
-	Cascade    bool           `json:"cascade"`
-	MaxBreadth int            `json:"max_breadth"`
-	Hits       map[string]int `json:"hits"`
+	TS        int64            `json:"ts"`
+	Domains   []string         `json:"domains"`
+	Cascade   bool             `json:"cascade"`
+	MaxBreadth int             `json:"max_breadth"`
+	Hits      map[string]int   `json:"hits"`
 }
 
 // HealthJSON 是 data/health.json 格式。
@@ -72,7 +73,7 @@ type Dumper struct {
 	healthFn func() HealthJSON
 }
 
-// NewDumper 创建 Dumper。
+// New 创建 Dumper。
 func NewDumper(webRoot string,
 	queryFn func(from, to time.Time) (*HeatmapJSON, error),
 	healthFn func() HealthJSON) *Dumper {
@@ -101,16 +102,16 @@ func (d *Dumper) DumpAll() error {
 		from := now.Add(-w.dur)
 		data, err := d.queryFn(from, now)
 		if err != nil {
-			continue
+			continue // 跳过本文件，不中断其他
 		}
-		if err := writeAtomicJSON(filepath.Join(d.webRoot, "data", w.name+".json"), data); err != nil {
+		if err := writeAtomicGzip(filepath.Join(d.webRoot, "data", w.name+".json"), data); err != nil {
 			return fmt.Errorf("dump %s: %w", w.name, err)
 		}
 	}
 
 	// health.json
 	h := d.healthFn()
-	if err := writeAtomicJSON(filepath.Join(d.webRoot, "data", "health.json"), h); err != nil {
+	if err := writeAtomicGzip(filepath.Join(d.webRoot, "data", "health.json"), h); err != nil {
 		return err
 	}
 
@@ -131,15 +132,21 @@ func (d *Dumper) RunLoop(interval time.Duration, stop <-chan struct{}) {
 	}
 }
 
-// writeAtomicJSON 以原子方式写纯 JSON 到 path（tmp + rename）。
-// Caddy 的 encode gzip 指令会在传输时动态压缩，无需磁盘预压缩。
-func writeAtomicJSON(path string, v interface{}) error {
+// writeAtomicGzip 以原子方式写 gzip 压缩的 JSON 到 path。
+func writeAtomicGzip(path string, v interface{}) error {
 	tmp := path + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	if err := json.NewEncoder(f).Encode(v); err != nil {
+	gz := gzip.NewWriter(f)
+	enc := json.NewEncoder(gz)
+	if err := enc.Encode(v); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := gz.Close(); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err
