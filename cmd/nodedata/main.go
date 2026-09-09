@@ -47,7 +47,16 @@ Exit codes (check): 0 = pass, 1 = fail, 2 = warn only
 func runCheck() {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	timeout := fs.String("timeout", "5s", "Check timeout duration")
+	procRoot := fs.String("proc", "/proc", "procfs root")
+	sysRoot := fs.String("sys", "/sys", "sysfs root")
+	dataDir := fs.String("data-dir", "", "读取基线的目录（有基线时累计计数器只判新增）")
 	fs.Parse(os.Args[2:])
+	check.SetRoots(*procRoot, *sysRoot)
+	if *dataDir != "" {
+		if _, err := check.LoadBaseline(*dataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: 基线读取失败: %v\n", err)
+		}
+	}
 	results, exitCode := check.Run(*timeout)
 	check.PrintResults(results)
 	os.Exit(exitCode)
@@ -58,6 +67,7 @@ func runServe() {
 	port := fs.String("port", "8888", "HTTP server port")
 	interval := fs.String("interval", "5s", "Collect / check interval")
 	procRoot := fs.String("proc", "/proc", "procfs root")
+	sysRoot := fs.String("sys", "/sys", "sysfs root")
 	dumpEvery := fs.String("dump-interval", "30s", "data/*.json dump interval")
 	webRootFlag := fs.String("web-root", "", "directory containing index.html (default: cwd, else executable dir)")
 	dataDirFlag := fs.String("data-dir", "", "directory for data/*.json (default: <web-root>/data)")
@@ -87,6 +97,8 @@ func runServe() {
 	}
 
 	// ── L0：后台 sanity check → data/check.json
+	// -proc 之前只传给了 L1 采集器，L0 仍在读真 /proc，导致 -proc 对 L0 无效。
+	check.SetRoots(*procRoot, *sysRoot)
 	l0 := NewBackgroundCheckRunner(iv, dataDir)
 	l0.Start()
 	defer l0.Stop()
@@ -117,6 +129,17 @@ func runServe() {
 	} else {
 		fmt.Fprintf(os.Stderr, "warn: initial collect: %v\n", err)
 	}
+	// 载入人工基线（如果有）：让"曾经发生过"的累计计数器不再永久告警。
+	if b, err := check.LoadBaseline(dataDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: 基线读取失败，按本次启动起算: %v\n", err)
+	} else if b != nil {
+		fmt.Printf("  基线          %s", b.At.Local().Format("2006-01-02 15:04:05"))
+		if b.Note != "" {
+			fmt.Printf("（%s）", b.Note)
+		}
+		fmt.Println()
+	}
+
 	builder.RefreshSigma()
 	if dumpToDisk {
 		if err := dumper.DumpAll(); err != nil {
@@ -127,7 +150,18 @@ func runServe() {
 	}
 
 	mux := server.NewMuxWithConfig(
-		server.MuxConfig{WebRoot: webDir, DataDir: dataDir, Version: version},
+		server.MuxConfig{WebRoot: webDir, DataDir: dataDir, Version: version,
+			BaselineGet: func() interface{} {
+				if b := check.CurrentBaseline(); b != nil {
+					return b
+				}
+				return nil
+			},
+			BaselineSet: func(note string) (interface{}, error) {
+				return check.SaveBaseline(dataDir, note)
+			},
+			BaselineClear: func() error { return check.ClearBaseline(dataDir) },
+		},
 		server.QueryFns{
 			Heatmap: builder.Build,
 			Detail:  func(ts time.Time) (interface{}, error) { return builder.Build(ts.Add(-time.Hour), ts) },
@@ -157,6 +191,7 @@ func runServe() {
 	fmt.Printf("  web root      %s\n", webDir)
 	fmt.Printf("  data dir      %s\n", dataDir)
 	fmt.Printf("  procfs        %s\n", *procRoot)
+	fmt.Printf("  sysfs         %s\n", *sysRoot)
 	fmt.Printf("  collect every %s\n", iv)
 	fmt.Printf("  dump every    %s  [%s]\n", dv, dumpState)
 	fmt.Printf("  metrics       %d series, %d points buffered\n",

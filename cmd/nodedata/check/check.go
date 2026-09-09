@@ -475,12 +475,8 @@ func checkMemoryCategory(ctx context.Context) Category {
 		fmt.Sprintf("Writeback %s（正在刷盘、还没落地的数据）", hb(m["Writeback"]))))
 
 	if v, okk := kvField(procRoot+"/vmstat", "oom_kill", 1); okk {
-		lvl, msg := 0, "累计 0 次"
-		if v > 0 {
-			lvl = 2
-			msg = fmt.Sprintf("累计 %.0f 次 OOM 击杀，本机确实杀过进程", v)
-		}
-		cs = append(cs, Check{ID: "M05", Name: "OOM 击杀", Level: lvl, Message: msg})
+		cs = append(cs, counterCheckH("M05", "OOM 击杀", v, 2, 1,
+			fmt.Sprintf("%.0f 次", v), "OOM 击杀"))
 	} else {
 		cs = append(cs, skip("M05", "OOM 击杀", "内核未导出 vmstat.oom_kill"))
 	}
@@ -681,16 +677,12 @@ func checkNetworkCategory(ctx context.Context) Category {
 		cs = append(cs, skip("N04", "TCP 重传率", "读不到 /proc/net/snmp Tcp"))
 	}
 
-	// N05 listen 队列溢出：一旦非零就是真丢过连接
-	ov, ok3 := snmpVal(procRoot+"/net/netstat", "TcpExt", "ListenOverflows")
-	dp, ok4 := snmpVal(procRoot+"/net/netstat", "TcpExt", "ListenDrops")
-	if ok3 || ok4 {
-		lvl, msg := 0, "累计 0 次"
-		if ov+dp > 0 {
-			lvl = 1
-			msg = fmt.Sprintf("累计溢出 %.0f、丢弃 %.0f —— accept 队列曾经满过", ov, dp)
-		}
-		cs = append(cs, Check{ID: "N05", Name: "listen 队列溢出", Level: lvl, Message: msg})
+	// N05 listen 队列溢出：累计值只说明"曾经满过"，判定看的是基线之后有没有新增
+	if v, okk := listenOverflows(); okk {
+		ov, _ := snmpVal(procRoot+"/net/netstat", "TcpExt", "ListenOverflows")
+		dp, _ := snmpVal(procRoot+"/net/netstat", "TcpExt", "ListenDrops")
+		cs = append(cs, counterCheck("N05", "listen 队列溢出", v, 1,
+			fmt.Sprintf("溢出 %.0f、丢弃 %.0f", ov, dp), "accept 队列溢出"))
 	} else {
 		cs = append(cs, skip("N05", "listen 队列溢出", "读不到 /proc/net/netstat TcpExt"))
 	}
@@ -799,39 +791,9 @@ func checkConntrackCategory(ctx context.Context) Category {
 			fmt.Sprintf("%d / %d = %.1f%%", cnt, max, r), "表满之后新连接会被直接丢掉"))
 	}
 
-	// drop 列是每 CPU 一行的十六进制表；逐行累加
-	if b, err := os.ReadFile(procRoot + "/net/stat/nf_conntrack"); err == nil {
-		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-		var drop, insertFail float64
-		if len(lines) > 1 {
-			head := strings.Fields(lines[0])
-			di, ii := -1, -1
-			for i, h := range head {
-				switch h {
-				case "drop":
-					di = i
-				case "insert_failed":
-					ii = i
-				}
-			}
-			for _, ln := range lines[1:] {
-				f := strings.Fields(ln)
-				if di >= 0 && di < len(f) {
-					v, _ := strconv.ParseUint(f[di], 16, 64)
-					drop += float64(v)
-				}
-				if ii >= 0 && ii < len(f) {
-					v, _ := strconv.ParseUint(f[ii], 16, 64)
-					insertFail += float64(v)
-				}
-			}
-		}
-		lvl, msg := 0, "累计 0 次丢弃与插入失败"
-		if drop+insertFail > 0 {
-			lvl = 1
-			msg = fmt.Sprintf("累计丢弃 %.0f、插入失败 %.0f", drop, insertFail)
-		}
-		cs = append(cs, Check{ID: "CT02", Name: "conntrack 丢弃", Level: lvl, Message: msg})
+	if d, i, okk := conntrackDrops(); okk {
+		cs = append(cs, counterCheck("CT02", "conntrack 丢弃", d+i, 1,
+			fmt.Sprintf("丢弃 %.0f、插入失败 %.0f", d, i), "丢弃/插入失败"))
 	} else {
 		cs = append(cs, ok("CT02", "conntrack 丢弃", "未启用 nf_conntrack，无统计可读"))
 	}
@@ -900,26 +862,10 @@ func checkErrorsCategory(ctx context.Context) Category {
 	cat := Category{Name: "Errors"}
 	cs := make([]Check, 0, 2)
 
-	// E01 内核 taint：非零说明内核被污染（外部模块、曾经 oops 等）
+	// E01 内核 taint：位图不是计数器。已有的位（比如外部编译的驱动）只作说明，
+	// 只有基线之后新出现的位才算问题。
 	if t, okk := readInt(procRoot + "/sys/kernel/tainted"); okk {
-		lvl, msg := 0, "0（干净）"
-		if t != 0 {
-			lvl = 1
-			var why []string
-			for bit, name := range map[uint]string{
-				0: "非 GPL 模块", 4: "曾经 oops/BUG", 7: "曾经 machine check",
-				9: "曾经 warn", 12: "外部编译模块", 13: "未签名模块",
-			} {
-				if t&(1<<bit) != 0 {
-					why = append(why, name)
-				}
-			}
-			msg = fmt.Sprintf("tainted=%d", t)
-			if len(why) > 0 {
-				msg += "（" + strings.Join(why, "、") + "）"
-			}
-		}
-		cs = append(cs, Check{ID: "E01", Name: "内核 taint", Level: lvl, Message: msg})
+		cs = append(cs, taintCheck(t, decodeTaint))
 	} else {
 		cs = append(cs, skip("E01", "内核 taint", "读不到 /proc/sys/kernel/tainted"))
 	}
@@ -1041,4 +987,76 @@ func PrintResults(result FullResult) {
 	default:
 		fmt.Println("x 有失败")
 	}
+}
+
+// ── 累计型计数器的原始读取（基线快照与判定共用同一份实现）────────────────
+
+// conntrackDrops 累加 /proc/net/stat/nf_conntrack 每 CPU 行的 drop 与 insert_failed。
+// 该文件是十六进制表。
+func conntrackDrops() (drop, insertFail float64, okAll bool) {
+	b, err := os.ReadFile(procRoot + "/net/stat/nf_conntrack")
+	if err != nil {
+		return 0, 0, false
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) < 2 {
+		return 0, 0, true
+	}
+	di, ii := -1, -1
+	for i, h := range strings.Fields(lines[0]) {
+		switch h {
+		case "drop":
+			di = i
+		case "insert_failed":
+			ii = i
+		}
+	}
+	for _, ln := range lines[1:] {
+		f := strings.Fields(ln)
+		if di >= 0 && di < len(f) {
+			v, _ := strconv.ParseUint(f[di], 16, 64)
+			drop += float64(v)
+		}
+		if ii >= 0 && ii < len(f) {
+			v, _ := strconv.ParseUint(f[ii], 16, 64)
+			insertFail += float64(v)
+		}
+	}
+	return drop, insertFail, true
+}
+
+// listenOverflows 返回 ListenOverflows + ListenDrops 的累计和。
+func listenOverflows() (float64, bool) {
+	ov, ok1 := snmpVal(procRoot+"/net/netstat", "TcpExt", "ListenOverflows")
+	dp, ok2 := snmpVal(procRoot+"/net/netstat", "TcpExt", "ListenDrops")
+	if !ok1 && !ok2 {
+		return 0, false
+	}
+	return ov + dp, true
+}
+
+// decodeTaint 把 taint 位图翻成人话。位序见内核 admin-guide/tainted-kernels。
+func decodeTaint(t int64) string {
+	names := []struct {
+		bit  uint
+		name string
+	}{
+		{0, "非 GPL 模块"}, {1, "强制加载模块"}, {2, "内核超出支持范围"},
+		{3, "强制卸载模块"}, {4, "曾经 machine check"}, {5, "曾经 bad page"},
+		{6, "用户强制置位"}, {7, "曾经 die/oops"}, {8, "ACPI 表被覆盖"},
+		{9, "曾经 warn"}, {10, "staging 驱动"}, {11, "曾经 firmware workaround"},
+		{12, "外部编译模块"}, {13, "未签名模块"}, {14, "曾经 soft lockup"},
+		{15, "改过 livepatch"}, {16, "辅助 taint"}, {17, "结构体随机化"},
+		{18, "曾经致命 machine check"},
+	}
+	var why []string
+	for _, n := range names {
+		if t&(1<<n.bit) != 0 {
+			why = append(why, n.name)
+		}
+	}
+	if len(why) == 0 {
+		return "无已知位"
+	}
+	return strings.Join(why, "、")
 }

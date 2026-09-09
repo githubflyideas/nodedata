@@ -30,6 +30,13 @@ type MuxConfig struct {
 	WebRoot string
 	DataDir string
 	Version string
+
+	// 基线钩子由 main 注入：server 不需要知道 check 包的存在。
+	// 基线 = 用户把某一刻的累计计数器值认定为"正常状态"，
+	// 之后 L0 只对超出基线的新增量告警。
+	BaselineGet   func() interface{}
+	BaselineSet   func(note string) (interface{}, error)
+	BaselineClear func() error
 }
 
 func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
@@ -51,6 +58,47 @@ func NewMuxWithConfig(cfg MuxConfig, qfns QueryFns) *http.ServeMux {
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"version": cfg.Version})
+	})
+
+	// /api/baseline：GET 看当前基线，POST 把此刻状态定为基线，DELETE 清除。
+	mux.HandleFunc("/api/baseline", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		switch r.Method {
+		case http.MethodGet:
+			if cfg.BaselineGet == nil {
+				_ = enc.Encode(map[string]any{"baseline": nil})
+				return
+			}
+			_ = enc.Encode(map[string]any{"baseline": cfg.BaselineGet()})
+		case http.MethodPost:
+			if cfg.BaselineSet == nil {
+				http.Error(w, `{"error":"baseline not supported"}`, http.StatusNotImplemented)
+				return
+			}
+			var body struct {
+				Note string `json:"note"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body) // 空 body 合法
+			b, err := cfg.BaselineSet(body.Note)
+			if err != nil {
+				http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
+				return
+			}
+			_ = enc.Encode(map[string]any{"baseline": b})
+		case http.MethodDelete:
+			if cfg.BaselineClear == nil {
+				http.Error(w, `{"error":"baseline not supported"}`, http.StatusNotImplemented)
+				return
+			}
+			if err := cfg.BaselineClear(); err != nil {
+				http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
+				return
+			}
+			_ = enc.Encode(map[string]any{"baseline": nil})
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
 	})
 
 	// /data/*.json：先读磁盘转储；缺失或非法 JSON 时用内存实时构造兜底。

@@ -33,17 +33,10 @@ section>h2 .layer{color:var(--dim);font-weight:500;font-size:12px;margin-left:7p
   border-radius:5px;font-size:13px;margin:8px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .empty{color:var(--dim);font-size:13px;padding:14px 0}
 /* ---- L0 ---- */
-h2.fold{cursor:pointer;user-select:none}
-h2.fold:hover{color:var(--accent)}
-.caret{display:inline-block;width:14px;color:var(--dim);font-size:11px}
 .only{float:right;font-size:12px;color:var(--dim);cursor:pointer;user-select:none}
 .only input{vertical-align:-1px;margin-right:3px}
-.folded{display:none}
-.cat details{margin-top:2px}
-.cat details>summary{cursor:pointer;color:var(--dim);font-size:11.5px;padding:3px 0;list-style:none}
-.cat details>summary::before{content:"▸ ";}
-.cat details[open]>summary::before{content:"▾ ";}
-.cat details>summary:hover{color:var(--accent)}
+.baseline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.baseline button{font-size:11.5px;padding:2px 8px}
 .cats{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
 .cat{border:1px solid var(--line);border-radius:7px;padding:11px 12px;background:#fcfcfd}
 .cat.hasfail{border-color:#f0c2c2;background:#fffafa}
@@ -118,11 +111,16 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   </div>
 </header>
 <section>
-  <h2 class="fold" id="l0head"><span class="caret" id="l0caret">▾</span>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span></h2>
+  <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span></h2>
   <div class="sub"><span id="l0sum">—</span>
     <label class="only"><input type="checkbox" id="l0only"> 只看异常项</label></div>
+  <div class="sub baseline">
+    <span id="blinfo">累计型计数器（conntrack 丢弃、listen 溢出、OOM、内核 taint）只判增量。</span>
+    <button id="blset" onclick="setBaseline()">把当前状态设为基线</button>
+    <button id="blclear" onclick="clearBaseline()" hidden>清除基线</button>
+  </div>
   <div id="l0err"></div>
-  <div id="l0body"><div class="cats" id="cats"><div class="empty">加载中…</div></div></div>
+  <div><div class="cats" id="cats"><div class="empty">加载中…</div></div></div>
 </section>
 
 <section>
@@ -165,7 +163,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </div>
 <script>
 "use strict";
-var state={tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,l0folded:false};
+var state={tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null};
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9,10,11,12,13];     // L5..L14 : 5400s .. 28d
 var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
@@ -244,8 +242,7 @@ async function loadL0(){
   renderL0Cards(cats);
 }
 
-// 折叠规则：异常项直接摊开，通过项收进一个可展开的小抽屉，
-// 这样 41 项在一屏里也不会把页面顶下去。
+// L0 卡片：异常排前，全部项直接展开，不折叠。
 function renderL0Cards(cats){
   var only=document.getElementById("l0only").checked;
   var list=only?cats.filter(function(c){return (c.level||0)>0;}):cats;
@@ -256,25 +253,24 @@ function renderL0Cards(cats){
   }
   document.getElementById("cats").innerHTML=list.map(function(c){
     var ck=(c.checks||[]).slice().sort(function(a,b){return (b.level||0)-(a.level||0);});
-    var bad=ck.filter(function(k){return k.level>=2;});
-    var wrn=ck.filter(function(k){return k.level===1;});
-    var pass=ck.filter(function(k){return !k.level;});
-    var cls=bad.length?"hasfail":wrn.length?"haswarn":"";
-    var fill=ck.length?(pass.length/ck.length*100):0;
-    var row=function(k){
+    if(only) ck=ck.filter(function(k){return (k.level||0)>0;});
+    var bad=0,wrn=0,pass=0;
+    (c.checks||[]).forEach(function(k){
+      if(k.level>=2) bad++; else if(k.level===1) wrn++; else pass++;});
+    var cls=bad?"hasfail":wrn?"haswarn":"";
+    var total=(c.checks||[]).length;
+    var fill=total?(pass/total*100):0;
+    // 全部判定一律展开显示，异常排在前面，不做折叠。
+    var rows=ck.map(function(k){
       var lv=k.level>=2?"bad":k.level===1?"warn":"ok";
       var mark=k.level>=2?"✕":k.level===1?"!":"✓";
       return '<div class="chk"><i class="'+lv+'">'+mark+'</i><div class="m">'+
              esc(k.id)+' '+esc(k.name)+'<span>'+esc(k.message||"")+'</span></div></div>';
-    };
-    var head=bad.concat(wrn).map(row).join("");
-    var rest=pass.length&&!only
-      ? '<details><summary>已通过 '+pass.length+' 项</summary>'+pass.map(row).join("")+'</details>'
-      : "";
+    }).join("");
     return '<div class="cat '+cls+'">'+
-      '<div class="cat-h"><b>'+esc(c.name)+'</b><span class="cat-n">'+pass.length+'/'+ck.length+'</span></div>'+
-      '<div class="bar"><i class="'+(bad.length?"bad":wrn.length?"warn":"")+'" style="width:'+fill.toFixed(0)+'%"></i></div>'+
-      '<div class="checks">'+head+rest+'</div></div>';
+      '<div class="cat-h"><b>'+esc(c.name)+'</b><span class="cat-n">'+pass+'/'+total+'</span></div>'+
+      '<div class="bar"><i class="'+(bad?"bad":wrn?"warn":"")+'" style="width:'+fill.toFixed(0)+'%"></i></div>'+
+      '<div class="checks">'+rows+'</div></div>';
   }).join("");
 }
 /* ================= L3 ================= */
@@ -401,21 +397,13 @@ function bindGrp(id,attr,onPick){
 }
 bindGrp("tabs","data-tab",function(v){state.tab=v;renderL3();});
 
-// L0 折叠与筛选状态记在 localStorage，刷新后保持。
+// 「只看异常项」的选择记在 localStorage，刷新后保持。L0 不折叠。
 var LS=(function(){try{return window.localStorage;}catch(e){return null;}})();
-function lsGet(k,d){try{var v=LS&&LS.getItem(k);return v==null?d:v==="1";}catch(e){return d;}}
-function lsSet(k,v){try{LS&&LS.setItem(k,v?"1":"0");}catch(e){}}
-state.l0folded=lsGet("nd.l0folded",false);
-function applyFold(){
-  document.getElementById("l0body").className=state.l0folded?"folded":"";
-  document.getElementById("l0caret").textContent=state.l0folded?"▸":"▾";
-}
-document.getElementById("l0head").addEventListener("click",function(){
-  state.l0folded=!state.l0folded; lsSet("nd.l0folded",state.l0folded); applyFold();});
-document.getElementById("l0only").checked=lsGet("nd.l0only",false);
+document.getElementById("l0only").checked=(function(){
+  try{return LS&&LS.getItem("nd.l0only")==="1";}catch(e){return false;}})();
 document.getElementById("l0only").addEventListener("change",function(){
-  lsSet("nd.l0only",this.checked); if(state.l0cats) renderL0Cards(state.l0cats);});
-applyFold();
+  try{LS&&LS.setItem("nd.l0only",this.checked?"1":"0");}catch(e){}
+  if(state.l0cats) renderL0Cards(state.l0cats);});
 bindGrp("wins","data-win",function(v){state.win=v;loadL3();});
 
 function toggleAuto(){
@@ -429,8 +417,34 @@ function schedule(){
   if(state.timer) clearInterval(state.timer);
   state.timer=setInterval(refreshAll,5000);
 }
+async function loadBaseline(){
+  try{
+    var r=await getJSON("/api/baseline");
+    var b=r.json&&r.json.baseline;
+    var info=document.getElementById("blinfo");
+    if(b&&b.at){
+      var t=new Date(b.at).toLocaleString();
+      info.textContent="基线："+t+(b.note?("（"+b.note+"）"):"")+
+        " —— 累计型计数器只对这之后的新增告警。";
+      document.getElementById("blclear").hidden=false;
+    }else{
+      info.textContent="没有基线：累计型计数器只对本次启动之后的新增告警。";
+      document.getElementById("blclear").hidden=true;
+    }
+  }catch(e){}
+}
+async function setBaseline(){
+  var note=prompt("给这次基线留个说明（可留空）","")||"";
+  await fetch("/api/baseline",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({note:note})});
+  await loadBaseline(); await loadL0();
+}
+async function clearBaseline(){
+  await fetch("/api/baseline",{method:"DELETE"});
+  await loadBaseline(); await loadL0();
+}
 async function refreshAll(){
-  await Promise.all([loadL0(),loadL3(),loadL4(),loadHealth()]);
+  await Promise.all([loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

@@ -99,7 +99,7 @@ func TestMemoryPressureActuallyFires(t *testing.T) {
 		{"M02", 2}, // swap 用了 90%
 		{"M03", 2}, // 脏页 20%
 		{"M04", 2}, // 回写堆积 878 MiB
-		{"M05", 2}, // 有过 OOM 击杀
+		{"M05", 1}, // 有过 OOM 击杀：历史记录留 1 级，观察期内再杀才升到 2
 		{"M06", 2}, // commit 180%
 		{"M07", 2}, // slab 40%
 	} {
