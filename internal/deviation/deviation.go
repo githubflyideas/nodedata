@@ -5,6 +5,7 @@ package deviation
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -87,29 +88,54 @@ func ComputeSigma(lagSeconds int, hour int, hist []Sample) (LagSigma, error) {
 }
 
 // SigmaTable 存储所有 (metricID, lagIndex, hour) 的σ值。
+//
+// 并发约定：σ 表由 sigmaLoop 周期性整表重写，同时被转储循环和 HTTP 请求
+// 并发读取。map 本身不是并发安全的，早期版本没有锁，运行约 5 分钟后
+// （第一次 RefreshSigma）必然 fatal error: concurrent map read and map write。
+// 因此 Set/Get 一律走 RWMutex；值改为指针存储，避免每次写入拷贝 10KB 数组。
 type SigmaTable struct {
-	// [metricID][lagIndex][hour]
-	data map[string][NLag][24]LagSigma
+	mu   sync.RWMutex
+	data map[string]*[NLag][24]LagSigma
 }
 
 // NewSigmaTable 创建空表。
 func NewSigmaTable() *SigmaTable {
-	return &SigmaTable{data: make(map[string][NLag][24]LagSigma)}
+	return &SigmaTable{data: make(map[string]*[NLag][24]LagSigma)}
 }
 
 // Set 写入一个σ值。
 func (t *SigmaTable) Set(metricID string, lagIdx, hour int, ls LagSigma) {
+	if lagIdx < 0 || lagIdx >= NLag || hour < 0 || hour >= 24 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	arr := t.data[metricID]
+	if arr == nil {
+		arr = new([NLag][24]LagSigma)
+		t.data[metricID] = arr
+	}
 	arr[lagIdx][hour] = ls
-	t.data[metricID] = arr
 }
 
 // Get 读取σ值。
 func (t *SigmaTable) Get(metricID string, lagIdx, hour int) LagSigma {
-	if arr, ok := t.data[metricID]; ok {
+	if lagIdx < 0 || lagIdx >= NLag || hour < 0 || hour >= 24 {
+		return LagSigma{Sigma: 1e-6}
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if arr, ok := t.data[metricID]; ok && arr != nil {
 		return arr[lagIdx][hour]
 	}
 	return LagSigma{Sigma: 1e-6}
+}
+
+// Len 返回已有σ的指标数，仅用于自检与调试。
+func (t *SigmaTable) Len() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.data)
 }
 
 // Deviation 处理偏离度计算。
