@@ -1,258 +1,229 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>nodedata — L0 Sanity Check</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Courier New", monospace;
-      background: #0f0f0f;
-      color: #e0e0e0;
-      padding: 20px;
-    }
-    .container {
-      max-width: 1000px;
-      margin: 0 auto;
-    }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 30px;
-      color: #fff;
-      letter-spacing: 1px;
-    }
-    .controls {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 20px;
-      font-size: 12px;
-    }
-    .control-btn {
-      background: #222;
-      border: 1px solid #444;
-      color: #0f0;
-      padding: 8px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-family: monospace;
-      transition: all 0.2s;
-    }
-    .control-btn:hover {
-      background: #333;
-      border-color: #555;
-    }
-    .timestamp {
-      color: #666;
-      font-size: 12px;
-    }
-    .category-panel {
-      background: #1a1a1a;
-      border-left: 3px solid #444;
-      margin-bottom: 12px;
-      padding: 16px;
-      border-radius: 4px;
-      transition: all 0.3s;
-    }
-    .category-panel.pass {
-      border-left-color: #0f0;
-      background: #0f0f1a;
-    }
-    .category-panel.warn {
-      border-left-color: #fa0;
-      background: #1a1510;
-    }
-    .category-panel.fail {
-      border-left-color: #f00;
-      background: #1a0f0f;
-    }
-    .category-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: monospace;
-    }
-    .category-name {
-      flex: 1;
-    }
-    .category-status {
-      color: #0f0;
-      min-width: 50px;
-      text-align: right;
-    }
-    .category-panel.warn .category-status {
-      color: #fa0;
-    }
-    .category-panel.fail .category-status {
-      color: #f00;
-    }
-    .category-checks {
-      display: grid;
-      gap: 8px;
-      font-size: 13px;
-      font-family: monospace;
-      margin-top: 8px;
-    }
-    .check-item {
-      padding: 6px 8px;
-      background: #0f0f0f;
-      border-radius: 3px;
-      display: flex;
-      gap: 8px;
-    }
-    .check-symbol {
-      width: 16px;
-      color: #0f0;
-      font-weight: bold;
-    }
-    .check-symbol.warn {
-      color: #fa0;
-    }
-    .check-symbol.fail {
-      color: #f00;
-    }
-    .check-id {
-      width: 35px;
-      color: #666;
-      font-weight: 600;
-    }
-    .check-msg {
-      flex: 1;
-      color: #aaa;
-    }
-    .summary {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      padding: 16px;
-      margin-top: 20px;
-      border-radius: 4px;
-      font-family: monospace;
-      font-size: 13px;
-      text-align: center;
-    }
-    .summary.pass {
-      color: #0f0;
-      border-color: #0f0;
-      background: #0f0f1a;
-    }
-    .summary.warn {
-      color: #fa0;
-      border-color: #fa0;
-      background: #1a1510;
-    }
-    .summary.fail {
-      color: #f00;
-      border-color: #f00;
-      background: #1a0f0f;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>🔍 nodedata L0 Sanity Check</h1>
-    
-    <div class="controls">
-      <button class="control-btn" onclick="manualRefresh()">⟲ Refresh Now</button>
-      <span class="timestamp">Last: <span id="ts">—</span></span>
-    </div>
-
-    <div id="categories-container"></div>
-    <div id="summary" class="summary"></div>
-  </div>
-
-  <script>
-    async function updateStatus() {
-      try {
-        const response = await fetch('/api/check');
-        if (!response.ok) {
-          document.getElementById('summary').textContent = 'Error: Failed to fetch /api/check';
-          return;
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>nodedata - L0 Sanity Check</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .header-right {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        .timestamp {
+            font-size: 12px;
+            color: #666;
+        }
+        button {
+            padding: 8px 16px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background: #0052a3; }
+        
+        .l0-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .l0-section h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .categories-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+        }
+        .category-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 15px;
+            background: #fafafa;
+        }
+        .category-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .category-status {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+        }
+        .status-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .status-fill {
+            height: 100%;
+            background: #4caf50;
+            transition: width 0.3s ease;
+        }
+        .status-fill.warning { background: #ff9800; }
+        .status-fill.error { background: #f44336; }
+        
+        .checks-list {
+            font-size: 11px;
+            margin-top: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            padding: 8px;
+            background: white;
+            border-radius: 3px;
+        }
+        .check-item {
+            padding: 4px;
+            margin: 2px 0;
+            border-left: 3px solid #4caf50;
+        }
+        .check-item.warn { border-left-color: #ff9800; }
+        .check-item.fail { border-left-color: #f44336; }
+        .check-item-text {
+            display: flex;
+            justify-content: space-between;
         }
         
-        const result = await response.json();
-        if (!result.categories || result.categories.length === 0) {
-          document.getElementById('summary').textContent = 'Initializing...';
-          return;
+        .status-pass { color: #4caf50; }
+        .status-warn { color: #ff9800; }
+        .status-fail { color: #f44336; }
+        
+        .error-msg {
+            color: #f44336;
+            padding: 15px;
+            background: #ffebee;
+            border-radius: 4px;
+            margin: 10px 0;
         }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 nodedata - L0 Sanity Check</h1>
+            <div class="header-right">
+                <div class="timestamp">Last update: <span id="timestamp">--:--:--</span></div>
+                <button onclick="refreshData()">Refresh</button>
+            </div>
+        </div>
 
-        renderCategories(result);
-        renderSummary(result);
-        document.getElementById('ts').textContent = new Date(result.timestamp).toLocaleTimeString();
+        <div class="l0-section">
+            <h2>9 Category Health Status</h2>
+            <div class="categories-grid" id="categories">
+                <div style="text-align: center; color: #999;">Loading...</div>
+            </div>
+        </div>
 
-      } catch (error) {
-        console.error('Error:', error);
-        document.getElementById('summary').textContent = 'Error: ' + error.message;
-      }
-    }
+        <div id="error" style="display: none;"></div>
+    </div>
 
-    function renderCategories(result) {
-      const container = document.getElementById('categories-container');
-      container.innerHTML = '';
-
-      for (const cat of result.categories) {
-        const level = cat.level || 0;
-        const levelName = level === 0 ? 'pass' : level === 1 ? 'warn' : 'fail';
-        const levelSymbol = level === 0 ? '✓' : level === 1 ? '⚠' : '✗';
-        const levelText = level === 0 ? 'OK' : level === 1 ? 'WARN' : 'FAIL';
-
-        const panel = document.createElement('div');
-        panel.className = `category-panel ${levelName}`;
-
-        const header = `
-          <div class="category-header">
-            <span class="category-name">${levelSymbol} ${cat.name}</span>
-            <span class="category-status">${cat.passed}/${cat.total}</span>
-          </div>
-        `;
-
-        let checks = '';
-        if (cat.checks && cat.checks.length > 0) {
-          for (const check of cat.checks) {
-            if (check.level > 0) {
-              const checkLevel = check.level === 1 ? 'warn' : 'fail';
-              const checkSymbol = check.level === 1 ? '⚠' : '✗';
-              checks += `
-                <div class="check-item">
-                  <span class="check-symbol ${checkLevel}">${checkSymbol}</span>
-                  <span class="check-id">${check.id}</span>
-                  <span class="check-msg">${check.message}</span>
-                </div>
-              `;
+    <script>
+        async function refreshData() {
+            try {
+                const resp = await fetch('/api/check');
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                
+                const data = await resp.json();
+                renderCategories(data);
+                
+                document.getElementById('timestamp').textContent = 
+                    new Date(data.Timestamp).toLocaleTimeString();
+                document.getElementById('error').style.display = 'none';
+            } catch (err) {
+                const errDiv = document.getElementById('error');
+                errDiv.innerHTML = `<div class="error-msg">❌ Error loading data: ${err.message}</div>`;
+                errDiv.style.display = 'block';
             }
-          }
         }
 
-        panel.innerHTML = header + (checks ? `<div class="category-checks">${checks}</div>` : '');
-        container.appendChild(panel);
-      }
-    }
+        function renderCategories(data) {
+            const grid = document.getElementById('categories');
+            if (!data.Categories || data.Categories.length === 0) {
+                grid.innerHTML = '<div class="error-msg">No categories data</div>';
+                return;
+            }
 
-    function renderSummary(result) {
-      const summary = document.getElementById('summary');
-      const hasFailure = result.categories.some(c => c.level === 2);
-      const hasWarn = result.categories.some(c => c.level === 1);
-      const statusClass = hasFailure ? 'fail' : hasWarn ? 'warn' : 'pass';
-      const statusText = hasFailure ? '✗ Some checks FAILED' : hasWarn ? '⚠ Warnings detected' : '✓ All checks PASSED';
-      
-      summary.className = `summary ${statusClass}`;
-      summary.textContent = statusText;
-    }
+            grid.innerHTML = data.Categories.map(cat => {
+                const passed = cat.Checks ? cat.Checks.filter(c => c.Level === 0).length : 0;
+                const warns = cat.Checks ? cat.Checks.filter(c => c.Level === 1).length : 0;
+                const fails = cat.Checks ? cat.Checks.filter(c => c.Level === 2).length : 0;
+                const total = cat.Checks ? cat.Checks.length : 0;
+                
+                let statusClass = '';
+                let fillClass = '';
+                if (fails > 0) {
+                    statusClass = 'status-fail';
+                    fillClass = 'error';
+                } else if (warns > 0) {
+                    statusClass = 'status-warn';
+                    fillClass = 'warning';
+                } else {
+                    statusClass = 'status-pass';
+                }
+                
+                const fillPercent = total > 0 ? (passed / total) * 100 : 0;
+                
+                return `
+                    <div class="category-card">
+                        <div class="category-title">${cat.Name}</div>
+                        <div class="category-status">
+                            <span class="${statusClass}">${passed}/${total} passed</span>
+                        </div>
+                        <div class="status-bar">
+                            <div class="status-fill ${fillClass}" style="width: ${fillPercent}%"></div>
+                        </div>
+                        <div class="checks-list">
+                            ${cat.Checks ? cat.Checks.map(check => `
+                                <div class="check-item ${check.Level === 2 ? 'fail' : check.Level === 1 ? 'warn' : ''}">
+                                    <div class="check-item-text">
+                                        <span>${check.Name}</span>
+                                        <span class="${check.Level === 0 ? 'status-pass' : check.Level === 1 ? 'status-warn' : 'status-fail'}">
+                                            ${check.Level === 0 ? '✓' : check.Level === 1 ? '⚠' : '✗'}
+                                        </span>
+                                    </div>
+                                </div>
+                            `).join('') : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
 
-    function manualRefresh() {
-      updateStatus();
-    }
-
-    // Initial load
-    updateStatus();
-    // Auto-refresh every 5 seconds
-    setInterval(updateStatus, 5000);
-  </script>
+        // 页面加载时立即刷新，然后每 5 秒刷新一次
+        refreshData();
+        setInterval(refreshData, 5000);
+    </script>
 </body>
 </html>
