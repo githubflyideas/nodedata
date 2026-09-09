@@ -107,7 +107,7 @@ func runServe() {
 	fmt.Printf("   - Main: http://localhost:%s/\n", *port)
 	fmt.Printf("   - L0 Check: http://localhost:%s/l0.html\n", *port)
 	
-	if err := mux.ListenAndServe(addr, mux); err != nil {
+	if err := server.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

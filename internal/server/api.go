@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -90,13 +89,8 @@ func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
 	return mux
 }
 
-// 让 mux 支持 ListenAndServe 方法
-func (m *http.ServeMux) ListenAndServe(addr string, handler http.Handler) error {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	return http.Serve(listener, handler)
+func ListenAndServe(addr string, handler http.Handler) error {
+	return http.ListenAndServe(addr, handler)
 }
 
 func parseFromTo(r *http.Request) (time.Time, time.Time, error) {
