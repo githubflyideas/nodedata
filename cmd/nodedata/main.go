@@ -104,8 +104,7 @@ func runServe() {
 	fmt.Printf("💾 Data dir: %s\n", dataDir)
 	fmt.Printf("⏱️  Check interval: %s\n", *interval)
 	fmt.Printf("📄 Pages:\n")
-	fmt.Printf("   - Main: http://localhost:%s/\n", *port)
-	fmt.Printf("   - L0 Check: http://localhost:%s/l0.html\n", *port)
+	fmt.Printf("   - Main: http://localhost:%s/ (L0 Sanity Check included)\n", *port)
 	
 	if err := server.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
