@@ -29,24 +29,49 @@ type Sample struct {
 	Value float64
 }
 
-// LagSigma 是某 (lag, hour) 组合的尺度常数。
+// 算法常量。
+const (
+	// MinDiffsForZ 是出 z 值所需的最少同时段差分样本数。
+	// 样本太少时任何尺度估计都是编的，宁可画斜纹说"还没攒够"，
+	// 也不要拿 1~2 个点算出来的 σ 去支撑一个 ±6。
+	MinDiffsForZ = 8
+	// HighConfN 是"高置信"门槛，仅用于标记，不影响判定。
+	HighConfN = 20
+	// shrinkK 让样本量不足时 z 向 0 收缩：z *= N/(N+shrinkK)。
+	// N=8 时 ×0.5，N=20 时 ×0.71，N=200 时 ×0.96。
+	shrinkK = 8.0
+	// ClampZ 是 z 的截断幅度。
+	ClampZ = 6.0
+)
+
+// LagSigma 是某 (lag, hour) 组合上滞后差分 Δ=v(t)-v(t-H) 的分布刻画。
+//
+// 关键点是它同时记录位置（Center）和尺度（Sigma）。早期版本只有尺度，
+// z 直接取 Δ/σ，等于假设"Δ 的正常值是 0"。这个假设对任何有稳定漂移的指标
+// 都不成立：网卡累计字节数、slab、page cache 的 Δ 恒为一个大正数，于是
+// z 永远顶在 +6，整张表通红，真异常反而看不出来。正确做法是把 Δ 与它自己的
+// 历史中位数比，也就是标准化残差。
 type LagSigma struct {
-	Sigma float64
-	N     int
-	Ready bool
-	Low   bool // N < 20
+	Center   float64 // Δ 的历史中位数（正常漂移量）
+	Sigma    float64 // Δ 的稳健尺度（MAD → 四分位距 → 分辨率/相对地板）
+	Quantum  float64 // Δ 分布的分辨率（相邻不同取值的最小间隔），也是 σ 的地板
+	N        int     // 参与估计的差分样本数
+	ZeroFrac float64 // Δ 恰好为 0 的比例；>0.5 说明指标处于量化/静止区
+	Ready    bool    // 历史跨度够且 N >= MinDiffsForZ
+	Low      bool    // N < HighConfN，置信度低
 }
 
-// ComputeSigma 批算某档位在某小时桶上的 σ。
+// ComputeSigma 批算某档位在某小时桶上 Δ 分布的位置与尺度。
 // hist 须按时间升序，覆盖足够历史。
 func ComputeSigma(lagSeconds int, hour int, hist []Sample) (LagSigma, error) {
 	if len(hist) == 0 {
-		return LagSigma{Sigma: 1e-6}, nil
+		return LagSigma{Sigma: 1e-9}, nil
 	}
 	H := time.Duration(lagSeconds) * time.Second
-	ready := len(hist) > 0 && hist[len(hist)-1].TS.Sub(hist[0].TS) >= H
+	tol := LagTolerance(H)
+	spanOK := hist[len(hist)-1].TS.Sub(hist[0].TS) >= H
 
-	// 收集 28 天内 hour 桶的 Δv（有符号，用于正确计算 MAD）
+	// 收集 28 天内 hour 桶的 Δv（有符号）。
 	var diffs []float64
 	end := hist[len(hist)-1].TS
 	cutoff := end.Add(-28 * 24 * time.Hour)
@@ -54,37 +79,167 @@ func ComputeSigma(lagSeconds int, hour int, hist []Sample) (LagSigma, error) {
 
 	for i := len(hist) - 1; i >= 0; i-- {
 		s := hist[i]
-		if s.TS.Before(cutoff) { break }
-		if s.TS.UTC().Hour() != hour { continue }
-		// 找 t-H 最近样本；若目标在历史开始之前则无有效 prev，跳过
+		if s.TS.Before(cutoff) {
+			break
+		}
+		if s.TS.UTC().Hour() != hour {
+			continue
+		}
 		target := s.TS.Add(-H)
-		if target.Before(histStart) { continue }
-		prev, ok := findNearest(hist, target, H)
-		if !ok { continue }
-		diffs = append(diffs, s.Value-prev) // 有符号差分
+		if target.Before(histStart) {
+			continue
+		}
+		// 容差必须与 Z 里配 v(t-H) 用的一致，否则 σ 是"松配对"的尺度、
+		// Δ 是"紧配对"的量，两者根本不是同一个分布。早期版本这里传的是 H
+		// 本身（等于 28 天内任何点都算"28 天前的值"），σ 完全失真。
+		prev, ok := findNearest(hist, target, tol)
+		if !ok {
+			continue
+		}
+		diffs = append(diffs, s.Value-prev)
 	}
 
-	ls := LagSigma{N: len(diffs), Ready: ready}
-	if !ready || len(diffs) == 0 {
-		ls.Sigma = 1e-6
-		ls.Low = true
+	ls := LagSigma{N: len(diffs)}
+	ls.Ready = spanOK && len(diffs) >= MinDiffsForZ
+	ls.Low = ls.N < HighConfN
+	if len(diffs) == 0 {
+		ls.Sigma = 1e-9
 		return ls, nil
 	}
 
-	mad := computeMAD(diffs)
-	medDiff := median(absSlice(diffs))
-
-	// σ 下限：低置信度（N<20）时用 1e-6，高置信度时用 1/6，
-	// 确保全零指标在高置信度时 z = Δ/σ ≤ 6（Δ=1）。
-	absFloor := 1e-6
-	if ls.N >= 20 {
-		absFloor = 1.0 / 6.0
-	}
-	sigma := math.Max(1.4826*mad,
-		math.Max(0.02*medDiff, absFloor))
-	ls.Sigma = sigma
-	ls.Low = ls.N < 20
+	ls.Center = median(diffs)
+	ls.Quantum = resolutionOf(diffs)
+	ls.ZeroFrac = zeroFraction(diffs)
+	ls.Sigma = robustScale(diffs, ls.Center, ls.Quantum)
 	return ls, nil
+}
+
+// relFloorFrac 是退化情形下的相对地板：Δ 在分辨率内完全恒定时，
+// 尺度只能相对它自己的量级来给。5% 意味着速率变化 15% 才到 z=3。
+const relFloorFrac = 0.05
+
+// robustScale 估计 Δ 的尺度，逐级退化。
+//
+// 为什么要有阶梯：MAD 在超过一半样本取值相同时恒为 0。这在节点指标里是常态
+// ——整数型指标（某进程的 CPU jiffies 在 0/1 之间跳）、速率恒定的计数器，
+// 差分里一大半甚至全部是同一个数。σ=0 之后无论加什么绝对地板都会失真：
+// 地板取小了（早期版本 1e-6）任何抖动都是 ±6；地板取死了（早期版本 1/6）
+// 整数指标动一格就恰好顶到 6。
+//
+// 也不能拿 |Δ| 的中位数当尺度（早期版本的 0.02*medDiff）：那是 Δ 的量级，
+// 不是它的离散程度，代进去 z 恒等于 50，一样满量程。
+//
+// 阶梯是：MAD → 四分位距 → 完全退化时用「分辨率」与「量级的 5%」取大者，
+// 最后统一以分辨率为地板。这样动一格 ⇒ z≈1，动三格 ⇒ z≈3。
+func robustScale(diffs []float64, center, resolution float64) float64 {
+	// 三个在正态下都收敛到 σ 的稳健估计，取最大者。
+	// 正态数据上三者一致；多峰/重尾数据上（周期性抖动、定时任务、锯齿型缓存）
+	// MAD 只看中位数附近那一团，会把另一个峰当成异常，分位差则能覆盖到峰间距。
+	// 取 max 意味着宁可保守：只有真的超出历史见过的幅度才算异常。
+	s := 1.4826 * computeMAD(diffs)
+	if v := iqr(diffs) / 1.349; v > s { // 四分位差
+		s = v
+	}
+	if v := interdecile(diffs) / 2.563; v > s { // 十分位差，覆盖多峰
+		s = v
+	}
+	if s <= 0 {
+		// Δ 在分辨率内完全恒定（典型：速率恒定的累计计数器、恒 0 的指标）。
+		s = math.Max(resolution, relFloorFrac*math.Abs(center))
+	}
+	if s < resolution {
+		s = resolution
+	}
+	if s <= 0 {
+		s = 1e-9
+	}
+	return s
+}
+
+// resolutionOf 推断 Δ 分布的分辨率：相邻不同取值之间的最小间隔。
+// 只有一个取值时无从推断，返回 0（由相对地板兜底）；
+// 全为整数的指标至少给 1，避免浮点噪声把分辨率压到无意义的小值。
+func resolutionOf(diffs []float64) float64 {
+	allInt := true
+	uniq := make([]float64, 0, len(diffs))
+	seen := make(map[float64]struct{}, len(diffs))
+	for _, d := range diffs {
+		if d != math.Trunc(d) {
+			allInt = false
+		}
+		if _, ok := seen[d]; !ok {
+			seen[d] = struct{}{}
+			uniq = append(uniq, d)
+		}
+	}
+	res := math.Inf(1)
+	if len(uniq) >= 2 {
+		sort.Float64s(uniq)
+		for i := 1; i < len(uniq); i++ {
+			if gap := uniq[i] - uniq[i-1]; gap > 0 && gap < res {
+				res = gap
+			}
+		}
+	}
+	if math.IsInf(res, 1) {
+		res = 0
+	}
+	if allInt && res < 1 {
+		res = 1
+	}
+	return res
+}
+
+func zeroFraction(diffs []float64) float64 {
+	if len(diffs) == 0 {
+		return 0
+	}
+	n := 0
+	for _, d := range diffs {
+		if d == 0 {
+			n++
+		}
+	}
+	return float64(n) / float64(len(diffs))
+}
+
+// quantileSpread 返回 [p, 1-p] 分位差，样本不足时返回 0。
+func quantileSpread(vals []float64, p float64, minN int) float64 {
+	if len(vals) < minN {
+		return 0
+	}
+	sorted := make([]float64, len(vals))
+	copy(sorted, vals)
+	sort.Float64s(sorted)
+	q := func(pp float64) float64 {
+		idx := pp * float64(len(sorted)-1)
+		lo := int(math.Floor(idx))
+		hi := int(math.Ceil(idx))
+		if lo == hi {
+			return sorted[lo]
+		}
+		return sorted[lo] + (sorted[hi]-sorted[lo])*(idx-float64(lo))
+	}
+	return q(1-p) - q(p)
+}
+
+// iqr 是四分位差 P75-P25，正态下等于 1.349σ。
+func iqr(vals []float64) float64 { return quantileSpread(vals, 0.25, 4) }
+
+// interdecile 是十分位差 P90-P10，正态下等于 2.563σ。
+func interdecile(vals []float64) float64 { return quantileSpread(vals, 0.10, 10) }
+
+// LagTolerance 是配 v(t-H) 时允许的时间误差：H 的 2%，夹在 30 秒到 30 分钟之间。
+// ComputeSigma 与 Z 必须用同一个值。
+func LagTolerance(H time.Duration) time.Duration {
+	tol := H / 50
+	if tol < 30*time.Second {
+		tol = 30 * time.Second
+	}
+	if tol > 30*time.Minute {
+		tol = 30 * time.Minute
+	}
+	return tol
 }
 
 // SigmaTable 存储所有 (metricID, lagIndex, hour) 的σ值。
@@ -151,10 +306,14 @@ func New(sigma *SigmaTable) *Deviation {
 }
 
 // Z 返回十四档 z 值，未就绪/未找到历史值时返回 NaN。
+//
+// z = (Δ - Center) / Sigma，其中 Δ = v(t) - v(t-H)。
+// 减 Center 这一步是关键：它把"这个指标平时就在涨"从异常里剔除出去，
+// 剩下的才是"这次涨得跟平时不一样"。样本量不足时再按 N/(N+k) 收缩，
+// 避免刚启动几分钟就给出满量程结论。
 func (d *Deviation) Z(metricID string, v float64, at time.Time) [NLag]float64 {
 	var result [NLag]float64
 	hour := at.UTC().Hour()
-	iv := 30 * time.Second // 默认容差，可从外部设置
 
 	for i, lagSec := range LagSeconds {
 		H := time.Duration(lagSec) * time.Second
@@ -166,16 +325,24 @@ func (d *Deviation) Z(metricID string, v float64, at time.Time) [NLag]float64 {
 		var prevVal float64
 		var found bool
 		if d.LookupFn != nil {
-			prevVal, found = d.LookupFn(metricID, at.Add(-H), iv)
+			prevVal, found = d.LookupFn(metricID, at.Add(-H), LagTolerance(H))
 		}
 		if !found {
 			result[i] = math.NaN()
 			continue
 		}
-		z := (v - prevVal) / ls.Sigma
-		// clamp ±6
-		if z > 6 { z = 6 }
-		if z < -6 { z = -6 }
+		sigma := ls.Sigma
+		if sigma <= 0 {
+			sigma = 1e-9
+		}
+		z := (v - prevVal - ls.Center) / sigma
+		z *= float64(ls.N) / (float64(ls.N) + shrinkK) // 小样本收缩
+		if z > ClampZ {
+			z = ClampZ
+		}
+		if z < -ClampZ {
+			z = -ClampZ
+		}
 		result[i] = z
 	}
 	return result

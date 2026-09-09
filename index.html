@@ -125,7 +125,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 
 <section>
   <h2>整机偏离度快照<span class="layer">L3 · 14 个 lag 的 z-score</span></h2>
-  <div class="sub">z = (当前值 − 同时段基线中位数) / MAD 尺度，按小时分桶；截断到 ±6。斜纹格 = 该 lag 的历史还没攒够。</div>
+  <div class="sub">Δ = 当前值 − 一档之前的值；z = (Δ − 同时段 Δ 的历史中位数) / 稳健尺度（MAD、四分位差、十分位差取大者），按小时分桶，样本少时向 0 收缩，截断到 ±6。减中位数这一步把"平时就在涨"排除在外，所以累计计数器、page cache 这类指标不会恒定顶格。斜纹格 = 该 lag 的历史还没攒够（少于 8 个同时段样本）。</div>
   <div class="toolbar">
     <div class="grp" id="tabs">
       <button class="on" data-tab="acute">急性</button>
