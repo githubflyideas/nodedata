@@ -148,23 +148,27 @@ func domainOf(id string) string {
 	if i := strings.IndexByte(id, '.'); i > 0 {
 		return id[:i]
 	}
-	return "other"
+	return id
 }
 
-// unitOf 由 metricID 后缀推断单位。
+// unitOf 由 metricID 推断单位。/proc 里的内存类指标采集时已换算成字节。
 func unitOf(id string) string {
 	switch {
 	case strings.HasSuffix(id, "_ms"), strings.Contains(id, "await"):
 		return "ms"
-	case strings.HasSuffix(id, "_s"):
+	case strings.HasSuffix(id, "_s"), strings.HasSuffix(id, "_sec"):
 		return "s"
-	case strings.Contains(id, "bytes"):
+	case strings.Contains(id, "bytes"), strings.HasPrefix(id, "mem."),
+		strings.HasPrefix(id, "swap."), id == "slab":
 		return "bytes"
-	case strings.Contains(id, "iops"), strings.Contains(id, "pps"):
+	case strings.Contains(id, "iops"), strings.Contains(id, "pps"),
+		strings.HasSuffix(id, "_per_s"):
 		return "ops/s"
 	case strings.Contains(id, "util"), strings.HasPrefix(id, "cpu."),
-		strings.Contains(id, "psi"):
+		strings.HasPrefix(id, "psi"):
 		return "percent"
+	case strings.HasPrefix(id, "loadavg"):
+		return "load"
 	default:
 		return "count"
 	}
@@ -173,7 +177,8 @@ func unitOf(id string) string {
 // primaryOf 标记主视图指标。
 func primaryOf(id string) int {
 	switch domainOf(id) {
-	case "cpu", "mem", "disk", "net", "psi", "load":
+	case "cpu", "mem", "disk", "net", "psi", "loadavg", "swap",
+		"procs_running", "procs_blocked", "slab":
 		return 1
 	default:
 		return 0

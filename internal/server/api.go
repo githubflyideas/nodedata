@@ -29,6 +29,7 @@ type QueryFns struct {
 type MuxConfig struct {
 	WebRoot string
 	DataDir string
+	Version string
 }
 
 func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
@@ -46,6 +47,11 @@ func NewMuxWithConfig(cfg MuxConfig, qfns QueryFns) *http.ServeMux {
 
 	fs := http.FileServer(http.Dir(webRoot))
 	mux.Handle("/", fs)
+
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"version": cfg.Version})
+	})
 
 	// /data/*.json：先读磁盘转储；缺失或非法 JSON 时用内存实时构造兜底。
 	// 只要采集器在跑，页面就不会再出现 404 或空文件。

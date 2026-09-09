@@ -1,229 +1,396 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>nodedata - L0 Sanity Check</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #f5f5f5;
-            padding: 20px;
-        }
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-        }
-        .header h1 {
-            font-size: 28px;
-            font-weight: 600;
-        }
-        .header-right {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-        .timestamp {
-            font-size: 12px;
-            color: #666;
-        }
-        button {
-            padding: 8px 16px;
-            background: #0066cc;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        button:hover { background: #0052a3; }
-        
-        .l0-section {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .l0-section h2 {
-            font-size: 16px;
-            margin-bottom: 15px;
-            color: #333;
-        }
-        .categories-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 15px;
-        }
-        .category-card {
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            padding: 15px;
-            background: #fafafa;
-        }
-        .category-title {
-            font-weight: 600;
-            margin-bottom: 10px;
-            font-size: 14px;
-        }
-        .category-status {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
-            color: #666;
-        }
-        .status-bar {
-            width: 100%;
-            height: 6px;
-            background: #e0e0e0;
-            border-radius: 3px;
-            margin-top: 8px;
-            overflow: hidden;
-        }
-        .status-fill {
-            height: 100%;
-            background: #4caf50;
-            transition: width 0.3s ease;
-        }
-        .status-fill.warning { background: #ff9800; }
-        .status-fill.error { background: #f44336; }
-        
-        .checks-list {
-            font-size: 11px;
-            margin-top: 10px;
-            max-height: 150px;
-            overflow-y: auto;
-            padding: 8px;
-            background: white;
-            border-radius: 3px;
-        }
-        .check-item {
-            padding: 4px;
-            margin: 2px 0;
-            border-left: 3px solid #4caf50;
-        }
-        .check-item.warn { border-left-color: #ff9800; }
-        .check-item.fail { border-left-color: #f44336; }
-        .check-item-text {
-            display: flex;
-            justify-content: space-between;
-        }
-        
-        .status-pass { color: #4caf50; }
-        .status-warn { color: #ff9800; }
-        .status-fail { color: #f44336; }
-        
-        .error-msg {
-            color: #f44336;
-            padding: 15px;
-            background: #ffebee;
-            border-radius: 4px;
-            margin: 10px 0;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nodedata — 节点性能监控</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --line:#e3e6ea; --ink:#1b1f24; --dim:#697280;
+  --ok:#2e9e5b; --warn:#d98016; --bad:#d63f3f; --cool:#2f6fbf; --accent:#1b4b8f;
+  color-scheme:light;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;padding:18px}
+.wrap{max-width:1500px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+header h1{font-size:20px;font-weight:650;letter-spacing:-.2px}
+header h1 small{font-weight:400;color:var(--dim);font-size:13px;margin-left:8px}
+.hdr-right{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--dim)}
+.badge{display:inline-block;padding:2px 9px;border-radius:11px;font-size:12px;font-weight:600;color:#fff}
+.badge.ok{background:var(--ok)} .badge.warn{background:var(--warn)} .badge.bad{background:var(--bad)}
+.badge.idle{background:#98a1ad}
+button{font:inherit;padding:6px 13px;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:6px;cursor:pointer}
+button:hover{border-color:#bfc6cf;background:#fafbfc}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+section{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px 18px;margin-bottom:16px}
+section>h2{font-size:15px;font-weight:650;margin-bottom:3px}
+section>h2 .layer{color:var(--dim);font-weight:500;font-size:12px;margin-left:7px}
+.sub{color:var(--dim);font-size:12px;margin-bottom:13px}
+.err{border-left:3px solid var(--bad);background:#fdf0f0;color:#8f2a2a;padding:10px 12px;
+  border-radius:5px;font-size:13px;margin:8px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.empty{color:var(--dim);font-size:13px;padding:14px 0}
+/* ---- L0 ---- */
+.cats{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
+.cat{border:1px solid var(--line);border-radius:7px;padding:11px 12px;background:#fcfcfd}
+.cat.hasfail{border-color:#f0c2c2;background:#fffafa}
+.cat.haswarn{border-color:#f2ddb8;background:#fffdf7}
+.cat-h{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.cat-h b{font-size:13px;font-weight:620}
+.cat-n{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.bar{height:5px;background:#e7eaee;border-radius:3px;margin:8px 0 9px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--ok);border-radius:3px}
+.bar>i.warn{background:var(--warn)} .bar>i.bad{background:var(--bad)}
+.checks{max-height:170px;overflow-y:auto;font-size:12px}
+.chk{display:flex;gap:7px;align-items:flex-start;padding:3px 0;border-top:1px dotted #e7eaee}
+.chk:first-child{border-top:0}
+.chk .m{flex:1;min-width:0}
+.chk .m span{display:block;color:var(--dim);font-size:11px;word-break:break-word}
+.chk i{font-style:normal;flex:none;width:13px;text-align:center;font-weight:700}
+.chk i.ok{color:var(--ok)} .chk i.warn{color:var(--warn)} .chk i.bad{color:var(--bad)}
+/* ---- L3 ---- */
+.toolbar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:12px}
+.grp{display:flex;gap:5px}
+.grp button{padding:5px 11px;font-size:13px}
+.tabhint{color:var(--dim);font-size:12px}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:5px 8px;text-align:left;border-bottom:1px solid #eef0f3;white-space:nowrap}
+th{font-weight:600;color:var(--dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.3px;
+  position:sticky;top:0;background:#fff}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.mid,th.mid{text-align:center}
+tr:hover td{background:#fafbfc}
+.mid-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.z{display:inline-block;min-width:38px;padding:1px 5px;border-radius:4px;font-variant-numeric:tabular-nums;
+  font-size:11.5px;font-weight:600}
+.z.q0{background:#f0f2f5;color:#7b8493}
+.z.q1{background:#fdf1dd;color:#96591a} .z.q2{background:#fadfc7;color:#8a4413}
+.z.q3{background:#f6cdc9;color:#8f2723} .z.q4{background:#e8564f;color:#fff}
+.z.neg1{background:#e6eefa;color:#2a5c9e} .z.neg2{background:#cfe0f6;color:#1f4c88}
+.z.na{background:repeating-linear-gradient(135deg,#f2f4f7 0 4px,#e9ecf1 4px 8px);color:#a7aeb9}
+/* ---- L4 ---- */
+.item{border:1px solid var(--line);border-left-width:3px;border-radius:6px;padding:10px 12px;margin-bottom:9px;background:#fcfcfd}
+.item.l2{border-left-color:var(--bad);background:#fffafa}
+.item.l1{border-left-color:var(--warn);background:#fffdf7}
+.item.l0{border-left-color:var(--cool)}
+.item-h{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+.item-h b{font-size:13.5px}
+.item-h .cat-tag{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.item p{font-size:12.5px;margin-top:5px}
+.item p.kv{color:var(--dim)}
+.item p.kv b{color:var(--ink);font-weight:600}
+.item details{margin-top:6px;font-size:11.5px;color:var(--dim)}
+.item summary{cursor:pointer;color:var(--accent)}
+.item details ul{margin:5px 0 0 16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.notes{font-size:12px;color:var(--dim);margin-top:9px;padding-top:8px;border-top:1px dotted var(--line)}
+/* ---- footer ---- */
+.hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:8px}
+.hcell{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fcfcfd}
+.hcell span{display:block;font-size:11px;color:var(--dim)}
+.hcell b{font-size:14px;font-variant-numeric:tabular-nums}
+footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>📊 nodedata - L0 Sanity Check</h1>
-            <div class="header-right">
-                <div class="timestamp">Last update: <span id="timestamp">--:--:--</span></div>
-                <button onclick="refreshData()">Refresh</button>
-            </div>
-        </div>
+<div class="wrap">
+<header>
+  <h1>nodedata<small id="host">—</small></h1>
+  <div class="hdr-right">
+    <span id="overall" class="badge idle">加载中</span>
+    <span>数据源 <b id="src">—</b></span>
+    <span>更新于 <b id="ts">--:--:--</b></span>
+    <button id="auto" class="on" onclick="toggleAuto()">自动刷新 5s</button>
+    <button onclick="refreshAll()">立即刷新</button>
+  </div>
+</header>
+<section>
+  <h2>绝对判定<span class="layer">L0 · 9 类硬阈值巡检，不依赖历史</span></h2>
+  <div class="sub" id="l0sum">—</div>
+  <div id="l0err"></div>
+  <div class="cats" id="cats"><div class="empty">加载中…</div></div>
+</section>
 
-        <div class="l0-section">
-            <h2>9 Category Health Status</h2>
-            <div class="categories-grid" id="categories">
-                <div style="text-align: center; color: #999;">Loading...</div>
-            </div>
-        </div>
-
-        <div id="error" style="display: none;"></div>
+<section>
+  <h2>整机偏离度快照<span class="layer">L3 · 14 个 lag 的 z-score</span></h2>
+  <div class="sub">z = (当前值 − 同时段基线中位数) / MAD 尺度，按小时分桶；截断到 ±6。斜纹格 = 该 lag 的历史还没攒够。</div>
+  <div class="toolbar">
+    <div class="grp" id="tabs">
+      <button class="on" data-tab="acute">急性</button>
+      <button data-tab="degrade">劣化</button>
+      <button data-tab="absolute">绝对值</button>
     </div>
+    <div class="grp" id="wins">
+      <button data-win="1h" class="on">1h</button>
+      <button data-win="6h">6h</button>
+      <button data-win="24h">24h</button>
+      <button data-win="7d">7d</button>
+      <button data-win="30d">30d</button>
+    </div>
+    <span class="tabhint" id="tabhint"></span>
+  </div>
+  <div id="l3err"></div>
+  <div class="tbl-wrap"><table id="l3tbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
+</section>
 
-    <script>
-        async function refreshData() {
-            try {
-                const resp = await fetch('/api/check');
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                
-                const data = await resp.json();
-                renderCategories(data);
-                
-                document.getElementById('timestamp').textContent = 
-                    new Date(data.Timestamp).toLocaleTimeString();
-                document.getElementById('error').style.display = 'none';
-            } catch (err) {
-                const errDiv = document.getElementById('error');
-                errDiv.innerHTML = `<div class="error-msg">❌ Error loading data: ${err.message}</div>`;
-                errDiv.style.display = 'block';
-            }
-        }
+<section>
+  <h2>诊断链<span class="layer">L4 · 由 L0 判定与 L3 偏离推导，不是模板文案</span></h2>
+  <div class="sub" id="l4sum">—</div>
+  <div id="l4err"></div>
+  <div id="items"></div>
+  <div class="notes" id="l4notes"></div>
+</section>
 
-        function renderCategories(data) {
-            const grid = document.getElementById('categories');
-            if (!data.Categories || data.Categories.length === 0) {
-                grid.innerHTML = '<div class="error-msg">No categories data</div>';
-                return;
-            }
+<section>
+  <h2>采集器自检<span class="layer">L1 · health.json</span></h2>
+  <div id="l5err"></div>
+  <div class="hgrid" id="health"></div>
+</section>
 
-            grid.innerHTML = data.Categories.map(cat => {
-                const passed = cat.Checks ? cat.Checks.filter(c => c.Level === 0).length : 0;
-                const warns = cat.Checks ? cat.Checks.filter(c => c.Level === 1).length : 0;
-                const fails = cat.Checks ? cat.Checks.filter(c => c.Level === 2).length : 0;
-                const total = cat.Checks ? cat.Checks.length : 0;
-                
-                let statusClass = '';
-                let fillClass = '';
-                if (fails > 0) {
-                    statusClass = 'status-fail';
-                    fillClass = 'error';
-                } else if (warns > 0) {
-                    statusClass = 'status-warn';
-                    fillClass = 'warning';
-                } else {
-                    statusClass = 'status-pass';
-                }
-                
-                const fillPercent = total > 0 ? (passed / total) * 100 : 0;
-                
-                return `
-                    <div class="category-card">
-                        <div class="category-title">${cat.Name}</div>
-                        <div class="category-status">
-                            <span class="${statusClass}">${passed}/${total} passed</span>
-                        </div>
-                        <div class="status-bar">
-                            <div class="status-fill ${fillClass}" style="width: ${fillPercent}%"></div>
-                        </div>
-                        <div class="checks-list">
-                            ${cat.Checks ? cat.Checks.map(check => `
-                                <div class="check-item ${check.Level === 2 ? 'fail' : check.Level === 1 ? 'warn' : ''}">
-                                    <div class="check-item-text">
-                                        <span>${check.Name}</span>
-                                        <span class="${check.Level === 0 ? 'status-pass' : check.Level === 1 ? 'status-warn' : 'status-fail'}">
-                                            ${check.Level === 0 ? '✓' : check.Level === 1 ? '⚠' : '✗'}
-                                        </span>
-                                    </div>
-                                </div>
-                            `).join('') : ''}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
+<footer>nodedata <span id="ver">—</span> · 单静态二进制 · L0 巡检 / L1 采集 / L2 转储 / L3 偏离 / L4 诊断</footer>
+</div>
+<script>
+"use strict";
+var state={tab:"acute",win:"1h",heat:null,timer:null,auto:true};
+var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
+var DEGRADE=[4,5,6,7,8,9,10,11,12,13];     // L5..L14 : 5400s .. 28d
+var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
+          degrade:"只看 L5–L14（1.5 小时 ~ 28 天），缓慢劣化在这里才显形。",
+          absolute:"不做任何归一化，直接给当前原始读数。"};
 
-        // 页面加载时立即刷新，然后每 5 秒刷新一次
-        refreshData();
-        setInterval(refreshData, 5000);
-    </script>
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+
+function showErr(id,url,msg){
+  document.getElementById(id).innerHTML='<div class="err">'+esc(url)+' → '+esc(msg)+'</div>';}
+function clearErr(id){document.getElementById(id).innerHTML="";}
+
+// 拿 JSON，同时把 HTTP 码和响应体长度带进错误信息，方便定位。
+async function getJSON(url){
+  var r=await fetch(url,{cache:"no-store"});
+  var body=await r.text();
+  if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText+"（"+body.length+" 字节）");
+  if(body.length===0) throw new Error("HTTP 200 但响应体是空的（转储可能正在写入）");
+  var j;
+  try{ j=JSON.parse(body); }
+  catch(e){ throw new Error("HTTP 200 但不是合法 JSON："+e.message+"｜开头 60 字节："+body.slice(0,60)); }
+  return {json:j,src:r.headers.get("X-Nodedata-Source")||""};
+}
+
+function fmt(v,unit){
+  if(v==null||!isFinite(v)) return "—";
+  if(unit==="bytes"){
+    var u=["B","KiB","MiB","GiB","TiB"],i=0,x=Math.abs(v);
+    while(x>=1024&&i<u.length-1){x/=1024;i++;}
+    return (v<0?"-":"")+x.toFixed(x<10?2:1)+" "+u[i];
+  }
+  if(unit==="percent") return v.toFixed(2)+" %";
+  if(unit==="ms")      return v.toFixed(2)+" ms";
+  if(Math.abs(v)>=1e6) return (v/1e6).toFixed(2)+"M";
+  if(Math.abs(v)>=1000)return v.toFixed(0);
+  return (Math.round(v*100)/100).toString();
+}
+
+// z 存成 int8（z×20），null = 该 lag 未就绪。
+function zval(p,i){var a=p&&p.z;if(!a)return null;var v=a[i];return v==null?null:v/20;}
+function zclass(z){
+  if(z==null) return "na";
+  var a=Math.abs(z);
+  if(a<2) return "q0";
+  if(z<0)  return a<4?"neg1":"neg2";
+  if(a<3)  return "q1";
+  if(a<4.5)return "q2";
+  if(a<6)  return "q3";
+  return "q4";
+}
+function zcell(z,ready){
+  if(z==null) return '<span class="z na" title="'+(ready?"该指标此 lag 无基线":"历史不足")+'">—</span>';
+  return '<span class="z '+zclass(z)+'">'+(z>0?"+":"")+z.toFixed(2)+'</span>';
+}
+
+/* ================= L0 ================= */
+async function loadL0(){
+  var d;
+  try{ d=(await getJSON("/api/check")).json; clearErr("l0err"); }
+  catch(e){ showErr("l0err","/api/check",e.message);
+            document.getElementById("cats").innerHTML=""; return; }
+  var cats=d.categories||[],P=0,W=0,F=0;
+  cats.forEach(function(c){(c.checks||[]).forEach(function(k){
+    if(k.level>=2)F++; else if(k.level===1)W++; else P++;});});
+  var total=P+W+F;
+  document.getElementById("l0sum").textContent=
+    cats.length+" 类 / "+total+" 项：通过 "+P+"，告警 "+W+"，失败 "+F+"（exit_code "+(d.exit_code==null?"—":d.exit_code)+"）";
+  var b=document.getElementById("overall");
+  b.className="badge "+(F>0?"bad":W>0?"warn":"ok");
+  b.textContent=F>0?("L0 失败 "+F):W>0?("L0 告警 "+W):"L0 全通过";
+  if(d.timestamp) document.getElementById("ts").textContent=new Date(d.timestamp).toLocaleTimeString();
+  if(!cats.length){document.getElementById("cats").innerHTML='<div class="empty">巡检结果还没生成。</div>';return;}
+
+  document.getElementById("cats").innerHTML=cats.map(function(c){
+    var ck=(c.checks||[]).slice().sort(function(a,b){return (b.level||0)-(a.level||0);});
+    var f=ck.filter(function(k){return k.level>=2;}).length;
+    var w=ck.filter(function(k){return k.level===1;}).length;
+    var pass=ck.length-f-w;
+    var cls=f?"hasfail":w?"haswarn":"";
+    var fill=ck.length?(pass/ck.length*100):0;
+    return '<div class="cat '+cls+'">'+
+      '<div class="cat-h"><b>'+esc(c.name)+'</b><span class="cat-n">'+pass+'/'+ck.length+'</span></div>'+
+      '<div class="bar"><i class="'+(f?"bad":w?"warn":"")+'" style="width:'+fill.toFixed(0)+'%"></i></div>'+
+      '<div class="checks">'+ck.map(function(k){
+        var lv=k.level>=2?"bad":k.level===1?"warn":"ok";
+        var mark=k.level>=2?"✕":k.level===1?"!":"✓";
+        var msg=(k.message&&k.message!=="OK")?'<span>'+esc(k.message)+'</span>':"";
+        return '<div class="chk"><i class="'+lv+'">'+mark+'</i><div class="m">'+
+               esc(k.id)+' '+esc(k.name)+msg+'</div></div>';
+      }).join("")+'</div></div>';
+  }).join("");
+}
+/* ================= L3 ================= */
+async function loadL3(){
+  var r;
+  try{ r=await getJSON("/data/"+state.win+".json"); clearErr("l3err"); }
+  catch(e){ showErr("l3err","/data/"+state.win+".json",e.message);
+            state.heat=null;
+            document.getElementById("l3tbl").innerHTML="<tbody><tr><td class=\"empty\">无数据</td></tr></tbody>";
+            return; }
+  state.heat=r.json;
+  // 转储默认 30s 一轮，页面 5s 一刷 —— 把快照年龄显示出来，避免把旧快照当实时。
+  var age="";
+  if(r.json.generated_at){
+    var a=Math.max(0,Math.round(Date.now()/1000-r.json.generated_at));
+    age=" ("+(a<90?a+"s":Math.round(a/60)+"min")+" 前)";
+  }
+  document.getElementById("src").textContent=(r.src||"—")+age;
+  if(r.json.host) document.getElementById("host").textContent="· "+r.json.host;
+  renderL3();
+}
+
+function renderL3(){
+  var h=state.heat,el=document.getElementById("l3tbl");
+  document.getElementById("tabhint").textContent=HINT[state.tab];
+  if(!h){el.innerHTML="<tbody><tr><td class=\"empty\">无数据</td></tr></tbody>";return;}
+  var ms=(h.metrics||[]).map(function(m){
+    var last=(m.points&&m.points.length)?m.points[m.points.length-1]:null;
+    return {id:m.metric_id,dom:m.domain,unit:m.unit,pri:m.is_primary,pt:last,n:(m.points||[]).length};
+  });
+  if(!ms.length){el.innerHTML="<tbody><tr><td class=\"empty\">这个窗口里没有指标。</td></tr></tbody>";return;}
+  var lags=h.lags||[],ready=h.lag_ready||[];
+  if(state.tab==="absolute") return renderAbs(el,ms);
+
+  var idx=(state.tab==="acute"?ACUTE:DEGRADE).filter(function(i){return i<lags.length;});
+  ms.forEach(function(m){
+    var pk=null;
+    idx.forEach(function(i){var z=zval(m.pt,i);
+      if(z!=null&&(pk==null||Math.abs(z)>Math.abs(pk)))pk=z;});
+    m.peak=pk;
+  });
+  ms.sort(function(a,b){
+    var A=a.peak==null?-1:Math.abs(a.peak),B=b.peak==null?-1:Math.abs(b.peak);
+    if(B!==A) return B-A;
+    return a.id<b.id?-1:1;
+  });
+  var head='<tr><th>指标</th><th>域</th><th class="num">当前值</th><th class="num">峰值 z</th>'+
+    idx.map(function(i){
+      var s=h.lag_seconds?h.lag_seconds[i]:0;
+      return '<th class="mid'+(ready[i]?"":" ")+'" title="'+s+'s">'+esc(lags[i])+'</th>';}).join("")+
+    '<th class="mid">起始 lag</th><th class="num">广度</th></tr>';
+  var rows=ms.map(function(m){
+    var pk=m.peak==null?'<span class="z na">—</span>':
+      '<span class="z '+zclass(m.peak)+'">'+(m.peak>0?"+":"")+m.peak.toFixed(2)+'</span>';
+    return '<tr><td class="mid-id">'+esc(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
+      '<td class="num">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td><td class="num">'+pk+'</td>'+
+      idx.map(function(i){return '<td class="mid">'+zcell(zval(m.pt,i),ready[i])+'</td>';}).join("")+
+      '<td class="mid">'+esc((m.pt&&m.pt.onset_lag)||"—")+'</td>'+
+      '<td class="num">'+((m.pt&&m.pt.breadth)||0)+'</td></tr>';
+  }).join("");
+  el.innerHTML="<thead>"+head+"</thead><tbody>"+rows+"</tbody>";
+}
+function renderAbs(el,ms){
+  ms.sort(function(a,b){
+    if(b.pri!==a.pri) return b.pri-a.pri;
+    if(a.dom!==b.dom) return a.dom<b.dom?-1:1;
+    return a.id<b.id?-1:1;});
+  var head='<tr><th>指标</th><th>域</th><th>单位</th><th class="num">当前值</th>'+
+           '<th class="num">窗口内样本</th><th class="mid">主视图</th></tr>';
+  el.innerHTML="<thead>"+head+"</thead><tbody>"+ms.map(function(m){
+    return '<tr><td class="mid-id">'+esc(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
+      '<td>'+esc(m.unit)+'</td><td class="num">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td>'+
+      '<td class="num">'+m.n+'</td><td class="mid">'+(m.pri?"●":"")+'</td></tr>';
+  }).join("")+"</tbody>";
+}
+
+/* ================= L4 ================= */
+async function loadL4(){
+  var d;
+  try{ d=(await getJSON("/api/diagnosis?z=3.0")).json; clearErr("l4err"); }
+  catch(e){ showErr("l4err","/api/diagnosis?z=3.0",e.message);
+            document.getElementById("items").innerHTML=""; return; }
+  var it=d.items||[];
+  document.getElementById("l4sum").textContent =
+    it.length? (it.length+" 条结论，最高级别 "+(d.priority>=2?"Critical":d.priority===1?"Warning":"Info"))
+             : "当前没有可下的结论。";
+  document.getElementById("items").innerHTML = it.map(function(x){
+    var lv=x.level>=2?"l2":x.level===1?"l1":"l0";
+    var tag=x.level>=2?"Critical":x.level===1?"Warning":"Info";
+    var ev=(x.evidence||[]).map(function(e){return "<li>"+esc(e)+"</li>";}).join("");
+    return '<div class="item '+lv+'"><div class="item-h"><span class="badge '+
+      (x.level>=2?"bad":x.level===1?"warn":"idle")+'">'+tag+'</span>'+
+      '<b>'+esc(x.title)+'</b><span class="cat-tag">'+esc(x.category)+'</span></div>'+
+      '<p>'+esc(x.description)+'</p>'+
+      (x.impact?'<p class="kv"><b>影响</b> '+esc(x.impact)+'</p>':"")+
+      (x.action?'<p class="kv"><b>下一步</b> '+esc(x.action)+'</p>':"")+
+      (ev?'<details><summary>证据 '+(x.evidence||[]).length+' 条</summary><ul>'+ev+'</ul></details>':"")+
+      '</div>';
+  }).join("");
+  document.getElementById("l4notes").innerHTML =
+    (d.notes||[]).map(function(n){return esc(n);}).join("<br>");
+}
+
+/* ================= L1 health ================= */
+async function loadHealth(){
+  var d;
+  try{ d=(await getJSON("/data/health.json")).json; clearErr("l5err"); }
+  catch(e){ showErr("l5err","/data/health.json",e.message);
+            document.getElementById("health").innerHTML=""; return; }
+  var h=d.health||{},keys=Object.keys(h).sort();
+  document.getElementById("health").innerHTML=keys.map(function(k){
+    return '<div class="hcell"><span>'+esc(k)+'</span><b>'+esc(fmt(h[k],""))+'</b></div>';}).join("");
+}
+
+/* ================= 交互与调度 ================= */
+function bindGrp(id,attr,onPick){
+  var box=document.getElementById(id);
+  box.addEventListener("click",function(e){
+    var b=e.target.closest("button"); if(!b) return;
+    [].forEach.call(box.querySelectorAll("button"),function(x){x.classList.remove("on");});
+    b.classList.add("on");
+    onPick(b.getAttribute(attr));
+  });
+}
+bindGrp("tabs","data-tab",function(v){state.tab=v;renderL3();});
+bindGrp("wins","data-win",function(v){state.win=v;loadL3();});
+
+function toggleAuto(){
+  state.auto=!state.auto;
+  var b=document.getElementById("auto");
+  b.classList.toggle("on",state.auto);
+  b.textContent=state.auto?"自动刷新 5s":"自动刷新 已停";
+  if(state.auto){ schedule(); } else if(state.timer){ clearInterval(state.timer); state.timer=null; }
+}
+function schedule(){
+  if(state.timer) clearInterval(state.timer);
+  state.timer=setInterval(refreshAll,5000);
+}
+async function refreshAll(){
+  await Promise.all([loadL0(),loadL3(),loadL4(),loadHealth()]);
+}
+getJSON("/api/version").then(function(r){
+  document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";
+}).catch(function(){});
+refreshAll();
+schedule();
+</script>
 </body>
 </html>

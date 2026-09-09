@@ -127,7 +127,7 @@ func runServe() {
 	}
 
 	mux := server.NewMuxWithConfig(
-		server.MuxConfig{WebRoot: webDir, DataDir: dataDir},
+		server.MuxConfig{WebRoot: webDir, DataDir: dataDir, Version: version},
 		server.QueryFns{
 			Heatmap: builder.Build,
 			Detail:  func(ts time.Time) (interface{}, error) { return builder.Build(ts.Add(-time.Hour), ts) },

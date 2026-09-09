@@ -1,8 +1,11 @@
+# 编译产物 / 运行时垃圾（源码之外的一切）
 /nodedata
-/nodedata-amd64
-/nodedata-arm64
-
+/nodedata-*
+/bin/
+/releases/
+/data/
+*.tar.gz
+*.log
 *.tmp
 nodedata-wal.jsonl
 vendor/
-data/
