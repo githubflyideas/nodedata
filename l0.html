@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nodedata — L0 Sanity Check</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 30px;
+      color: #fff;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .control-btn {
+      background: #222;
+      border: 1px solid #444;
+      color: #0f0;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: monospace;
+    }
+    .control-btn:hover {
+      background: #333;
+    }
+    .category-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .category-card {
+      background: #1a1a1a;
+      border-left: 3px solid #444;
+      padding: 16px;
+      border-radius: 4px;
+    }
+    .category-card.pass {
+      border-left-color: #0f0;
+      background: #0f0f1a;
+    }
+    .category-card.warn {
+      border-left-color: #fa0;
+      background: #1a1510;
+    }
+    .category-card.fail {
+      border-left-color: #f00;
+      background: #1a0f0f;
+    }
+    .category-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+    .category-name {
+      flex: 1;
+    }
+    .category-status {
+      color: #0f0;
+      font-size: 12px;
+    }
+    .category-card.warn .category-status {
+      color: #fa0;
+    }
+    .category-card.fail .category-status {
+      color: #f00;
+    }
+    .checks {
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .check {
+      padding: 4px 0;
+      color: #aaa;
+    }
+    .check.fail {
+      color: #f00;
+    }
+    .check.warn {
+      color: #fa0;
+    }
+    .summary {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      padding: 16px;
+      border-radius: 4px;
+      text-align: center;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .summary.pass {
+      color: #0f0;
+      border-color: #0f0;
+      background: #0f0f1a;
+    }
+    .summary.fail {
+      color: #f00;
+      border-color: #f00;
+      background: #1a0f0f;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 L0 Sanity Check</h1>
+    
+    <div class="controls">
+      <button class="control-btn" onclick="refreshCheck()">⟲ 刷新</button>
+      <span style="color: #666; font-size: 12px;">最后更新: <span id="timestamp">--</span></span>
+    </div>
+
+    <div class="category-grid" id="grid"></div>
+    <div class="summary" id="summary">加载中...</div>
+  </div>
+
+  <script>
+    async function refreshCheck() {
+      try {
+        const resp = await fetch('/api/check');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        
+        render(data);
+        document.getElementById('timestamp').textContent = new Date(data.timestamp).toLocaleTimeString();
+      } catch (err) {
+        console.error(err);
+        document.getElementById('summary').textContent = '错误: ' + err.message;
+      }
+    }
+
+    function render(data) {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      
+      for (const cat of data.categories || []) {
+        const level = cat.level || 0;
+        const levelClass = level === 0 ? 'pass' : level === 1 ? 'warn' : 'fail';
+        const levelSymbol = level === 0 ? '✓' : level === 1 ? '⚠' : '✗';
+        
+        const card = document.createElement('div');
+        card.className = 'category-card ' + levelClass;
+        
+        let html = `
+          <div class="category-header">
+            <span class="category-name">${levelSymbol} ${cat.name}</span>
+            <span class="category-status">${cat.passed}/${cat.total}</span>
+          </div>
+          <div class="checks">
+        `;
+        
+        if (cat.checks) {
+          for (const check of cat.checks) {
+            const checkClass = check.level === 0 ? '' : check.level === 1 ? 'warn' : 'fail';
+            const checkSymbol = check.level === 0 ? '✓' : check.level === 1 ? '⚠' : '✗';
+            if (check.level > 0) {
+              html += `<div class="check ${checkClass}">${checkSymbol} ${check.id}: ${check.message}</div>`;
+            }
+          }
+        }
+        
+        html += `</div>`;
+        card.innerHTML = html;
+        grid.appendChild(card);
+      }
+      
+      // 总结
+      const hasFailure = (data.categories || []).some(c => c.level === 2);
+      const hasWarn = (data.categories || []).some(c => c.level === 1);
+      const summary = document.getElementById('summary');
+      
+      if (hasFailure) {
+        summary.className = 'summary fail';
+        summary.textContent = '✗ 系统有故障';
+      } else if (hasWarn) {
+        summary.className = 'summary';
+        summary.textContent = '⚠ 检测到警告';
+      } else {
+        summary.className = 'summary pass';
+        summary.textContent = '✓ 所有检查通过';
+      }
+    }
+
+    // 首次加载和定时刷新
+    refreshCheck();
+    setInterval(refreshCheck, 5000);
+  </script>
+</body>
+</html>

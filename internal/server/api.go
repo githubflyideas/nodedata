@@ -1,4 +1,3 @@
-// api.go — HTTP 服务：静态文件 + live API 端点
 package server
 
 import (
@@ -7,67 +6,50 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"time"
 )
+
+type HeatmapJSON struct {
+	Host        string           `json:"host"`
+	From        int64            `json:"from"`
+	To          int64            `json:"to"`
+	Resolution  int              `json:"resolution"`
+	GeneratedAt int64            `json:"generated_at"`
+	Degraded    map[string]bool  `json:"degraded"`
+	Lags        []string         `json:"lags"`
+	LagSeconds  []int            `json:"lag_seconds"`
+	LagReady    []bool           `json:"lag_ready"`
+	LowConf     []string         `json:"low_confidence"`
+	PSIAlerts   []PSIAlert       `json:"psi_alerts"`
+	Metrics     []MetricPoints   `json:"metrics"`
+	Rules       []RuleHit        `json:"rules"`
+}
+
+type PSIAlert struct {
+	TS        int64   `json:"ts"`
+	Metric    string  `json:"metric"`
+	RuleName  string  `json:"rule_name"`
+	Value     float64 `json:"value"`
+	Threshold float64 `json:"threshold"`
+}
+
+type MetricPoints struct {
+	ID     string    `json:"id"`
+	Points []float64 `json:"points"`
+}
+
+type RuleHit struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Severity  int    `json:"severity"`
+	Timestamp int64  `json:"timestamp"`
+	Detail    string `json:"detail"`
+}
 
 type QueryFns struct {
 	Heatmap func(from, to time.Time) (*HeatmapJSON, error)
 	Detail  func(ts time.Time) (interface{}, error)
 	Raw     func(metricID string, from, to time.Time) (interface{}, error)
-}
-
-type CheckRunner struct {
-	interval time.Duration
-	dataDir  string
-	mu       sync.Mutex
-	latest   []byte
-	done     chan struct{}
-}
-
-func NewCheckRunner(interval time.Duration, dataDir string) *CheckRunner {
-	return &CheckRunner{
-		interval: interval,
-		dataDir:  dataDir,
-		done:     make(chan struct{}),
-	}
-}
-
-func (cr *CheckRunner) Start() {
-	go cr.run()
-}
-
-func (cr *CheckRunner) Stop() {
-	close(cr.done)
-}
-
-func (cr *CheckRunner) run() {
-	ticker := time.NewTicker(cr.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-cr.done:
-			return
-		case <-ticker.C:
-			cr.readCheckFile()
-		}
-	}
-}
-
-func (cr *CheckRunner) readCheckFile() {
-	checkPath := filepath.Join(cr.dataDir, "check.json")
-	data, _ := os.ReadFile(checkPath)
-	
-	cr.mu.Lock()
-	cr.latest = data
-	cr.mu.Unlock()
-}
-
-func (cr *CheckRunner) GetLatest() []byte {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	return cr.latest
 }
 
 func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
@@ -128,30 +110,20 @@ func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
 		respondJSON(w, r, data)
 	})
 
-	return mux
-}
-
-func NewMuxWithCheck(webRoot, dataDir string) *http.ServeMux {
-	mux := http.NewServeMux()
-
-	fs := http.FileServer(http.Dir(webRoot))
-	mux.Handle("/", fs)
-
+	// L0 检查端点
 	mux.HandleFunc("/api/check", func(w http.ResponseWriter, r *http.Request) {
-		checkPath := filepath.Join(dataDir, "check.json")
+		checkPath := filepath.Join(webRoot, "data", "check.json")
 		data, err := os.ReadFile(checkPath)
 		if err != nil {
-			data = []byte(`{"timestamp":"","status":"no data yet"}`)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"timestamp":"","categories":[],"exit_code":-1}`))
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
 	})
 
 	return mux
-}
-
-func ListenAndServe(addr string, mux *http.ServeMux) error {
-	return http.ListenAndServe(addr, mux)
 }
 
 func parseFromTo(r *http.Request) (time.Time, time.Time, error) {
