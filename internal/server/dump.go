@@ -68,6 +68,7 @@ type HealthJSON struct {
 // Dumper 负责周期性写静态 JSON 文件。
 type Dumper struct {
 	webRoot  string
+	dataDir  string
 	queryFn  func(from, to time.Time) (*HeatmapJSON, error)
 	healthFn func() HealthJSON
 }
@@ -79,9 +80,21 @@ func NewDumper(webRoot string,
 	return &Dumper{webRoot: webRoot, queryFn: queryFn, healthFn: healthFn}
 }
 
+// SetDataDir 显式指定转储目录，覆盖默认的 webRoot/data。
+func (d *Dumper) SetDataDir(dir string) { d.dataDir = dir }
+
+// dir 返回实际转储目录。
+func (d *Dumper) dir() string {
+	if d.dataDir != "" {
+		return d.dataDir
+	}
+	return filepath.Join(d.webRoot, "data")
+}
+
 // DumpAll 写出全部视图文件。
 func (d *Dumper) DumpAll() error {
 	now := time.Now()
+	var firstErr error
 	windows := []struct {
 		name string
 		dur  time.Duration
@@ -93,7 +106,7 @@ func (d *Dumper) DumpAll() error {
 		{"30d", 30 * 24 * time.Hour},
 	}
 
-	if err := os.MkdirAll(filepath.Join(d.webRoot, "data"), 0755); err != nil {
+	if err := os.MkdirAll(d.dir(), 0755); err != nil {
 		return err
 	}
 
@@ -103,14 +116,18 @@ func (d *Dumper) DumpAll() error {
 		if err != nil {
 			continue
 		}
-		if err := writeAtomicJSON(filepath.Join(d.webRoot, "data", w.name+".json"), data); err != nil {
+		if err := writeAtomicJSON(filepath.Join(d.dir(), w.name+".json"), data); err != nil {
 			return fmt.Errorf("dump %s: %w", w.name, err)
 		}
 	}
 
+	if firstErr != nil {
+		return firstErr
+	}
+
 	// health.json
 	h := d.healthFn()
-	if err := writeAtomicJSON(filepath.Join(d.webRoot, "data", "health.json"), h); err != nil {
+	if err := writeAtomicJSON(filepath.Join(d.dir(), "health.json"), h); err != nil {
 		return err
 	}
 

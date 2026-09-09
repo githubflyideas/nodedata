@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -13,13 +15,79 @@ type QueryFns struct {
 	Heatmap func(from, to time.Time) (*HeatmapJSON, error)
 	Detail  func(ts time.Time) (interface{}, error)
 	Raw     func(metricID string, from, to time.Time) (interface{}, error)
+
+	// Window 按窗口名（1h/6h/24h/7d/30d）实时构造转储内容，
+	// 用于 /data/*.json 在磁盘文件缺失/损坏时兜底，避免页面拿到 404。
+	Window func(name string) (interface{}, error)
+	// Health 实时构造 health.json，同样用于兜底。
+	Health func() (interface{}, error)
+	// Diagnosis 返回 L4 诊断链。
+	Diagnosis func(zThreshold float64) (interface{}, error)
+}
+
+// MuxConfig 显式指定 web 根目录与 data 目录，避免依赖进程 cwd。
+type MuxConfig struct {
+	WebRoot string
+	DataDir string
 }
 
 func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
+	return NewMuxWithConfig(MuxConfig{WebRoot: webRoot}, qfns)
+}
+
+func NewMuxWithConfig(cfg MuxConfig, qfns QueryFns) *http.ServeMux {
+	webRoot := cfg.WebRoot
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(webRoot, "data")
+	}
+
 	mux := http.NewServeMux()
 
 	fs := http.FileServer(http.Dir(webRoot))
 	mux.Handle("/", fs)
+
+	// /data/*.json：先读磁盘转储；缺失或非法 JSON 时用内存实时构造兜底。
+	// 只要采集器在跑，页面就不会再出现 404 或空文件。
+	mux.HandleFunc("/data/", func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.URL.Path)
+		if !strings.HasSuffix(name, ".json") {
+			http.NotFound(w, r)
+			return
+		}
+		if b, err := os.ReadFile(filepath.Join(dataDir, name)); err == nil && json.Valid(b) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Nodedata-Source", "dump")
+			w.Write(b)
+			return
+		}
+		stem := strings.TrimSuffix(name, ".json")
+		var v interface{}
+		var err error
+		switch stem {
+		case "1h", "6h", "24h", "7d", "30d":
+			if qfns.Window == nil {
+				http.NotFound(w, r)
+				return
+			}
+			v, err = qfns.Window(stem)
+		case "health":
+			if qfns.Health == nil {
+				http.NotFound(w, r)
+				return
+			}
+			v, err = qfns.Health()
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("X-Nodedata-Source", "live")
+		respondJSON(w, r, v)
+	})
 
 	mux.HandleFunc("/api/heatmap", func(w http.ResponseWriter, r *http.Request) {
 		from, to, err := parseFromTo(r)
@@ -73,9 +141,29 @@ func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
 		respondJSON(w, r, data)
 	})
 
+	// L4 诊断链端点
+	mux.HandleFunc("/api/diagnosis", func(w http.ResponseWriter, r *http.Request) {
+		if qfns.Diagnosis == nil {
+			http.Error(w, "diagnosis not configured", http.StatusNotImplemented)
+			return
+		}
+		th := 3.0
+		if v := r.URL.Query().Get("z"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+				th = f
+			}
+		}
+		data, err := qfns.Diagnosis(th)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		respondJSON(w, r, data)
+	})
+
 	// L0 检查端点
 	mux.HandleFunc("/api/check", func(w http.ResponseWriter, r *http.Request) {
-		checkPath := filepath.Join(webRoot, "data", "check.json")
+		checkPath := filepath.Join(dataDir, "check.json")
 		data, err := os.ReadFile(checkPath)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
