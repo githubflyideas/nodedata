@@ -83,15 +83,31 @@ func runServe() {
 	runner.Start()
 	defer runner.Stop()
 
-	mux := server.NewMuxWithCheck(webDir, dataDir)
+	// L1+ 的 QueryFns（暂时为空）
+	qfns := server.QueryFns{
+		Heatmap: func(from, to time.Time) (*server.HeatmapJSON, error) {
+			return &server.HeatmapJSON{}, nil
+		},
+		Detail: func(ts time.Time) (interface{}, error) {
+			return nil, nil
+		},
+		Raw: func(metricID string, from, to time.Time) (interface{}, error) {
+			return nil, nil
+		},
+	}
+
+	mux := server.NewMux(webDir, qfns)
 	
 	addr := "0.0.0.0:" + *port
 	fmt.Printf("📊 nodedata server listening on http://localhost:%s\n", *port)
 	fmt.Printf("📁 Web root: %s\n", webDir)
 	fmt.Printf("💾 Data dir: %s\n", dataDir)
 	fmt.Printf("⏱️  Check interval: %s\n", *interval)
+	fmt.Printf("📄 Pages:\n")
+	fmt.Printf("   - Main: http://localhost:%s/\n", *port)
+	fmt.Printf("   - L0 Check: http://localhost:%s/l0.html\n", *port)
 	
-	if err := server.ListenAndServe(addr, mux); err != nil {
+	if err := mux.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

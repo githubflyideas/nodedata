@@ -4,3 +4,7 @@ nodedata-arm64
 *.tmp
 nodedata-wal.jsonl
 vendor/
+
+# Keep cmd/ and internal/
+!cmd/
+!internal/

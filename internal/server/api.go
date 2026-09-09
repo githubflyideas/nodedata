@@ -2,49 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 )
-
-type HeatmapJSON struct {
-	Host        string           `json:"host"`
-	From        int64            `json:"from"`
-	To          int64            `json:"to"`
-	Resolution  int              `json:"resolution"`
-	GeneratedAt int64            `json:"generated_at"`
-	Degraded    map[string]bool  `json:"degraded"`
-	Lags        []string         `json:"lags"`
-	LagSeconds  []int            `json:"lag_seconds"`
-	LagReady    []bool           `json:"lag_ready"`
-	LowConf     []string         `json:"low_confidence"`
-	PSIAlerts   []PSIAlert       `json:"psi_alerts"`
-	Metrics     []MetricPoints   `json:"metrics"`
-	Rules       []RuleHit        `json:"rules"`
-}
-
-type PSIAlert struct {
-	TS        int64   `json:"ts"`
-	Metric    string  `json:"metric"`
-	RuleName  string  `json:"rule_name"`
-	Value     float64 `json:"value"`
-	Threshold float64 `json:"threshold"`
-}
-
-type MetricPoints struct {
-	ID     string    `json:"id"`
-	Points []float64 `json:"points"`
-}
-
-type RuleHit struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Severity  int    `json:"severity"`
-	Timestamp int64  `json:"timestamp"`
-	Detail    string `json:"detail"`
-}
 
 type QueryFns struct {
 	Heatmap func(from, to time.Time) (*HeatmapJSON, error)
@@ -124,6 +88,15 @@ func NewMux(webRoot string, qfns QueryFns) *http.ServeMux {
 	})
 
 	return mux
+}
+
+// 让 mux 支持 ListenAndServe 方法
+func (m *http.ServeMux) ListenAndServe(addr string, handler http.Handler) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return http.Serve(listener, handler)
 }
 
 func parseFromTo(r *http.Request) (time.Time, time.Time, error) {
