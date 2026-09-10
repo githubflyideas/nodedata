@@ -1,5 +1,58 @@
 # nodedata Changelog
 
+## [v3.0.9] — 2026-09-11
+
+### 修复：nodedata 自身吃掉 ~1.5 个核（严重，外部工具抓到 `nodedata-linux-` 150%）
+根因是 L3 的 `Series.Lookup` 对 17280 点的缓冲区做**线性扫描**，而 `Build` 对窗口里
+每个点、每个就绪 lag 都要 Lookup 一次。成本随缓冲区长度线性上涨，所以启动时正常、
+跑满 24 小时后最重。实测（20 个指标、满 24h 缓冲）：
+
+| | v3.0.8 | v3.0.9 |
+|---|---|---|
+| 一轮转储（5 个窗口） | 34.6 s | 0.08 s |
+| σ 全表重算 | 2.7 s | 0.49 s |
+
+转储周期是 30 s，旧实现一轮要 35 s，转储 goroutine 永不空闲（≈1 核）；页面每 5 s 调一次
+`/api/diagnosis`，它每次又完整 Build 一个 1h 窗口，叠加后到 1.5 核。
+- `Series.Lookup` / `Range` 改二分；拒收时间倒退的点以保证有序前提；
+- `/api/diagnosis` 只算每个指标最后一个点（`HeatmapBuilder.Latest`）；
+- σ 重算由每指标 14×24=336 遍全量扫描改为每 lag 一遍（双指针配 v(t−H)），
+  每个桶只排一次序。结果与旧实现逐位一致（`TestComputeSigmaLagMatchesLegacy`）；
+- 采集器路径审计 `openedPaths` 每次读都 append 且从不清理（一天 ~170 万条，
+  内存与 GC 扫描随运行时长上涨），改为按 `/proc/<pid>/...` 归一的去重集合；
+- 新增 `cmd/nodedata/perf_test.go` 回归护栏：满缓冲一轮转储 > 2 s 即失败
+  （把旧 `series.go` 换回去，该测试以 34.6 s 失败）。
+
+### 修复：L3 里找不到对应进程
+旧的进程采集每轮从全部 PID 里**随机抽 100 个**，只输出 top-5 的 comm：
+- 进程要好几轮才被抽中一次，增量是"距上次被抽中以来"的累计值，首次抽中时 prev=0，
+  直接把进程一辈子的 CPU 当 5 秒增量报（`proc.cpu.systemd` 的偏离就是这么来的）；
+- 序列时有时无，同时段差分攒不够，z 基本是斜纹；同名多进程同一时刻互相覆盖；
+- 按空格切 `/proc/PID/stat`，comm 带空格时 utime/stime 取错字段；
+- `kworker/u4:2-events_unbound` 每个变体一条新序列，序列数无界增长；
+- 结果里没有 PID，从表格无法走到具体进程 —— nodedata 自己占 150% 也看不到自己。
+
+现在：每轮扫全部 PID（一个 PID 一次 read，1000 进程 < 10 ms）；用 starttime 识别 PID 复用，
+首次见到只记基线；以最后一个 `)` 为界解析 comm；内核线程名归一（`kworker/…` → `kworker`）；
+CPU 达到 1% 核的名字进入跟踪集合（上限 32），之后每轮都出点（空闲出 0），空闲 1 小时退出；
+单位统一为"占一个核的百分比"，与 `cpu.user` 相同。
+- 转储 JSON 新增 `procs`：此刻 CPU 前 10 的进程（PID、comm、CPU、RSS），**nodedata 自身永远在列**；
+- `health.json` 新增 `self.cpu_pct`、`self.rss_mb`、`collector.procs_scan_ms`；
+- 24 小时无新点的序列连同 σ 一起回收（`Series.Prune`）。
+
+### 页面
+- L3 表所有列可点击排序（数值列先降序，文本列先升序，z 列按 |z|，空值垫底），
+  排序状态在 5 秒自动刷新后保持；
+- L3 表下方新增"此刻谁在用 CPU"：PID、进程、CPU、RSS 与下一步命令（点击复制），
+  `proc.cpu.<名字>` 行直接标出对应 PID；
+- 修正降采样：旧实现从第一个点起步长取点，24h 窗口里表格的"当前值"最多落后 6 分钟，
+  现在保证最后一个点是最新点。
+
+### 已知问题（本版未改）
+- 缓冲区只在内存里存 24 小时，重启即清空；`internal/store`（ClickHouse）没有接入主程序。
+  因此 L9–L14（1 天 ~ 28 天）**永远不会就绪**，7d/30d 窗口实际只有 ≤24h 数据。
+- `install.sh` 装的 systemd 单元跑的是 `nodedata check`（跑完即退），不是 `serve`。
+
 ## [v3.0.8] — 2026-09-09
 
 ### 修复：L3 偏离度表整片顶格（算法错误）

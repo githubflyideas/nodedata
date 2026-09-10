@@ -112,6 +112,14 @@ func runServe() {
 
 	// ── L3：偏离度
 	builder := NewHeatmapBuilder(series)
+	builder.procsFn = func() ([]server.ProcTop, time.Time) {
+		ps, ts := col.TopProcs()
+		out := make([]server.ProcTop, len(ps))
+		for i, p := range ps {
+			out[i] = server.ProcTop(p)
+		}
+		return out, ts
+	}
 	go sigmaLoop(builder, stop)
 
 	healthFn := func() server.HealthJSON { return builder.Health(col.Health()) }
@@ -275,7 +283,8 @@ func sigmaLoop(b *HeatmapBuilder, stop <-chan struct{}) {
 		select {
 		case <-stop:
 			return
-		case <-t.C:
+		case now := <-t.C:
+			b.Prune(now)
 			b.RefreshSigma()
 		}
 	}

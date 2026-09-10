@@ -20,6 +20,8 @@ type HeatmapBuilder struct {
 	sigma  *deviation.SigmaTable
 	dev    *deviation.Deviation
 	host   string
+	// procsFn 提供最近一轮进程快照；nil 时不输出。
+	procsFn func() ([]server.ProcTop, time.Time)
 }
 
 func NewHeatmapBuilder(s *Series) *HeatmapBuilder {
@@ -43,19 +45,35 @@ func (b *HeatmapBuilder) RefreshSigma() {
 			hist[i] = deviation.Sample{TS: p.TS, Value: p.V}
 		}
 		for lagIdx, lagSec := range deviation.LagSeconds {
+			all := deviation.ComputeSigmaLag(lagSec, hist)
 			for hour := 0; hour < 24; hour++ {
-				ls, err := deviation.ComputeSigma(lagSec, hour, hist)
-				if err != nil {
-					continue
-				}
-				b.sigma.Set(id, lagIdx, hour, ls)
+				b.sigma.Set(id, lagIdx, hour, all[hour])
 			}
 		}
 	}
 }
 
+// Prune 回收 24 小时没有新点的序列及其 σ（进程退出后的 proc.cpu.<comm> 等）。
+func (b *HeatmapBuilder) Prune(now time.Time) int {
+	gone := b.series.Prune(now.Add(-24 * time.Hour))
+	for _, id := range gone {
+		b.sigma.Delete(id)
+	}
+	return len(gone)
+}
+
 // Build 组装 [from, to] 区间的 heatmap。
 func (b *HeatmapBuilder) Build(from, to time.Time) (*server.HeatmapJSON, error) {
+	return b.build(from, to, false)
+}
+
+// Latest 只算每个指标最后一个点（L4 用），不做整窗口的 z。
+func (b *HeatmapBuilder) Latest(now time.Time) *server.HeatmapJSON {
+	out, _ := b.build(now.Add(-time.Hour), now, true)
+	return out
+}
+
+func (b *HeatmapBuilder) build(from, to time.Time, lastOnly bool) (*server.HeatmapJSON, error) {
 	ids := b.series.MetricIDs()
 	out := &server.HeatmapJSON{
 		Host:        b.host,
@@ -80,14 +98,24 @@ func (b *HeatmapBuilder) Build(from, to time.Time) (*server.HeatmapJSON, error) 
 
 	resolution := 0
 	for _, id := range ids {
-		pts := b.series.Range(id, from, to)
+		var pts []point
+		if lastOnly {
+			if p, ok := b.series.Last(id); ok && !p.TS.Before(from) && !p.TS.After(to) {
+				pts = []point{p}
+			}
+		} else {
+			pts = b.series.Range(id, from, to)
+		}
 		if len(pts) == 0 {
 			continue
 		}
+		// 降采样时从末尾往前取，保证最后一个（当前）点一定在输出里 ——
+		// 表格的"当前值"与各档 z 读的就是它。
 		step := 1
 		if len(pts) > maxPointsPerWindow {
 			step = (len(pts) + maxPointsPerWindow - 1) / maxPointsPerWindow
 		}
+		first := (len(pts) - 1) % step
 		if resolution == 0 && len(pts) >= 2 {
 			resolution = int(pts[1].TS.Sub(pts[0].TS).Seconds()) * step
 		}
@@ -99,7 +127,7 @@ func (b *HeatmapBuilder) Build(from, to time.Time) (*server.HeatmapJSON, error) 
 			IsPrimary: primaryOf(id),
 			Points:    make([]server.Point, 0, len(pts)/step+1),
 		}
-		for i := 0; i < len(pts); i += step {
+		for i := first; i < len(pts); i += step {
 			p := pts[i]
 			zf := b.dev.Z(id, p.V, p.TS)
 			var zi [deviation.NLag]*int8
@@ -130,6 +158,16 @@ func (b *HeatmapBuilder) Build(from, to time.Time) (*server.HeatmapJSON, error) 
 		resolution = 5
 	}
 	out.Resolution = resolution
+	out.Procs = []server.ProcTop{}
+	if b.procsFn != nil {
+		procs, ts := b.procsFn()
+		if procs != nil {
+			out.Procs = procs
+		}
+		if !ts.IsZero() {
+			out.ProcsTS = ts.Unix()
+		}
+	}
 	return out, nil
 }
 
@@ -165,6 +203,7 @@ func unitOf(id string) string {
 		strings.HasSuffix(id, "_per_s"):
 		return "ops/s"
 	case strings.Contains(id, "util"), strings.HasPrefix(id, "cpu."),
+		strings.HasPrefix(id, "proc.cpu."),
 		strings.HasPrefix(id, "psi"):
 		return "percent"
 	case strings.HasPrefix(id, "loadavg"):

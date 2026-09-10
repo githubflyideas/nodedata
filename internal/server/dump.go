@@ -11,19 +11,32 @@ import (
 
 // HeatmapJSON 是 §8.3 的响应格式。
 type HeatmapJSON struct {
-	Host        string           `json:"host"`
-	From        int64            `json:"from"`
-	To          int64            `json:"to"`
-	Resolution  int              `json:"resolution"`
-	GeneratedAt int64            `json:"generated_at"`
-	Degraded    map[string]bool  `json:"degraded"`
-	Lags        []string         `json:"lags"`
-	LagSeconds  []int            `json:"lag_seconds"`
-	LagReady    []bool           `json:"lag_ready"`
-	LowConf     []string         `json:"low_confidence"`
-	PSIAlerts   []PSIAlert       `json:"psi_alerts"`
-	Metrics     []MetricPoints   `json:"metrics"`
-	Rules       []RuleHit        `json:"rules"`
+	Host        string          `json:"host"`
+	From        int64           `json:"from"`
+	To          int64           `json:"to"`
+	Resolution  int             `json:"resolution"`
+	GeneratedAt int64           `json:"generated_at"`
+	Degraded    map[string]bool `json:"degraded"`
+	Lags        []string        `json:"lags"`
+	LagSeconds  []int           `json:"lag_seconds"`
+	LagReady    []bool          `json:"lag_ready"`
+	LowConf     []string        `json:"low_confidence"`
+	PSIAlerts   []PSIAlert      `json:"psi_alerts"`
+	Metrics     []MetricPoints  `json:"metrics"`
+	Rules       []RuleHit       `json:"rules"`
+	// Procs 是最近一轮的进程 CPU 快照（前 N + nodedata 自身），把整机偏离落到 PID。
+	Procs   []ProcTop `json:"procs"`
+	ProcsTS int64     `json:"procs_ts,omitempty"`
+}
+
+// ProcTop 与 collector.ProcTop 同构（server 包不依赖 collector）。
+type ProcTop struct {
+	PID  int     `json:"pid"`
+	Comm string  `json:"comm"`
+	Key  string  `json:"key"`
+	CPU  float64 `json:"cpu"`
+	RSS  uint64  `json:"rss"`
+	Self bool    `json:"self,omitempty"`
 }
 
 type PSIAlert struct {
@@ -34,19 +47,19 @@ type PSIAlert struct {
 }
 
 type MetricPoints struct {
-	MetricID  string   `json:"metric_id"`
-	Domain    string   `json:"domain"`
-	Unit      string   `json:"unit"`
-	IsPrimary int      `json:"is_primary"`
-	Points    []Point  `json:"points"`
+	MetricID  string  `json:"metric_id"`
+	Domain    string  `json:"domain"`
+	Unit      string  `json:"unit"`
+	IsPrimary int     `json:"is_primary"`
+	Points    []Point `json:"points"`
 }
 
 type Point struct {
-	TS        int64     `json:"ts"`
-	V         float64   `json:"v"`
-	Z         [14]*int8 `json:"z"`
-	OnsetLag  *string   `json:"onset_lag"`
-	Breadth   int       `json:"breadth"`
+	TS       int64     `json:"ts"`
+	V        float64   `json:"v"`
+	Z        [14]*int8 `json:"z"`
+	OnsetLag *string   `json:"onset_lag"`
+	Breadth  int       `json:"breadth"`
 }
 
 type RuleHit struct {

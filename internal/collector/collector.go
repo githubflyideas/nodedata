@@ -36,7 +36,7 @@ type Collector struct {
 	prevTS      time.Time
 	prevDisks   map[string]diskPrev
 	prevNets    map[string]netPrev
-	prevProcs   map[int]procPrev
+	procs       procState
 
 	psiAvailable  int32
 	taskstatsOK   int32
@@ -82,7 +82,7 @@ type Collector struct {
 	ntPsiIO      []byte
 
 	openedMu    sync.Mutex
-	openedPaths []string
+	openedPaths map[string]struct{} // 去重后的路径集合（PID 段归一成 <pid>）
 }
 
 type diskPrev struct {
@@ -90,11 +90,6 @@ type diskPrev struct {
 }
 type netPrev struct {
 	rxBytes, txBytes, rxPkts, txPkts, rxDrop, txDrop uint64
-}
-type procPrev struct {
-	cpu    uint64
-	ioRead uint64
-	ioWrite uint64
 }
 
 // New 创建采集器。
@@ -110,13 +105,13 @@ func New(cfg Config) *Collector {
 		prevGlobal:      make(map[string]uint64),
 		prevDisks:       make(map[string]diskPrev),
 		prevNets:        make(map[string]netPrev),
-		prevProcs:       make(map[int]procPrev),
 		currentInterval: int64(cfg.Interval),
 		rngState:        uint64(time.Now().UnixNano()),
 		diskMIDs:        make(map[string][5]string),
 		netMIDs:         make(map[string]string),
 	}
-	if _, err := os.Open(cfg.ProcRoot + "/pressure/cpu"); err == nil {
+	if f, err := os.Open(cfg.ProcRoot + "/pressure/cpu"); err == nil {
+		f.Close()
 		atomic.StoreInt32(&c.psiAvailable, 1)
 	}
 	return c
@@ -126,16 +121,42 @@ func (c *Collector) Interval() time.Duration {
 	return time.Duration(atomic.LoadInt64(&c.currentInterval))
 }
 
+// OpenedPaths 返回采集器打开过的路径集合（已去重，PID 段显示为 <pid>），用于审计。
 func (c *Collector) OpenedPaths() []string {
 	c.openedMu.Lock()
 	defer c.openedMu.Unlock()
-	out := make([]string, len(c.openedPaths))
-	copy(out, c.openedPaths)
+	out := make([]string, 0, len(c.openedPaths))
+	for p := range c.openedPaths {
+		out = append(out, p)
+	}
+	sort.Strings(out)
 	return out
 }
 
+// auditPath 把 /proc/12345/stat 归一成 /proc/<pid>/stat 后记入集合。
+// 早期版本对每次读取都 append 一个字符串且从不清理：进程扫描每轮 100 次，
+// 一天 170 万条，内存与 GC 扫描成本都随运行时长线性上涨。
+func (c *Collector) auditPath(path string) {
+	key := path
+	root := c.cfg.ProcRoot + "/"
+	if len(path) > len(root) && path[:len(root)] == root && path[len(root)] >= '0' && path[len(root)] <= '9' {
+		rest := path[len(root):]
+		i := 0
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		key = root + "<pid>" + rest[i:]
+	}
+	c.openedMu.Lock()
+	if c.openedPaths == nil {
+		c.openedPaths = make(map[string]struct{}, 32)
+	}
+	c.openedPaths[key] = struct{}{}
+	c.openedMu.Unlock()
+}
+
 func (c *Collector) Health() map[string]float64 {
-	return map[string]float64{
+	h := map[string]float64{
 		"collector.psi_available": float64(atomic.LoadInt32(&c.psiAvailable)),
 		"collector.taskstats_ok":  float64(atomic.LoadInt32(&c.taskstatsOK)),
 		"collector.degraded":      float64(atomic.LoadInt32(&c.degraded)),
@@ -146,13 +167,18 @@ func (c *Collector) Health() map[string]float64 {
 		"collector.duration_ms":   float64(atomic.LoadInt64(&c.durationMS)),
 		"collector.interval_s":    time.Duration(atomic.LoadInt64(&c.currentInterval)).Seconds(),
 	}
+	c.procHealth(h)
+	return h
+}
+
+func (c *Collector) setProcCounters(scanned, skipped int32) {
+	atomic.StoreInt32(&c.procsScanned, scanned)
+	atomic.StoreInt32(&c.procsSkipped, skipped)
 }
 
 func (c *Collector) readFileAbs(path string) ([]byte, error) {
 	// 路径审计（记录真实路径用于禁读检查）
-	c.openedMu.Lock()
-	c.openedPaths = append(c.openedPaths, path)
-	c.openedMu.Unlock()
+	c.auditPath(path)
 	// 把测试 procRoot 替换回 /proc/ 前缀用于禁读清单匹配
 	realPath := path
 	if c.cfg.ProcRoot != "/proc" && len(path) > len(c.cfg.ProcRoot) {
@@ -844,108 +870,6 @@ func (c *Collector) parsePSISome10(data []byte) (float64, bool) {
 
 var bSomeSp  = []byte("some ")
 var bAvg10Eq = []byte("avg10=")
-
-// ──────────────────── CollectProcs ─────────────────────────────
-
-const maxProcRows = 25
-
-func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, error) {
-	if procRoot == "" {
-		procRoot = c.cfg.ProcRoot
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entries, err := os.ReadDir(procRoot)
-	if err != nil { return nil, err }
-
-	type procInfo struct {
-		pid        int
-		name       string
-		cpuDelta   uint64
-		ioRDelta   uint64
-		ioWDelta   uint64
-		memRSS     uint64
-	}
-
-	// 收集所有 PID（只做 Atoi，无文件 I/O）
-	type pidEntry struct{ name string; pid int }
-	var allPids []pidEntry
-	for _, e := range entries {
-		if !e.IsDir() { continue }
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil { continue }
-		allPids = append(allPids, pidEntry{e.Name(), pid})
-	}
-
-	// 超限时随机抽样，减少 I/O
-	const maxScanProcs = 100
-	var skippedPids int32
-	if len(allPids) > maxScanProcs {
-		skippedPids = int32(len(allPids) - maxScanProcs)
-		// 部分 Fisher-Yates：只生成需要的 maxScanProcs 个
-		for i := 0; i < maxScanProcs; i++ {
-			c.rngState = c.rngState*6364136223846793005 + 1442695040888963407
-			j := i + int(c.rngState>>33)%(len(allPids)-i)
-			allPids[i], allPids[j] = allPids[j], allPids[i]
-		}
-		allPids = allPids[:maxScanProcs]
-	}
-
-	var procs []procInfo
-	var scanned, skipped int32
-
-	for _, pe := range allPids {
-		pid := pe.pid
-		scanned++
-
-		statPath := procRoot + "/" + pe.name + "/stat"
-		data, err := c.readFileAbs(statPath)
-		if err != nil { skipped++; continue }
-
-		fields := c.splitFieldsBuf(data)
-		if len(fields) < 22 { skipped++; continue }
-		// field 14 = utime, 15 = stime (0-indexed: 13,14)
-		utime, _ := parseUint64(fields[13])
-		stime, _ := parseUint64(fields[14])
-		totalCPU := utime + stime
-
-		name := string(fields[1])
-		if len(name) > 2 { name = name[1:len(name)-1] } // strip ()
-
-		prev := c.prevProcs[pid]
-		cpuDelta := safeUintDiff(totalCPU, prev.cpu)
-		c.prevProcs[pid] = procPrev{cpu: totalCPU}
-
-		// RSS from stat field 24 (0-indexed: 23)
-		var rss uint64
-		if len(fields) > 23 {
-			rss, _ = parseUint64(fields[23])
-			rss *= 4096 // pages to bytes
-		}
-
-		procs = append(procs, procInfo{pid: pid, name: name, cpuDelta: cpuDelta, memRSS: rss, ioRDelta: 0, ioWDelta: 0})
-	}
-	atomic.StoreInt32(&c.procsScanned, scanned)
-	atomic.StoreInt32(&c.procsSkipped, skipped+skippedPids)
-
-	// top-5 by CPU
-	sort.Slice(procs, func(i, j int) bool { return procs[i].cpuDelta > procs[j].cpuDelta })
-
-	var out []Sample
-	top := 5
-	if len(procs) < top { top = len(procs) }
-	for i := 0; i < top; i++ {
-		p := procs[i]
-		*&out = append(out, Sample{MetricID: "proc.cpu." + p.name, TS: now, Value: float64(p.cpuDelta)})
-	}
-	// __others__
-	var otherCPU uint64
-	for i := top; i < len(procs); i++ { otherCPU += procs[i].cpuDelta }
-	out = append(out, Sample{MetricID: "proc.cpu.__others__", TS: now, Value: float64(otherCPU)})
-
-	return out, nil
-}
 
 // ──────────────────── helpers ──────────────────────────────────
 

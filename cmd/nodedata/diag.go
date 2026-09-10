@@ -57,9 +57,9 @@ func (d *Diagnoser) loadL0() []diagnosis.L0Category {
 
 // latestDeviations 取每个指标最近一个点的十四档 z。
 func (d *Diagnoser) latestDeviations() []diagnosis.Deviation {
-	now := time.Now()
-	hm, err := d.builder.Build(now.Add(-time.Hour), now)
-	if err != nil || hm == nil {
+	// 只要最后一个点：早期这里每次请求都 Build 整个 1h 窗口，而页面每 5 秒调一次。
+	hm := d.builder.Latest(time.Now())
+	if hm == nil {
 		return nil
 	}
 	out := make([]diagnosis.Deviation, 0, len(hm.Metrics))

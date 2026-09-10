@@ -63,55 +63,164 @@ type LagSigma struct {
 
 // ComputeSigma 批算某档位在某小时桶上 Δ 分布的位置与尺度。
 // hist 须按时间升序，覆盖足够历史。
+// 只要一个小时桶时用它；批量重算请用 ComputeSigmaLag（一次扫描出 24 个桶）。
 func ComputeSigma(lagSeconds int, hour int, hist []Sample) (LagSigma, error) {
-	if len(hist) == 0 {
+	if hour < 0 || hour >= 24 {
 		return LagSigma{Sigma: 1e-9}, nil
 	}
+	all := ComputeSigmaLag(lagSeconds, hist)
+	return all[hour], nil
+}
+
+// ComputeSigmaLag 一次扫描历史，算出某档位全部 24 个小时桶上 Δ 分布的位置与尺度。
+//
+// 早期实现是对每个 (lag, hour) 各扫一遍全量历史并逐点二分，一个指标要扫
+// 14×24=336 遍；这里每个 lag 只扫一遍，v(t-H) 用双指针推进（t 单调 ⇒ t-H 单调），
+// 结果与逐桶计算逐位相同（见 TestComputeSigmaLagMatchesLegacy）。
+func ComputeSigmaLag(lagSeconds int, hist []Sample) [24]LagSigma {
+	var out [24]LagSigma
+	for h := range out {
+		out[h] = LagSigma{Sigma: 1e-9}
+	}
+	if len(hist) == 0 {
+		return out
+	}
 	H := time.Duration(lagSeconds) * time.Second
+	// 容差必须与 Z 里配 v(t-H) 用的一致，否则 σ 是"松配对"的尺度、
+	// Δ 是"紧配对"的量，两者根本不是同一个分布。
 	tol := LagTolerance(H)
-	spanOK := hist[len(hist)-1].TS.Sub(hist[0].TS) >= H
-
-	// 收集 28 天内 hour 桶的 Δv（有符号）。
-	var diffs []float64
-	end := hist[len(hist)-1].TS
-	cutoff := end.Add(-28 * 24 * time.Hour)
 	histStart := hist[0].TS
+	end := hist[len(hist)-1].TS
+	spanOK := end.Sub(histStart) >= H
+	cutoff := end.Add(-28 * 24 * time.Hour)
 
-	for i := len(hist) - 1; i >= 0; i-- {
+	var diffs [24][]float64
+	j := 0 // hist[j] 是第一个 TS >= t-H 的点
+	for i := range hist {
 		s := hist[i]
 		if s.TS.Before(cutoff) {
-			break
-		}
-		if s.TS.UTC().Hour() != hour {
 			continue
 		}
 		target := s.TS.Add(-H)
 		if target.Before(histStart) {
 			continue
 		}
-		// 容差必须与 Z 里配 v(t-H) 用的一致，否则 σ 是"松配对"的尺度、
-		// Δ 是"紧配对"的量，两者根本不是同一个分布。早期版本这里传的是 H
-		// 本身（等于 28 天内任何点都算"28 天前的值"），σ 完全失真。
-		prev, ok := findNearest(hist, target, tol)
-		if !ok {
+		for hist[j].TS.Before(target) { // target < s.TS，故 j 不会越过 i
+			j++
+		}
+		best := j
+		if j > 0 && absDur(hist[j-1].TS.Sub(target)) < absDur(hist[j].TS.Sub(target)) {
+			best = j - 1
+		}
+		if absDur(hist[best].TS.Sub(target)) > tol {
 			continue
 		}
-		diffs = append(diffs, s.Value-prev)
+		h := s.TS.UTC().Hour()
+		diffs[h] = append(diffs[h], s.Value-hist[best].Value)
 	}
+	for h := range out {
+		out[h] = summarizeDiffs(diffs[h], spanOK)
+	}
+	return out
+}
 
+// summarizeDiffs 把一个小时桶的 Δ 样本归纳成 LagSigma。
+func summarizeDiffs(diffs []float64, spanOK bool) LagSigma {
 	ls := LagSigma{N: len(diffs)}
 	ls.Ready = spanOK && len(diffs) >= MinDiffsForZ
 	ls.Low = ls.N < HighConfN
 	if len(diffs) == 0 {
 		ls.Sigma = 1e-9
-		return ls, nil
+		return ls
 	}
-
-	ls.Center = median(diffs)
-	ls.Quantum = resolutionOf(diffs)
+	// 只排一次序：中位数、分位差、分辨率都从同一份有序副本上取。
+	// 早期每个桶要把同一批 Δ 排 5 次序外加一个 map，σ 重算一半时间花在 sort 上。
+	sorted := make([]float64, len(diffs))
+	copy(sorted, diffs)
+	sort.Float64s(sorted)
+	ls.Center = medianSorted(sorted)
+	ls.Quantum = resolutionSorted(sorted)
 	ls.ZeroFrac = zeroFraction(diffs)
-	ls.Sigma = robustScale(diffs, ls.Center, ls.Quantum)
-	return ls, nil
+	ls.Sigma = robustScaleSorted(sorted, ls.Center, ls.Quantum)
+	return ls
+}
+
+// robustScaleSorted 与 robustScale 语义完全相同，输入须已升序。
+func robustScaleSorted(sorted []float64, center, resolution float64) float64 {
+	devs := make([]float64, len(sorted))
+	med := medianSorted(sorted)
+	for i, v := range sorted {
+		devs[i] = math.Abs(v - med)
+	}
+	sort.Float64s(devs)
+	s := 1.4826 * medianSorted(devs)
+	if v := spreadSorted(sorted, 0.25, 4) / 1.349; v > s {
+		s = v
+	}
+	if v := spreadSorted(sorted, 0.10, 10) / 2.563; v > s {
+		s = v
+	}
+	if s <= 0 {
+		s = math.Max(resolution, relFloorFrac*math.Abs(center))
+	}
+	if s < resolution {
+		s = resolution
+	}
+	if s <= 0 {
+		s = 1e-9
+	}
+	return s
+}
+
+func medianSorted(sorted []float64) float64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
+}
+
+// spreadSorted 与 quantileSpread 相同，输入须已升序。
+func spreadSorted(sorted []float64, p float64, minN int) float64 {
+	if len(sorted) < minN {
+		return 0
+	}
+	q := func(pp float64) float64 {
+		idx := pp * float64(len(sorted)-1)
+		lo := int(math.Floor(idx))
+		hi := int(math.Ceil(idx))
+		if lo == hi {
+			return sorted[lo]
+		}
+		return sorted[lo] + (sorted[hi]-sorted[lo])*(idx-float64(lo))
+	}
+	return q(1-p) - q(p)
+}
+
+// resolutionSorted 与 resolutionOf 相同，输入须已升序。
+func resolutionSorted(sorted []float64) float64 {
+	allInt := true
+	res := math.Inf(1)
+	for i, d := range sorted {
+		if d != math.Trunc(d) {
+			allInt = false
+		}
+		if i > 0 {
+			if gap := d - sorted[i-1]; gap > 0 && gap < res {
+				res = gap
+			}
+		}
+	}
+	if math.IsInf(res, 1) {
+		res = 0
+	}
+	if allInt && res < 1 {
+		res = 1
+	}
+	return res
 }
 
 // relFloorFrac 是退化情形下的相对地板：Δ 在分辨率内完全恒定时，
@@ -284,6 +393,13 @@ func (t *SigmaTable) Get(metricID string, lagIdx, hour int) LagSigma {
 		return arr[lagIdx][hour]
 	}
 	return LagSigma{Sigma: 1e-6}
+}
+
+// Delete 删除某指标的全部 σ（序列被回收时调用）。
+func (t *SigmaTable) Delete(metricID string) {
+	t.mu.Lock()
+	delete(t.data, metricID)
+	t.mu.Unlock()
 }
 
 // Len 返回已有σ的指标数，仅用于自检与调试。
