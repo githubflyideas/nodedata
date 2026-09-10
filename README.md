@@ -1,170 +1,79 @@
-# nodedata — 整机偏离度快照
+# nodedata — 单机偏离度监控
 
-单二进制，读 `/proc`，14档偏离度，写 ClickHouse，前端热力图。
+一个静态二进制，读 `/proc`，无外部依赖（不需要 ClickHouse / Caddy / 数据库）。
+页面已内置在二进制里；只需要分发 `nodedata` 这一个文件。
 
----
+## 运行：一行命令
 
-## 一键部署
-
-```bash
-tar xzf nodedata-v0.1.0-linux-amd64.tar.gz
-cd nodedata-v0.1.0-linux-amd64
-bash setup.sh
-```
-
-`setup.sh` 会自动完成：ClickHouse 下载 → 建库建表 → 启动 nodedata → 打印状态。
-
----
-
-## 手动部署
-
-### 1. 解压
+临时跑（带资源硬上限，停掉或重启机器即消失）：
 
 ```bash
-tar xzf nodedata-v0.1.0-linux-amd64.tar.gz
-cd nodedata-v0.1.0-linux-amd64
+sudo systemd-run --unit=nodedata -p CPUQuota=20% -p MemoryMax=300M -p Nice=10 -p IOSchedulingClass=idle -p Restart=always --setenv=GOMAXPROCS=1 --setenv=GOMEMLIMIT=200MiB /usr/local/bin/nodedata serve --port 8888 --data-dir /var/lib/nodedata
 ```
 
-包内文件：
-
-```
-nodedata      — 采集器（静态二进制，无任何依赖）
-index.html    — 前端热力图页面
-schema.sql    — ClickHouse 建表 SQL
-Caddyfile     — Caddy 反代配置（监听 :8888）
-setup.sh      — 一键安装脚本
-README.md     — 本文件
-```
-
----
-
-### 2. 准备 ClickHouse
-
-**没有 ClickHouse？** 用官方单文件版（无需 root，无需安装）：
+看状态 / 日志 / 停止：
 
 ```bash
-curl -L https://clickhouse.com/ | sh          # 下载 clickhouse 单文件
-./clickhouse server --daemon                  # 后台启动，默认 TCP 端口 9000
+systemctl status nodedata ; journalctl -u nodedata -f ; sudo systemctl stop nodedata
 ```
 
-启动后等约 3 秒，用以下命令确认连通：
+常驻（开机自启，参数与上面那一行完全相同）：
 
 ```bash
-./clickhouse client --query "SELECT 1"        # 输出 1 即正常
+sudo ./install.sh ./nodedata          # 或 sudo PORT=9000 ./install.sh ./nodedata
 ```
 
-**想用其他端口（如 19000）？**
+不要 systemd、只在前台看一眼：
 
 ```bash
-./clickhouse server --daemon -- --tcp_port=19000
-# 启动 nodedata 时对应修改 --dsn
-./nodedata --dsn="clickhouse://localhost:19000/nodedata" ...
+GOMAXPROCS=1 ./nodedata serve --data-dir ./data
 ```
 
----
+### 为什么是这些限制
 
-### 3. 建库建表
+| 设置 | 理由 |
+|---|---|
+| `CPUQuota=20%` | 正常开销约 2% 核（按实测外推：85 条序列、1000 个进程）；20% 是给页面访问留的余量，同时是硬上限 —— v3.0.8 那种 bug 再出现也只能用到 0.2 核而不是 1.5 核 |
+| `GOMAXPROCS=1` | Go 1.24 及以前不感知 cgroup CPU 配额，多核机上会开满 P，突发后被 CFS 节流卡住 |
+| `MemoryMax=300M` + `GOMEMLIMIT=200MiB` | 满 24h 原始层 + 56 天长期层、85 条序列约 72MiB；GOMEMLIMIT 让 GC 在内核 OOM 之前先收紧 |
+| `Nice=10`、`IOSchedulingClass=idle` | 和业务抢资源时让路 |
 
-```bash
-./clickhouse client --query "CREATE DATABASE IF NOT EXISTS nodedata"
-./clickhouse client --database nodedata < schema.sql
-```
+cgroup v1 的机器（CentOS 7/8 默认）上 `MemoryMax` 不生效，改用 `-p MemoryLimit=300M`。
 
----
+## 参数
 
-### 4. 启动 nodedata
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--port` | `8888` | 监听 `0.0.0.0:<port>`，无鉴权 —— 页面会显示进程名与 PID，请用防火墙限制来源 |
+| `--data-dir` | `./data` | 转储 `*.json`、`baseline.json`、`history/` |
+| `--history-dir` | `<data-dir>/history` | 长期层落盘目录 |
+| `--interval` | `5s` | 采集与 L0 巡检周期 |
+| `--dump-interval` | `30s` | 页面数据转储周期 |
+| `--proc` / `--sys` | `/proc` / `/sys` | 测试用的替代根 |
+| `--web-root` | 空 | 从磁盘读 `index.html` 覆盖内置页面（前端开发用） |
 
-```bash
-./nodedata --web=. --wal-dir=.
-```
+## 数据怎么存
 
-nodedata 启动时会**主动检测并打印状态**，例如：
-
-```
-────────────────────────────────────────────────────────
-  nodedata — 整机偏离度快照
-────────────────────────────────────────────────────────
-  主机名      : myserver
-  采集器地址  : http://127.0.0.1:9701
-  前端目录    : .
-  ClickHouse  : clickhouse://localhost:9000/nodedata
-────────────────────────────────────────────────────────
-
-[ClickHouse] ✓ 连接正常 (clickhouse://localhost:9000/nodedata)
-[Caddy]      ℹ caddy 未运行（可选）
-             → 若需对外暴露：NODEDATA_WEB=$(pwd) caddy run --config Caddyfile
-[nodedata]   HTTP 服务启动 → http://127.0.0.1:9701
-[nodedata]   前端页面      → http://127.0.0.1:9701/
-```
-
-ClickHouse 连不上时不会崩溃，数据写本地 WAL，恢复后自动重放：
-
-```
-[ClickHouse] ✗ 无法连接: dial tcp 127.0.0.1:9000: connection refused
-[ClickHouse]   → 数据将写入本地 WAL，ClickHouse 恢复后自动重放
-[ClickHouse]   → 检查 ClickHouse 是否启动：./clickhouse server &
-[ClickHouse]   → 或指定其他端口：--dsn=clickhouse://localhost:PORT/nodedata
-```
-
----
-
-### 5. 对外暴露（可选：Caddy）
-
-不需要 Caddy 也能用，直接访问内置服务即可：
-
-```
-http://127.0.0.1:9701        # 内置 HTTP，含前端和 API
-```
-
-如果要在 `:8888` 对外暴露（通过 Caddy 加 gzip、缓存等）：
-
-```bash
-# 需要先安装 Caddy: https://caddyserver.com/docs/install
-NODEDATA_WEB=$(pwd) caddy run --config Caddyfile &
-```
-
-Caddy 启动后 nodedata 日志会变为：
-
-```
-[Caddy] ✓ 端口 8888 已监听，前端可访问 http://本机IP:8888
-```
-
----
-
-## 全部参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--dsn` | `clickhouse://localhost:9000/nodedata` | ClickHouse 连接串，**改端口在这里** |
-| `--interval` | `30s` | 采样周期，范围 [10s, 300s] |
-| `--web` | `.` | 前端文件根目录（含 index.html） |
-| `--addr` | `127.0.0.1:9701` | nodedata 自身 HTTP 地址 |
-| `--wal-dir` | `.` | WAL 目录（ClickHouse 断连时缓冲写入） |
-| `--host` | os.Hostname() | 上报主机名 |
-| `--no-serve` | false | 只写文件，不启 HTTP |
-
----
+- **原始层**：每个采集周期一点，内存里保留 24 小时。L1–L5（5 分钟 ~ 1.5 小时）用它。
+- **长期层**：每 5 分钟从原始点里抽一个（不求平均，保证 Δ 的分布不变），保留 56 天，
+  追加写到 `history/YYYY-MM-DD.jsonl`（每天约 0.7MB，56 天约 40MB），重启时读回。
+  L6–L14（3 小时 ~ 28 天）和 7d/30d 窗口用它。
+- 为什么 56 天：σ 用最近 28 天的同时段 Δ 估计，L14 的每个 Δ 又要往回够 28 天。
+  首次部署后 L9 约 1 天就绪、L14 约 29 天就绪，满 56 天后 L14 的参照才完整。
 
 ## API
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/heatmap?from=&to=` | 时间段热力图数据 |
-| GET | `/api/detail?ts=` | 单时刻偏离排名 |
-| GET | `/api/raw?metric=&from=&to=` | 单指标原始序列 |
+| 路径 | 说明 |
+|---|---|
+| `/` | 页面 |
+| `/data/{1h,6h,24h,7d,30d}.json` | 窗口数据（含 `procs` 进程快照） |
+| `/data/health.json` | 采集器自检，含 `self.cpu_pct`、`self.rss_mb` |
+| `/api/check` | L0 绝对判定 |
+| `/api/diagnosis?z=3` | L4 诊断链 |
+| `/api/baseline` | GET / POST / DELETE 人工基线 |
 
----
-
-## 从源码编译
+## 编译
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o nodedata ./cmd/nodedata/
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o nodedata ./cmd/nodedata/
+CGO_ENABLED=0 go build -ldflags "-X main.version=$(git describe --tags --always)" -o nodedata ./cmd/nodedata
 ```
-
----
-
-## 已知限制
-
-- 未启用 taskstats 时短命进程不可见（不影响主要指标）
-- caddy / clickhouse 需单独安装，不打包进二进制

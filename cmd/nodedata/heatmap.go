@@ -33,24 +33,44 @@ func NewHeatmapBuilder(s *Series) *HeatmapBuilder {
 }
 
 // RefreshSigma 用当前缓冲区历史重算 σ 表。每档 × 每小时桶。
+//
+// 档位取哪一层：配 v(t-H) 的容差 LagTolerance(H) 不小于长期层步长的一半时，
+// 长期层里一定有足够近的点，就用长期层（L6=3h 及以上）；否则用原始层（L1–L5）。
+// 长期层每天每小时均匀贡献 12 个样本、覆盖 56 天，σ 反映的是"很多天的这个时段"，
+// 而不是被最近 24 小时的密集原始点主导；也不会因为重启而清零。
 func (b *HeatmapBuilder) RefreshSigma() {
-	now := time.Now()
-	for _, id := range b.series.MetricIDs() {
-		pts := b.series.Range(id, now.Add(-30*24*time.Hour), now)
-		if len(pts) < 2 {
-			continue
-		}
+	toSamples := func(pts []point) []deviation.Sample {
 		hist := make([]deviation.Sample, len(pts))
 		for i, p := range pts {
 			hist[i] = deviation.Sample{TS: p.TS, Value: p.V}
 		}
+		return hist
+	}
+	for _, id := range b.series.MetricIDs() {
+		// 两层各自已按点数/保留期封顶，这里整层取出，不再按墙钟截。
+		raw := toSamples(b.series.RawRange(id, time.Time{}, farFuture))
+		coarse := toSamples(b.series.CoarseRange(id, time.Time{}, farFuture))
 		for lagIdx, lagSec := range deviation.LagSeconds {
+			hist := raw
+			if lagUsesCoarse(lagSec) {
+				hist = coarse
+			}
+			if len(hist) < 2 {
+				continue
+			}
 			all := deviation.ComputeSigmaLag(lagSec, hist)
 			for hour := 0; hour < 24; hour++ {
 				b.sigma.Set(id, lagIdx, hour, all[hour])
 			}
 		}
 	}
+}
+
+var farFuture = time.Unix(1<<62, 0)
+
+// lagUsesCoarse 判断某档位的 σ 是否取长期层。
+func lagUsesCoarse(lagSec int) bool {
+	return deviation.LagTolerance(time.Duration(lagSec)*time.Second) >= coarseStep/2
 }
 
 // Prune 回收 24 小时没有新点的序列及其 σ（进程退出后的 proc.cpu.<comm> 等）。

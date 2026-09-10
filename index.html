@@ -181,7 +181,7 @@ var state={tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9,10,11,12,13];     // L5..L14 : 5400s .. 28d
 var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
-          degrade:"只看 L5–L14（1.5 小时 ~ 28 天），缓慢劣化在这里才显形。",
+          degrade:"只看 L5–L14（1.5 小时 ~ 28 天），缓慢劣化在这里才显形。L9 起需要 ≥1 天历史、L14 需要 ≥29 天；历史落盘，重启不丢。",
           absolute:"不做任何归一化，直接给当前原始读数。"};
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){

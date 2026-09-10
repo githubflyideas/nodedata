@@ -956,39 +956,6 @@ func Run(timeoutStr string) (FullResult, int) {
 	return res, res.ExitCode
 }
 
-func PrintResults(result FullResult) {
-	fmt.Printf("nodedata L0 绝对判定 — %s\n", result.Timestamp.Format("2006-01-02 15:04:05"))
-	fmt.Println(strings.Repeat("=", 78))
-	for _, cat := range result.Categories {
-		sym, st := "✓", "OK"
-		switch cat.Level {
-		case 1:
-			sym, st = "!", "WARN"
-		case 2:
-			sym, st = "x", "FAIL"
-		}
-		fmt.Printf("[%s] %-12s %-5s (%d/%d)\n", sym, cat.Name, st, cat.Passed, cat.Total)
-		for _, c := range cat.Checks {
-			cs := " "
-			if c.Level == 1 {
-				cs = "!"
-			} else if c.Level >= 2 {
-				cs = "x"
-			}
-			fmt.Printf("    %s %-4s %-18s %s\n", cs, c.ID, c.Name, c.Message)
-		}
-	}
-	fmt.Println(strings.Repeat("=", 78))
-	switch result.ExitCode {
-	case 0:
-		fmt.Println("✓ 全部通过")
-	case 1:
-		fmt.Println("! 有告警")
-	default:
-		fmt.Println("x 有失败")
-	}
-}
-
 // ── 累计型计数器的原始读取（基线快照与判定共用同一份实现）────────────────
 
 // conntrackDrops 累加 /proc/net/stat/nf_conntrack 每 CPU 行的 drop 与 insert_failed。

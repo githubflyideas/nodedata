@@ -16,7 +16,7 @@ L0: Sanity Check        (39 absolute judgments, /proc/sys only)
 
 **Purpose**: First-impression health check independent of time-series data.
 
-**Capability**: `nodedata check` — runs 39 absolute judgments in ≤5 seconds.
+**Capability**: runs inside `nodedata serve` every collect interval; results at `/api/check` and on the home page. (The standalone `nodedata check` subcommand was removed in v3.0.10.)
 
 **No dependencies**: 
 - No ClickHouse
@@ -149,27 +149,10 @@ setup.sh / install.sh            # Deployment bootstrap
 
 ## Deployment
 
-**Quick start**:
-```bash
-bash install.sh                    # Build + smoke test
-bash install.sh --systemd          # + systemd service
-```
+See README.md — one `systemd-run` line (transient) or `sudo ./install.sh ./nodedata` (persistent),
+both with the same CPU/memory limits. The binary embeds the web page; it is the only file to ship.
 
-**Manual**:
-```bash
-go build -o nodedata ./cmd/nodedata
-./nodedata check                   # Run L0
-./nodedata check --timeout 10s     # Custom timeout
-```
-
-**With systemd**:
-```bash
-sudo systemctl start nodedata
-sudo systemctl status nodedata
-journalctl -u nodedata -f
-```
-
-## Exit Codes
+## L0 `exit_code` (field in `/api/check`)
 
 | Code | Meaning |
 |------|---------|

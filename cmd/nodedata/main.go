@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
+	"github.com/githubflyideas/nodedata"
 	"github.com/githubflyideas/nodedata/cmd/nodedata/check"
 	"github.com/githubflyideas/nodedata/internal/collector"
 	"github.com/githubflyideas/nodedata/internal/server"
@@ -20,8 +22,6 @@ func main() {
 		os.Exit(1)
 	}
 	switch os.Args[1] {
-	case "check":
-		runCheck()
 	case "serve":
 		runServe()
 	case "version":
@@ -36,30 +36,12 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `nodedata %s
 
 Usage:
-  nodedata check [--timeout 5s]              Run L0 39-point sanity check
-  nodedata serve [--port 8888] [--interval 5s]  Start collector + Web UI
+  nodedata serve [flags]    采集 + L0 巡检 + 偏离度 + Web UI（唯一的运行方式）
   nodedata version
 
-Exit codes (check): 0 = pass, 1 = fail, 2 = warn only
+L0 绝对判定在 serve 里每个采集周期跑一次，结果在首页和 /api/check。
+运行 nodedata serve -h 查看全部参数。
 `, version)
-}
-
-func runCheck() {
-	fs := flag.NewFlagSet("check", flag.ExitOnError)
-	timeout := fs.String("timeout", "5s", "Check timeout duration")
-	procRoot := fs.String("proc", "/proc", "procfs root")
-	sysRoot := fs.String("sys", "/sys", "sysfs root")
-	dataDir := fs.String("data-dir", "", "读取基线的目录（有基线时累计计数器只判新增）")
-	fs.Parse(os.Args[2:])
-	check.SetRoots(*procRoot, *sysRoot)
-	if *dataDir != "" {
-		if _, err := check.LoadBaseline(*dataDir); err != nil {
-			fmt.Fprintf(os.Stderr, "warn: 基线读取失败: %v\n", err)
-		}
-	}
-	results, exitCode := check.Run(*timeout)
-	check.PrintResults(results)
-	os.Exit(exitCode)
 }
 
 func runServe() {
@@ -69,15 +51,16 @@ func runServe() {
 	procRoot := fs.String("proc", "/proc", "procfs root")
 	sysRoot := fs.String("sys", "/sys", "sysfs root")
 	dumpEvery := fs.String("dump-interval", "30s", "data/*.json dump interval")
-	webRootFlag := fs.String("web-root", "", "directory containing index.html (default: cwd, else executable dir)")
-	dataDirFlag := fs.String("data-dir", "", "directory for data/*.json (default: <web-root>/data)")
+	webRootFlag := fs.String("web-root", "", "从该目录读 index.html 覆盖内置页面（仅前端开发用）")
+	dataDirFlag := fs.String("data-dir", "data", "数据目录：data/*.json 转储、baseline.json、history/")
+	historyDirFlag := fs.String("history-dir", "", "长期层落盘目录，5 分钟一点、保留 56 天（默认 <data-dir>/history）")
 	fs.Parse(os.Args[2:])
 
-	webDir := resolveWebRoot(*webRootFlag)
-	dataDir := *dataDirFlag
-	if dataDir == "" {
-		dataDir = filepath.Join(webDir, "data")
+	webDir := ""
+	if *webRootFlag != "" {
+		webDir, _ = filepath.Abs(*webRootFlag)
 	}
+	dataDir, _ := filepath.Abs(*dataDirFlag)
 
 	iv, err := time.ParseDuration(*interval)
 	if err != nil || iv <= 0 {
@@ -103,12 +86,29 @@ func runServe() {
 	l0.Start()
 	defer l0.Stop()
 
-	// ── L1：/proc 采集 → 内存序列
+	// ── L1：/proc 采集 → 内存序列（原始层 24h + 长期层 56 天，长期层落盘）
 	series := NewSeries()
 	col := collector.New(collector.Config{ProcRoot: *procRoot, Interval: iv})
+	histDir := *historyDirFlag
+	if histDir == "" {
+		histDir = filepath.Join(dataDir, "history")
+	}
+	hist, err := NewHistory(histDir, coarseRetention)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: history dir %s 不可用（%v），长期层只在内存里，重启即丢\n", histDir, err)
+		hist = nil
+	} else {
+		defer hist.Close()
+		t0 := time.Now()
+		lines, pts, err := hist.Load(series, t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warn: 读取历史失败: %v\n", err)
+		}
+		fmt.Printf("  history       %s（%d 行 / %d 点，%v）\n", histDir, lines, pts, time.Since(t0).Round(time.Millisecond))
+	}
 	stop := make(chan struct{})
 	defer close(stop)
-	go collectLoop(col, series, *procRoot, iv, stop)
+	go collectLoop(col, series, hist, *procRoot, iv, stop)
 
 	// ── L3：偏离度
 	builder := NewHeatmapBuilder(series)
@@ -133,7 +133,7 @@ func runServe() {
 
 	// 首轮：先采一次、算一次、落一次盘，避免页面开局吃到 404/空文件
 	if samples, err := col.CollectGlobal(*procRoot, time.Now()); err == nil {
-		series.Add(samples)
+		persist(hist, series.Add(samples))
 	} else {
 		fmt.Fprintf(os.Stderr, "warn: initial collect: %v\n", err)
 	}
@@ -158,7 +158,7 @@ func runServe() {
 	}
 
 	mux := server.NewMuxWithConfig(
-		server.MuxConfig{WebRoot: webDir, DataDir: dataDir, Version: version,
+		server.MuxConfig{WebRoot: webDir, Index: nodedata.IndexHTML, DataDir: dataDir, Version: version,
 			BaselineGet: func() interface{} {
 				if b := check.CurrentBaseline(); b != nil {
 					return b
@@ -196,7 +196,9 @@ func runServe() {
 	}
 	fmt.Printf("nodedata %s\n", version)
 	fmt.Printf("  listen        http://localhost:%s/\n", *port)
-	fmt.Printf("  web root      %s\n", webDir)
+	if webDir != "" {
+		fmt.Printf("  web root      %s（覆盖内置页面）\n", webDir)
+	}
 	fmt.Printf("  data dir      %s\n", dataDir)
 	fmt.Printf("  procfs        %s\n", *procRoot)
 	fmt.Printf("  sysfs         %s\n", *sysRoot)
@@ -204,39 +206,11 @@ func runServe() {
 	fmt.Printf("  dump every    %s  [%s]\n", dv, dumpState)
 	fmt.Printf("  metrics       %d series, %d points buffered\n",
 		len(series.MetricIDs()), series.Count())
-	if _, err := os.Stat(filepath.Join(webDir, "index.html")); err != nil {
-		fmt.Fprintf(os.Stderr, "warn: no index.html in %s — pass --web-root\n", webDir)
-	}
 
 	if err := server.ListenAndServe("0.0.0.0:"+*port, mux); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-// resolveWebRoot 选择 web 根目录：显式参数 > 含 index.html 的 cwd > 可执行文件所在目录。
-// 不再无条件依赖 cwd，避免以 systemd/其他目录启动时转储与静态文件分家。
-func resolveWebRoot(flagVal string) string {
-	if flagVal != "" {
-		abs, err := filepath.Abs(flagVal)
-		if err == nil {
-			return abs
-		}
-		return flagVal
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		if _, err := os.Stat(filepath.Join(cwd, "index.html")); err == nil {
-			return cwd
-		}
-	}
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		if _, err := os.Stat(filepath.Join(dir, "index.html")); err == nil {
-			return dir
-		}
-	}
-	cwd, _ := os.Getwd()
-	return cwd
 }
 
 // windowDuration 把窗口名映射为时长。
@@ -256,8 +230,8 @@ func windowDuration(name string) (time.Duration, bool) {
 	return 0, false
 }
 
-// collectLoop 周期性采集 /proc 写入内存序列。
-func collectLoop(col *collector.Collector, s *Series, procRoot string, iv time.Duration, stop <-chan struct{}) {
+// collectLoop 周期性采集 /proc 写入内存序列；被抽进长期层的点同时落盘。
+func collectLoop(col *collector.Collector, s *Series, hist *History, procRoot string, iv time.Duration, stop <-chan struct{}) {
 	t := time.NewTicker(iv)
 	defer t.Stop()
 	for {
@@ -265,15 +239,29 @@ func collectLoop(col *collector.Collector, s *Series, procRoot string, iv time.D
 		case <-stop:
 			return
 		case now := <-t.C:
+			var batch []collector.Sample
 			if samples, err := col.CollectGlobal(procRoot, now); err == nil {
-				s.Add(samples)
+				batch = append(batch, samples...)
 			}
 			if samples, err := col.CollectProcs(procRoot, now); err == nil {
-				s.Add(samples)
+				batch = append(batch, samples...)
 			}
+			persist(hist, s.Add(batch))
 		}
 	}
 }
+
+// persist 把本轮抽进长期层的点写盘；失败只记一次，不影响采集。
+func persist(hist *History, kept []collector.Sample) {
+	if hist == nil || len(kept) == 0 {
+		return
+	}
+	if err := hist.Append(kept); err != nil && histWarned.CompareAndSwap(false, true) {
+		fmt.Fprintf(os.Stderr, "warn: 历史落盘失败（后续不再提示）: %v\n", err)
+	}
+}
+
+var histWarned atomic.Bool
 
 // sigmaLoop 周期性重算 σ 表。
 func sigmaLoop(b *HeatmapBuilder, stop <-chan struct{}) {

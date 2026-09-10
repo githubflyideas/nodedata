@@ -27,7 +27,8 @@ type QueryFns struct {
 
 // MuxConfig 显式指定 web 根目录与 data 目录，避免依赖进程 cwd。
 type MuxConfig struct {
-	WebRoot string
+	WebRoot string // 非空时从磁盘读 index.html（前端开发用），否则用 Index
+	Index   []byte // 嵌入的首页
 	DataDir string
 	Version string
 
@@ -47,13 +48,34 @@ func NewMuxWithConfig(cfg MuxConfig, qfns QueryFns) *http.ServeMux {
 	webRoot := cfg.WebRoot
 	dataDir := cfg.DataDir
 	if dataDir == "" {
-		dataDir = filepath.Join(webRoot, "data")
+		dataDir = "data"
 	}
 
 	mux := http.NewServeMux()
 
-	fs := http.FileServer(http.Dir(webRoot))
-	mux.Handle("/", fs)
+	// 只服务首页这一个文件。早期这里是 http.FileServer(http.Dir(webRoot))：
+	// 带目录列表、监听 0.0.0.0，而 webRoot 找不到 index.html 时回落到当前目录 ——
+	// 在 /root 下启动就能从网络上浏览 /root/.ssh。
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/", "/index.html":
+		case "/l0.html": // 旧书签
+			http.Redirect(w, r, "/", http.StatusMovedPermanently)
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		page := cfg.Index
+		if webRoot != "" {
+			if b, err := os.ReadFile(filepath.Join(webRoot, "index.html")); err == nil {
+				page = b
+			}
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(page)
+	})
 
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
