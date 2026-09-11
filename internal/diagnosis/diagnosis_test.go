@@ -91,7 +91,7 @@ func TestZThresholdBoundary(t *testing.T) {
 	if !strings.Contains(ev, "+4.25") || !strings.Contains(ev, "L4") {
 		t.Fatalf("evidence must carry the actual z and lag, got %q", ev)
 	}
-	if !strings.Contains(c.Items[0].Description, "91.500") {
+	if !strings.Contains(c.Items[0].Description, "91.5") {
 		t.Fatalf("description must carry actual value, got %q", c.Items[0].Description)
 	}
 }

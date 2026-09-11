@@ -1,16 +1,20 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/githubflyideas/nodedata"
 	"github.com/githubflyideas/nodedata/cmd/nodedata/check"
 	"github.com/githubflyideas/nodedata/internal/collector"
+	"github.com/githubflyideas/nodedata/internal/diagnosis"
 	"github.com/githubflyideas/nodedata/internal/server"
 )
 
@@ -88,7 +92,7 @@ func runServe() {
 
 	// ── L1：/proc 采集 → 内存序列（原始层 24h + 长期层 56 天，长期层落盘）
 	series := NewSeries()
-	col := collector.New(collector.Config{ProcRoot: *procRoot, Interval: iv})
+	col := collector.New(collector.Config{ProcRoot: *procRoot, SysRoot: *sysRoot, Interval: iv})
 	histDir := *historyDirFlag
 	if histDir == "" {
 		histDir = filepath.Join(dataDir, "history")
@@ -126,6 +130,15 @@ func runServe() {
 
 	// ── L4：诊断链（读 L0 结果 + L3 偏离度）
 	diagnoser := NewDiagnoser(dataDir, series, builder)
+	diagnoser.procs = procsFromCollector(col)
+
+	// ── 事故留证：后台每 15 秒跑一次 L4，出现带归因的结论就把现场存下来（不依赖页面打开）
+	recorder, err := NewRecorder(filepath.Join(dataDir, "incidents"), *procRoot,
+		func() *diagnosis.Chain { return diagnoser.Run(3.0) }, diagnoser.procs, diagnoser.latestDeviations)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: 事故留证目录不可用: %v\n", err)
+		recorder = nil
+	}
 
 	// ── L2：静态转储 → data/{1h,6h,24h,7d,30d}.json + health.json
 	dumper := server.NewDumper(webDir, builder.Build, healthFn)
@@ -189,6 +202,42 @@ func runServe() {
 				return diagnoser.Run(th), nil
 			},
 		})
+
+	if recorder != nil {
+		go recorder.Loop(15*time.Second, stop)
+		mux.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				writeJSON(w, recorder.List())
+			case http.MethodPost: // 手动留证：以此刻 CPU 前 3 的进程为对象
+				it := diagnosis.Item{Title: "手动留证", Timestamp: time.Now()}
+				for i, p := range diagnoser.procs() {
+					if i >= 3 {
+						break
+					}
+					it.Culprits = append(it.Culprits, diagnosis.Culprit{Kind: "process", PID: p.PID, Name: p.Comm,
+						Detail: fmt.Sprintf("此刻 CPU %.0f%%", p.CPU)})
+				}
+				id, err := recorder.Capture(it, diagnoser.Run(3.0), time.Now())
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				writeJSON(w, map[string]string{"id": id})
+			default:
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+		mux.HandleFunc("/api/incidents/", func(w http.ResponseWriter, r *http.Request) {
+			b, err := recorder.Get(strings.TrimPrefix(r.URL.Path, "/api/incidents/"))
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(b)
+		})
+	}
 
 	dumpState := "on"
 	if !dumpToDisk {
@@ -276,4 +325,9 @@ func sigmaLoop(b *HeatmapBuilder, stop <-chan struct{}) {
 			b.RefreshSigma()
 		}
 	}
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
 }

@@ -68,6 +68,12 @@ type Item struct {
 	Action      string    `json:"action"`
 	Evidence    []string  `json:"evidence"`
 	Timestamp   time.Time `json:"timestamp"`
+
+	// 归因（v3.1.0）：Class 非空的条目由 causal 生成。
+	Class    string    `json:"class,omitempty"`
+	Culprits []Culprit `json:"culprits,omitempty"`
+	Commands []string  `json:"commands,omitempty"`
+	Metrics  []string  `json:"metrics,omitempty"`
 }
 
 // Chain 是诊断链。
@@ -89,6 +95,8 @@ type Options struct {
 	// MaxItems 输出上限，0 表示不限。
 	MaxItems int
 	Now      time.Time
+	// Procs 是 L1 最近一轮进程快照；为空时归因只能到设备/接口。
+	Procs []Proc
 }
 
 func (o *Options) fill() {
@@ -110,7 +118,17 @@ func Diagnose(l0 []L0Category, devs []Deviation, opt Options) *Chain {
 	c := &Chain{Timestamp: opt.Now, Items: []Item{}, Notes: []string{}}
 
 	c.Items = append(c.Items, fromL0(l0, opt)...)
-	devItems, notes := fromDeviations(devs, opt)
+	causalItems, used := causal(devs, opt)
+	c.Items = append(c.Items, causalItems...)
+	rest := make([]Deviation, 0, len(devs))
+	for _, d := range devs {
+		// 已被归因消化的、进程序列与单设备序列（它们只作证据）不再单独出条目
+		if used[d.MetricID] || strings.HasPrefix(d.MetricID, "proc.") || strings.Contains(d.MetricID, "@") {
+			continue
+		}
+		rest = append(rest, d)
+	}
+	devItems, notes := fromDeviations(rest, opt)
 	c.Items = append(c.Items, devItems...)
 	c.Notes = append(c.Notes, notes...)
 
@@ -210,8 +228,8 @@ func fromDeviations(devs []Deviation, opt Options) ([]Item, []string) {
 			Description: fmt.Sprintf(
 				"当前值 %.3f %s；峰值偏离出现在 %s 档，十四档中有 %d 档超过 |z|≥%.1f。",
 				d.Value, d.Unit, peakLag, d.Breadth, opt.ZThreshold),
-			Impact:   impactForDomain(d.Domain, lvl),
-			Action:   actionForDomain(d.Domain, d.MetricID),
+			Impact: impactForDomain(d.Domain, lvl),
+			Action: actionForDomain(d.Domain, d.MetricID),
 			Evidence: []string{
 				fmt.Sprintf("L1 %s = %.3f %s", d.MetricID, d.Value, d.Unit),
 				fmt.Sprintf("L3 peak z = %+.2f at %s", peak, peakLag),

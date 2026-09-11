@@ -135,3 +135,77 @@ func TestProcKey(t *testing.T) {
 		}
 	}
 }
+
+func writeStatFull(t *testing.T, root string, pid int, comm string, state byte, majflt, utime, start, rssPages uint64) {
+	t.Helper()
+	dir := filepath.Join(root, fmt.Sprint(pid))
+	os.MkdirAll(dir, 0o755)
+	line := fmt.Sprintf("%d (%s) %c 1 1 1 0 -1 4194304 0 0 %d 0 %d 0 0 0 20 0 1 0 %d 1000000 %d 0 0 0\n",
+		pid, comm, state, majflt, utime, start, rssPages)
+	os.WriteFile(filepath.Join(dir, "stat"), []byte(line), 0o644)
+}
+
+func writeIO(t *testing.T, root string, pid int, rb, wb uint64) {
+	t.Helper()
+	s := fmt.Sprintf("rchar: 1\nwchar: 1\nsyscr: 1\nsyscw: 1\nread_bytes: %d\nwrite_bytes: %d\ncancelled_write_bytes: 0\n", rb, wb)
+	os.WriteFile(filepath.Join(root, fmt.Sprint(pid), "io"), []byte(s), 0o644)
+}
+
+// TestProcIOMemState：谁在写盘、谁在涨内存、谁卡在 D 状态 —— 三类归因的原始数据。
+func TestProcIOMemState(t *testing.T) {
+	root := t.TempDir()
+	c := New(Config{ProcRoot: root, Interval: 5 * time.Second})
+	pg := uint64(os.Getpagesize())
+	mb := uint64(1 << 20)
+	t0 := time.Unix(1_800_000_000, 0).Truncate(rssRingStep) // 5 分钟格起点
+
+	writeStatFull(t, root, 300, "rsync", 'D', 0, 100, 10, 1000)
+	writeIO(t, root, 300, 0, 0)
+	writeStatFull(t, root, 301, "java", 'S', 0, 100, 11, 100*mb/pg)
+	writeIO(t, root, 301, 0, 0)
+	writeStatFull(t, root, 302, "flush", 'D', 0, 0, 12, 0) // 0 CPU、D 状态，也要进快照
+	writeIO(t, root, 302, 0, 0)
+	mustCollect(t, c, root, t0)
+
+	// 5 秒后：rsync 写 50MB（10MB/s），java 主缺页 500 次（100/s）
+	writeStatFull(t, root, 300, "rsync", 'D', 0, 101, 10, 1000)
+	writeIO(t, root, 300, 0, 50*mb)
+	writeStatFull(t, root, 301, "java", 'S', 500, 101, 11, 100*mb/pg)
+	m := samplesMap(mustCollect(t, c, root, t0.Add(5*time.Second)))
+	if got := m["proc.io.rsync"]; got != float64(10*mb) {
+		t.Fatalf("proc.io.rsync = %v, want 10MiB/s", got)
+	}
+	top, _ := c.TopProcs()
+	byPID := map[int]ProcTop{}
+	for _, p := range top {
+		byPID[p.PID] = p
+	}
+	if byPID[300].WriteBps != float64(10*mb) || byPID[300].State != "D" {
+		t.Fatalf("rsync = %+v", byPID[300])
+	}
+	if byPID[301].MajFlt != 100 {
+		t.Fatalf("java majflt = %v", byPID[301].MajFlt)
+	}
+	if _, ok := byPID[302]; !ok {
+		t.Fatalf("D-state process with 0 CPU must be in the snapshot: %+v", top)
+	}
+
+	// 跨过 5 分钟格三次，java RSS 100MB → 400MB：1 小时增长窗口里 +300MB
+	for i, rss := range []uint64{200, 300, 400} {
+		now := t0.Add(time.Duration(i+1) * rssRingStep)
+		writeStatFull(t, root, 301, "java", 'S', 500, 102+uint64(i), 11, rss*mb/pg)
+		writeStatFull(t, root, 300, "rsync", 'S', 0, 102+uint64(i), 10, 1000)
+		mustCollect(t, c, root, now)
+	}
+	top, _ = c.TopProcs()
+	for _, p := range top {
+		if p.PID == 301 {
+			// 首格是 t0 首次见到时的 100MB，现在 400MB，间隔 15 分钟
+			if p.RSSGrowth != int64(300*mb) || p.GrowthSpan != 3*300 {
+				t.Fatalf("java growth=%d span=%d, want 300MiB over 900s", p.RSSGrowth, p.GrowthSpan)
+			}
+			return
+		}
+	}
+	t.Fatalf("java missing from snapshot")
+}

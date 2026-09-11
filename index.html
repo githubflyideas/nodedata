@@ -79,6 +79,7 @@ th.sorted .ar{opacity:1}
      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;cursor:copy;border:0}
 .cmd:hover{background:#e3e7ee}
 h3.procs-h{margin:18px 0 6px;font-size:13px;font-weight:600}
+.culp-d{color:var(--dim);font-size:12.5px;margin-left:6px}
 h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .z{display:inline-block;min-width:38px;padding:1px 5px;border-radius:4px;font-variant-numeric:tabular-nums;
   font-size:11.5px;font-weight:600}
@@ -155,7 +156,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   </div>
   <div id="l3err"></div>
   <div class="tbl-wrap"><table id="l3tbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
-  <h3 class="procs-h">此刻谁在用 CPU<span id="procsub">按进程，前 10 + nodedata 自身；CPU 以"占一个核的百分比"计，与 cpu.user 同单位。点命令即复制。</span></h3>
+  <h3 class="procs-h">此刻谁在用资源<span id="procsub">CPU 前 10 ∪ 读写前 10 ∪ RSS 增长前 5 ∪ RSS 最大前 5 ∪ D 状态 ∪ nodedata 自身。CPU 以"占一个核的百分比"计，读写为块设备口径。点命令即复制。</span></h3>
   <div class="tbl-wrap"><table id="procstbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
 </section>
 
@@ -165,6 +166,9 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   <div id="l4err"></div>
   <div id="items"></div>
   <div class="notes" id="l4notes"></div>
+  <h3 class="procs-h">事故留证<span>出现带责任方的结论时自动保存现场；同一责任方 30 分钟内只留一次。</span>
+    <button class="cmd" style="cursor:pointer" onclick="captureNow(this)">立即留证</button></h3>
+  <div class="tbl-wrap" id="incidents"><p class="empty">加载中…</p></div>
 </section>
 
 <section>
@@ -210,6 +214,8 @@ function fmt(v,unit){
     while(x>=1024&&i<u.length-1){x/=1024;i++;}
     return (v<0?"-":"")+x.toFixed(x<10?2:1)+" "+u[i];
   }
+  if(unit==="bytes/s") return fmt(v,"bytes")+"/s";
+  if(unit==="/s")      return (Math.round(v*100)/100)+" /s";
   if(unit==="percent") return v.toFixed(2)+" %";
   if(unit==="ms")      return v.toFixed(2)+" ms";
   if(Math.abs(v)>=1e6) return (v/1e6).toFixed(2)+"M";
@@ -407,17 +413,44 @@ function renderProcs(){
   var el=document.getElementById("procstbl"),h=state.heat;
   var ps=(h&&h.procs)||[];
   if(!ps.length){el.innerHTML='<tbody><tr><td class="empty">还没有进程快照（启动后第二轮采集才有增量）。</td></tr></tbody>';return;}
-  var cmds=function(pid){return ["top -H -p "+pid,"pidstat -u -p "+pid+" 1 5","cat /proc/"+pid+"/status"];};
-  el.innerHTML='<thead><tr><th class="num">PID</th><th>进程</th><th class="num">CPU</th><th class="num">RSS</th><th>下一步</th></tr></thead><tbody>'+
+  var cmds=function(p){
+    var c=["top -H -p "+p.pid,"pidstat -u -d -p "+p.pid+" 1 5","cat /proc/"+p.pid+"/status"];
+    if(p.state==="D") c.push("cat /proc/"+p.pid+"/stack");
+    return c;
+  };
+  var growth=function(p){
+    if(!p.growth_span) return "—";
+    var g=p.rss_growth, s=(g>=0?"+":"-")+fmt(Math.abs(g),"bytes");
+    return s+' <span class="pids">/'+Math.round(p.growth_span/60)+'分</span>';
+  };
+  el.innerHTML='<thead><tr><th class="num">PID</th><th>进程</th><th class="mid">状态</th><th class="num">CPU</th>'+
+    '<th class="num">读</th><th class="num">写</th><th class="num">RSS</th><th class="num">RSS 增长</th><th class="num">主缺页</th><th>下一步</th></tr></thead><tbody>'+
     ps.map(function(p){
       return '<tr><td class="num">'+p.pid+'</td><td class="mid-id">'+esc(p.comm)+
         (p.self?'<span class="self-tag">nodedata 自身</span>':"")+'</td>'+
-        '<td class="num">'+p.cpu.toFixed(1)+' %</td><td class="num">'+esc(fmt(p.rss,"bytes"))+'</td><td>'+
-        cmds(p.pid).map(function(c){return '<button class="cmd" data-cmd="'+esc(c)+'">'+esc(c)+'</button>';}).join("")+
-        '</td></tr>';}).join("")+'</tbody>';
+        '<td class="mid">'+esc(p.state||"")+'</td>'+
+        '<td class="num">'+p.cpu.toFixed(1)+' %</td>'+
+        '<td class="num">'+(p.read_bps?fmt(p.read_bps,"bytes/s"):"—")+'</td>'+
+        '<td class="num">'+(p.write_bps?fmt(p.write_bps,"bytes/s"):"—")+'</td>'+
+        '<td class="num">'+esc(fmt(p.rss,"bytes"))+'</td><td class="num">'+growth(p)+'</td>'+
+        '<td class="num">'+(p.majflt?p.majflt.toFixed(0)+" /s":"—")+'</td><td>'+cmdButtons(cmds(p))+'</td></tr>';}).join("")+'</tbody>';
 }
-document.getElementById("procstbl").addEventListener("click",function(e){
-  var b=e.target.closest("button.cmd"); if(!b) return;
+
+/* ================= L4 ================= */
+function cmdButtons(cs){
+  return cs.map(function(c){return '<button class="cmd" data-cmd="'+esc(c)+'">'+esc(c)+'</button>';}).join("");
+}
+function culpritsHTML(cs){
+  if(!cs||!cs.length) return "";
+  return cs.map(function(c,i){
+    var who=c.pid?esc(c.name)+' <span class="pids">PID <b>'+c.pid+'</b></span>':esc(c.name);
+    if(c.self) who+='<span class="self-tag">nodedata 自身</span>';
+    return '<p class="kv"><b>'+(i===0?"责任方":"&nbsp;")+'</b> '+who+' <span class="culp-d">'+esc(c.detail||"")+'</span></p>';
+  }).join("");
+}
+// 所有"下一步"命令按钮：点击复制（L4 卡片、进程表共用）
+document.addEventListener("click",function(e){
+  var b=e.target.closest&&e.target.closest("button.cmd"); if(!b) return;
   var c=b.getAttribute("data-cmd");
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(c).then(function(){
@@ -426,7 +459,24 @@ document.getElementById("procstbl").addEventListener("click",function(e){
   }
 });
 
-/* ================= L4 ================= */
+async function loadIncidents(){
+  var el=document.getElementById("incidents"); if(!el) return;
+  var list;
+  try{ list=(await getJSON("/api/incidents")).json||[]; }catch(e){ el.innerHTML='<p class="empty">事故留证不可用：'+esc(e.message)+'</p>'; return; }
+  if(!list.length){ el.innerHTML='<p class="empty">还没有留证。L4 出现带责任方的结论时会自动保存现场（线程级 CPU、内核栈、D 状态进程、内核日志）。</p>'; return; }
+  el.innerHTML='<table><thead><tr><th>时间</th><th>结论</th><th>责任方</th><th></th></tr></thead><tbody>'+
+    list.slice(0,20).map(function(m){
+      var c=m.culprit?(esc(m.culprit.name)+(m.culprit.pid?' (PID '+m.culprit.pid+')':"")):"—";
+      return '<tr><td class="num">'+esc(new Date(m.time).toLocaleString())+'</td><td>'+esc(m.title)+'</td><td>'+c+
+        '</td><td><a href="/api/incidents/'+encodeURIComponent(m.id)+'" target="_blank" rel="noopener">证据 JSON</a></td></tr>';
+    }).join("")+'</tbody></table>';
+}
+async function captureNow(btn){
+  btn.disabled=true; var t=btn.textContent; btn.textContent="留证中…";
+  try{ await fetch("/api/incidents",{method:"POST"}); await loadIncidents(); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+
 async function loadL4(){
   var d;
   try{ d=(await getJSON("/api/diagnosis?z=3.0")).json; clearErr("l4err"); }
@@ -445,7 +495,9 @@ async function loadL4(){
       '<b>'+esc(x.title)+'</b><span class="cat-tag">'+esc(x.category)+'</span></div>'+
       '<p>'+esc(x.description)+'</p>'+
       (x.impact?'<p class="kv"><b>影响</b> '+esc(x.impact)+'</p>':"")+
-      (x.action?'<p class="kv"><b>下一步</b> '+esc(x.action)+'</p>':"")+
+      culpritsHTML(x.culprits)+
+      (x.commands&&x.commands.length? '<p class="kv"><b>下一步</b> '+cmdButtons(x.commands)+'</p>'
+        :(x.action?'<p class="kv"><b>下一步</b> '+esc(x.action)+'</p>':""))+
       (ev?'<details><summary>证据 '+(x.evidence||[]).length+' 条</summary><ul>'+ev+'</ul></details>':"")+
       '</div>';
   }).join("");
@@ -523,7 +575,7 @@ async function clearBaseline(){
   await loadBaseline(); await loadL0();
 }
 async function refreshAll(){
-  await Promise.all([loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline()]);
+  await Promise.all([loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

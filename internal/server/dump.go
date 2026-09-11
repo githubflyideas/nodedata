@@ -37,6 +37,13 @@ type ProcTop struct {
 	CPU  float64 `json:"cpu"`
 	RSS  uint64  `json:"rss"`
 	Self bool    `json:"self,omitempty"`
+
+	ReadBps    float64 `json:"read_bps"`
+	WriteBps   float64 `json:"write_bps"`
+	MajFlt     float64 `json:"majflt"`
+	RSSGrowth  int64   `json:"rss_growth"`
+	GrowthSpan int     `json:"growth_span"`
+	State      string  `json:"state"`
 }
 
 type PSIAlert struct {

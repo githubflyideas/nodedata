@@ -87,7 +87,10 @@ func (b *HeatmapBuilder) Build(from, to time.Time) (*server.HeatmapJSON, error) 
 	return b.build(from, to, false)
 }
 
-// Latest 只算每个指标最后一个点（L4 用），不做整窗口的 z。
+// sustainN：L4 要求偏离在最近几个采样点上持续。
+const sustainN = 3
+
+// Latest 只算每个指标最近 sustainN 个点（L4 用），不做整窗口的 z。
 func (b *HeatmapBuilder) Latest(now time.Time) *server.HeatmapJSON {
 	out, _ := b.build(now.Add(-time.Hour), now, true)
 	return out
@@ -120,8 +123,13 @@ func (b *HeatmapBuilder) build(from, to time.Time, lastOnly bool) (*server.Heatm
 	for _, id := range ids {
 		var pts []point
 		if lastOnly {
-			if p, ok := b.series.Last(id); ok && !p.TS.Before(from) && !p.TS.After(to) {
-				pts = []point{p}
+			// 最近 sustainN 个原始点（L4 用来判断偏离是否持续）
+			pts = b.series.RawRange(id, to.Add(-time.Minute), to)
+			if len(pts) > sustainN {
+				pts = pts[len(pts)-sustainN:]
+			}
+			if n := len(pts); n > 0 && pts[n-1].TS.Before(from) {
+				pts = nil
 			}
 		} else {
 			pts = b.series.Range(id, from, to)
@@ -216,6 +224,13 @@ func unitOf(id string) string {
 		return "ms"
 	case strings.HasSuffix(id, "_s"), strings.HasSuffix(id, "_sec"):
 		return "s"
+	// 速率类：吞吐（字节/秒）与事件/秒。@ 后面是设备或接口名。
+	case strings.HasPrefix(id, "disk.rbytes"), strings.HasPrefix(id, "disk.wbytes"),
+		id == "net.rx", id == "net.tx", strings.HasPrefix(id, "net.rx@"), strings.HasPrefix(id, "net.tx@"),
+		strings.HasPrefix(id, "proc.io."):
+		return "bytes/s"
+	case strings.Contains(id, "_drop"), strings.Contains(id, "_errs"), id == "tcp.retrans", id == "pgfault":
+		return "/s"
 	case strings.Contains(id, "bytes"), strings.HasPrefix(id, "mem."),
 		strings.HasPrefix(id, "swap."), id == "slab":
 		return "bytes"

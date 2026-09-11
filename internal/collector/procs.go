@@ -16,6 +16,11 @@
 // 现在：每轮扫全部 PID（和 top 一样，一个 PID 一次 read），用 starttime 识别 PID 复用，
 // 首次见到只记基线不出增量；按归一化名字聚合；被跟踪的名字每轮都出点（空闲出 0），
 // 保证序列连续；另外保留"此刻 CPU 前 N 的进程"快照（含 PID），供页面直接给出下一步命令。
+//
+// v3.1.0：同一轮扫描里再读 /proc/PID/io（read_bytes/write_bytes，块层口径），并记录主缺页、
+// 状态（D = 不可中断睡眠，IO 卡住的典型表现）和每 5 分钟一格、共 12 格的 RSS 环，
+// 得出"1 小时 RSS 增长"。快照 = CPU 前 N ∪ IO 前 N ∪ RSS 增长前 5 ∪ RSS 最大前 5 ∪ D 状态 ∪ 自身，
+// 让 L4 能分别回答"谁在吃 CPU / 谁在写盘 / 谁在涨内存 / 谁卡在 IO 上"。
 package collector
 
 import (
@@ -37,6 +42,12 @@ const (
 	procTrackIdle = time.Hour
 	// procTrackMax：同时跟踪的名字上限，防止 fork 风暴把序列数撑爆。
 	procTrackMax = 32
+	// procTrackMinIO：某个名字的块设备读写达到 1MiB/s 才为它建 proc.io.<名字> 序列。
+	procTrackMinIO = 1 << 20
+	// rssRingSlots × rssRingStep = RSS 增长的回看窗口（1 小时）。
+	rssRingSlots = 12
+	rssRingStep  = 5 * time.Minute
+	procSnapMax  = 40
 )
 
 // ProcTop 是某一时刻单个进程的 CPU 占用。
@@ -47,20 +58,36 @@ type ProcTop struct {
 	CPU  float64 `json:"cpu"`  // 占一个核的百分比，与 cpu.user 等整机指标同单位
 	RSS  uint64  `json:"rss"`  // 字节
 	Self bool    `json:"self,omitempty"`
+
+	ReadBps    float64 `json:"read_bps"`   // 块设备读，字节/秒（/proc/PID/io read_bytes）
+	WriteBps   float64 `json:"write_bps"`  // 块设备写，字节/秒（write_bytes，脏页归属到弄脏它的进程）
+	MajFlt     float64 `json:"majflt"`     // 主缺页/秒（要去盘上读页，内存紧张或冷启动）
+	RSSGrowth  int64   `json:"rss_growth"` // RSS 相对 GrowthSpan 秒前的变化，字节
+	GrowthSpan int     `json:"growth_span"`
+	State      string  `json:"state"` // R/S/D/Z…
 }
 
 type procPrev struct {
-	cpu   uint64 // utime+stime，jiffies
-	start uint64 // starttime，用来识别 PID 复用
-	gen   uint32
+	cpu    uint64 // utime+stime，jiffies
+	start  uint64 // starttime，用来识别 PID 复用
+	gen    uint32
+	rb, wb uint64 // /proc/PID/io read_bytes / write_bytes
+	ioOK   bool
+	majflt uint64
+	ring   [rssRingSlots]uint64 // 每 5 分钟一格的 RSS
+	ringTS [rssRingSlots]int64  // 每格写入时刻（unix 秒）；首格是首次见到该进程的时刻
+	ringN  int
+	ringAt int // 下一格写入位置
 }
 
 type procState struct {
-	prev    map[int]procPrev
-	gen     uint32
-	prevTS  time.Time
-	tracked map[string]time.Time // 名字 → 最近一次活跃时间
-	selfPID int
+	prev      map[int]procPrev
+	gen       uint32
+	prevTS    time.Time
+	tracked   map[string]time.Time // proc.cpu.<名字>：名字 → 最近一次活跃时间
+	trackedIO map[string]time.Time // proc.io.<名字>
+	ringSlot  int64                // 当前 RSS 环所在的 5 分钟格
+	selfPID   int
 
 	topMu   sync.Mutex
 	top     []ProcTop
@@ -75,6 +102,7 @@ func (p *procState) init() {
 	if p.prev == nil {
 		p.prev = make(map[int]procPrev, 1024)
 		p.tracked = make(map[string]time.Time, procTrackMax)
+		p.trackedIO = make(map[string]time.Time, procTrackMax)
 		p.selfPID = os.Getpid()
 	}
 }
@@ -89,25 +117,62 @@ func ProcKey(comm string) string {
 }
 
 // parseProcStat 解析 /proc/PID/stat。comm 可能含空格与括号，必须以最后一个 ')' 为界。
-func (c *Collector) parseProcStat(data []byte) (comm string, cpu, start, rss uint64, ok bool) {
+type procStat struct {
+	comm                    string
+	state                   byte
+	cpu, start, rss, majflt uint64
+}
+
+func (c *Collector) parseProcStat(data []byte) (ps procStat, ok bool) {
 	l := bytes.IndexByte(data, '(')
 	r := bytes.LastIndexByte(data, ')')
 	if l < 0 || r <= l || r+2 > len(data) {
-		return "", 0, 0, 0, false
+		return ps, false
 	}
-	comm = string(data[l+1 : r])
+	ps.comm = string(data[l+1 : r])
 	f := c.splitFieldsBuf(data[r+2:]) // f[0] 是第 3 个字段 state
-	if len(f) < 22 {
-		return "", 0, 0, 0, false
+	if len(f) < 22 || len(f[0]) == 0 {
+		return ps, false
 	}
 	ut, err1 := parseUint64(f[11])    // 14 utime
 	st, err2 := parseUint64(f[12])    // 15 stime
 	start, err3 := parseUint64(f[19]) // 22 starttime
 	if err1 != nil || err2 != nil || err3 != nil {
-		return "", 0, 0, 0, false
+		return ps, false
 	}
-	pages, _ := parseUint64(f[21]) // 24 rss（页）
-	return comm, ut + st, start, pages * uint64(os.Getpagesize()), true
+	ps.state = f[0][0]
+	ps.majflt, _ = parseUint64(f[9]) // 12 majflt
+	pages, _ := parseUint64(f[21])   // 24 rss（页）
+	ps.cpu, ps.start, ps.rss = ut+st, start, pages*pageSize
+	return ps, true
+}
+
+var pageSize = uint64(os.Getpagesize())
+
+// parseProcIO 取 /proc/PID/io 的 read_bytes 与 write_bytes。
+func parseProcIO(data []byte) (rb, wb uint64, ok bool) {
+	var got int
+	for len(data) > 0 {
+		var line []byte
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			line, data = data[:i], data[i+1:]
+		} else {
+			line, data = data, nil
+		}
+		k, v, found := bytes.Cut(line, []byte(": "))
+		if !found {
+			continue
+		}
+		switch string(k) { // 编译器对 switch string([]byte) 不分配
+		case "read_bytes":
+			rb, _ = parseUint64(bytes.TrimSpace(v))
+			got++
+		case "write_bytes":
+			wb, _ = parseUint64(bytes.TrimSpace(v))
+			got++
+		}
+	}
+	return rb, wb, got == 2
 }
 
 // CollectProcs 扫描全部进程，返回 proc.cpu.<key> 序列样本，并刷新 TopProcs 快照。
@@ -136,9 +201,15 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 	p.prevTS = now
 	p.gen++
 
+	// RSS 环每 5 分钟推进一格；本轮是否是新格子。
+	slot := now.Unix() / int64(rssRingStep/time.Second)
+	newSlot := slot != p.ringSlot
+	p.ringSlot = slot
+
 	var (
 		all      []ProcTop
 		byKey    = make(map[string]float64, 64)
+		byKeyIO  = make(map[string]float64, 64)
 		total    float64
 		scanned  int32
 		skipped  int32
@@ -160,28 +231,61 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 			skipped++ // 进程在 readdir 与 open 之间退出，正常
 			continue
 		}
-		comm, cpu, start, rss, ok := c.parseProcStat(data)
+		ps, ok := c.parseProcStat(data)
 		if !ok {
 			skipped++
 			continue
 		}
+		cur := procPrev{cpu: ps.cpu, start: ps.start, gen: p.gen, majflt: ps.majflt}
+		if d, err := c.readFileAbs(pathBase + name + "/io"); err == nil { // 需要 root 或同 uid
+			cur.rb, cur.wb, cur.ioOK = parseProcIO(d)
+		}
 		prev, seen := p.prev[pid]
-		p.prev[pid] = procPrev{cpu: cpu, start: start, gen: p.gen}
+		reused := seen && prev.start != ps.start
+		if seen && !reused { // 继承 RSS 环
+			cur.ring, cur.ringTS, cur.ringN, cur.ringAt = prev.ring, prev.ringTS, prev.ringN, prev.ringAt
+		}
+		if newSlot || cur.ringN == 0 {
+			cur.ring[cur.ringAt] = ps.rss
+			cur.ringTS[cur.ringAt] = now.Unix()
+			cur.ringAt = (cur.ringAt + 1) % rssRingSlots
+			if cur.ringN < rssRingSlots {
+				cur.ringN++
+			}
+		}
+		p.prev[pid] = cur
 		// 首次见到、PID 被复用、计数回退：只记基线，不出增量。
-		if !hasPrev || !seen || prev.start != start || cpu < prev.cpu {
+		if !hasPrev || !seen || reused || ps.cpu < prev.cpu {
 			continue
 		}
-		pct := float64(cpu-prev.cpu) / dt // jiffies/s；USER_HZ=100 ⇒ 占一个核的百分比
-		key := ProcKey(comm)
+		pct := float64(ps.cpu-prev.cpu) / dt // jiffies/s；USER_HZ=100 ⇒ 占一个核的百分比
+		key := ProcKey(ps.comm)
 		total += pct
 		byKey[key] += pct
-		isSelf := pid == p.selfPID
-		if isSelf {
-			selfCPU, selfRSS = pct, rss
+		t := ProcTop{PID: pid, Comm: ps.comm, Key: key, CPU: pct, RSS: ps.rss,
+			State: string(ps.state), MajFlt: udiff(ps.majflt, prev.majflt) / dt}
+		if cur.ioOK && prev.ioOK {
+			t.ReadBps = udiff(cur.rb, prev.rb) / dt
+			t.WriteBps = udiff(cur.wb, prev.wb) / dt
+			byKeyIO[key] += t.ReadBps + t.WriteBps
 		}
-		if pct > 0 || isSelf {
-			all = append(all, ProcTop{PID: pid, Comm: comm, Key: key, CPU: pct, RSS: rss, Self: isSelf})
+		// 相对环里最老的一格算增长；首格就是首次见到的时刻，所以刚开始泄漏的进程
+		// 不必等满一个 5 分钟格才看得出增长。
+		if cur.ringN > 0 {
+			oldest := 0
+			if cur.ringN == rssRingSlots {
+				oldest = cur.ringAt
+			}
+			if span := now.Unix() - cur.ringTS[oldest]; span > 0 {
+				t.RSSGrowth = int64(ps.rss) - int64(cur.ring[oldest])
+				t.GrowthSpan = int(span)
+			}
 		}
+		if pid == p.selfPID {
+			t.Self = true
+			selfCPU, selfRSS = pct, ps.rss
+		}
+		all = append(all, t)
 	}
 	// 回收已退出进程的基线，否则 map 随 PID 周转无限增长。
 	for pid, pp := range p.prev {
@@ -190,50 +294,17 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		}
 	}
 
-	// 快照：CPU 前 N，自身永远在列（sidecar 必须能看见自己的开销）。
-	sort.Slice(all, func(i, j int) bool { return all[i].CPU > all[j].CPU })
-	top := all
-	if len(top) > ProcTopN {
-		top = append([]ProcTop(nil), all[:ProcTopN]...)
-		hasSelf := false
-		for _, x := range top {
-			hasSelf = hasSelf || x.Self
-		}
-		if !hasSelf {
-			for _, x := range all[ProcTopN:] {
-				if x.Self {
-					top = append(top, x)
-					break
-				}
-			}
-		}
-	}
+	top := pickSnapshot(all)
 
 	var out []Sample
 	if hasPrev {
-		// 跟踪集合：够活跃的名字进来，空闲一小时的出去。
-		for key, v := range byKey {
-			if v >= procTrackMinCPU {
-				if _, in := p.tracked[key]; in || len(p.tracked) < procTrackMax {
-					p.tracked[key] = now
-				}
-			}
-		}
-		var sumTracked float64
-		for key, last := range p.tracked {
-			if now.Sub(last) > procTrackIdle {
-				delete(p.tracked, key)
-				continue
-			}
-			v := byKey[key] // 不在本轮 = 0，照样出点，序列才连续
-			sumTracked += v
-			out = append(out, Sample{MetricID: "proc.cpu." + key, TS: now, Value: v})
-		}
+		sumTracked := emitTracked(p.tracked, byKey, procTrackMinCPU, "proc.cpu.", now, &out)
 		other := total - sumTracked
 		if other < 0 {
 			other = 0
 		}
 		out = append(out, Sample{MetricID: "proc.cpu.__others__", TS: now, Value: other})
+		emitTracked(p.trackedIO, byKeyIO, procTrackMinIO, "proc.io.", now, &out)
 	}
 
 	p.topMu.Lock()
@@ -262,4 +333,63 @@ func (c *Collector) procHealth(h map[string]float64) {
 	h["self.cpu_pct"] = p.selfCPU
 	h["self.rss_mb"] = float64(p.selfRSS) / (1 << 20)
 	h["collector.procs_scan_ms"] = float64(p.scanDur.Microseconds()) / 1000
+}
+
+// emitTracked 维护一个"被跟踪名字"集合并为其每轮出点（空闲出 0，序列才连续）。返回被跟踪部分之和。
+func emitTracked(tracked map[string]time.Time, byKey map[string]float64, minV float64, prefix string, now time.Time, out *[]Sample) float64 {
+	for key, v := range byKey {
+		if v >= minV {
+			if _, in := tracked[key]; in || len(tracked) < procTrackMax {
+				tracked[key] = now
+			}
+		}
+	}
+	var sum float64
+	for key, last := range tracked {
+		if now.Sub(last) > procTrackIdle {
+			delete(tracked, key)
+			continue
+		}
+		v := byKey[key]
+		sum += v
+		*out = append(*out, Sample{MetricID: prefix + key, TS: now, Value: v})
+	}
+	return sum
+}
+
+// pickSnapshot：CPU 前 N ∪ IO 前 N ∪ RSS 增长前 5 ∪ RSS 最大前 5 ∪ D 状态 ∪ 自身，按 CPU 降序。
+func pickSnapshot(all []ProcTop) []ProcTop {
+	chosen := make(map[int]bool, procSnapMax)
+	var out []ProcTop
+	add := func(t ProcTop) {
+		if !chosen[t.PID] && len(out) < procSnapMax {
+			chosen[t.PID] = true
+			out = append(out, t)
+		}
+	}
+	take := func(less func(a, b ProcTop) bool, n int, keep func(ProcTop) bool) {
+		idx := make([]int, 0, len(all))
+		for i := range all {
+			if keep(all[i]) {
+				idx = append(idx, i)
+			}
+		}
+		sort.Slice(idx, func(i, j int) bool { return less(all[idx[i]], all[idx[j]]) })
+		for k := 0; k < len(idx) && k < n; k++ {
+			add(all[idx[k]])
+		}
+	}
+	for _, t := range all {
+		if t.Self {
+			add(t)
+		}
+	}
+	take(func(a, b ProcTop) bool { return a.CPU > b.CPU }, ProcTopN, func(t ProcTop) bool { return t.CPU > 0 })
+	take(func(a, b ProcTop) bool { return a.ReadBps+a.WriteBps > b.ReadBps+b.WriteBps }, ProcTopN,
+		func(t ProcTop) bool { return t.ReadBps+t.WriteBps > 0 })
+	take(func(a, b ProcTop) bool { return a.RSSGrowth > b.RSSGrowth }, 5, func(t ProcTop) bool { return t.RSSGrowth > 16<<20 })
+	take(func(a, b ProcTop) bool { return a.RSS > b.RSS }, 5, func(t ProcTop) bool { return t.RSS > 0 })
+	take(func(a, b ProcTop) bool { return a.PID < b.PID }, ProcTopN, func(t ProcTop) bool { return t.State == "D" })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CPU > out[j].CPU })
+	return out
 }

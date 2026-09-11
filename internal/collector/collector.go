@@ -25,6 +25,7 @@ type Sample struct {
 // Config 是采集器配置。
 type Config struct {
 	ProcRoot string
+	SysRoot  string // 默认 /sys；用于区分物理网卡与 bond/VLAN
 	Interval time.Duration
 }
 
@@ -53,8 +54,12 @@ type Collector struct {
 	rngState           uint64
 	readBuf            [65536]byte // 零分配文件读缓冲，复用于每次 readFileAbs
 	fieldBuf           [64][]byte   // 复用字段切片，避免 splitFields 重复分配
-	diskMIDs           map[string][5]string // disk device→[riops,wiops,await_r,await_w,util] metric IDs
-	netMIDs            map[string]string    // net device→name string (for prevNets key)
+	devNames     map[string]string // 设备/接口名驻留，避免每轮分配
+	diskIDMap    map[string]*diskIDs
+	netIDMap     map[string]*netIDs
+	ifaceClass   map[string]bool
+	ifaceClassAt time.Time
+	sysNetOK     bool
 	cachedProcRoot string    // 上次使用的 procRoot
 	cachedStat     string
 	cachedLoadavg  string
@@ -85,17 +90,14 @@ type Collector struct {
 	openedPaths map[string]struct{} // 去重后的路径集合（PID 段归一成 <pid>）
 }
 
-type diskPrev struct {
-	riops, wiops, rtime, wtime, ioutil uint64
-}
-type netPrev struct {
-	rxBytes, txBytes, rxPkts, txPkts, rxDrop, txDrop uint64
-}
 
 // New 创建采集器。
 func New(cfg Config) *Collector {
 	if cfg.ProcRoot == "" {
 		cfg.ProcRoot = "/proc"
+	}
+	if cfg.SysRoot == "" {
+		cfg.SysRoot = "/sys"
 	}
 	if cfg.Interval == 0 {
 		cfg.Interval = 30 * time.Second
@@ -107,8 +109,9 @@ func New(cfg Config) *Collector {
 		prevNets:        make(map[string]netPrev),
 		currentInterval: int64(cfg.Interval),
 		rngState:        uint64(time.Now().UnixNano()),
-		diskMIDs:        make(map[string][5]string),
-		netMIDs:         make(map[string]string),
+		devNames:        make(map[string]string, 32),
+		diskIDMap:       make(map[string]*diskIDs, 16),
+		netIDMap:        make(map[string]*netIDs, 16),
 	}
 	if f, err := os.Open(cfg.ProcRoot + "/pressure/cpu"); err == nil {
 		f.Close()
@@ -553,231 +556,6 @@ func (c *Collector) parseVmstat(data []byte, now time.Time, dt float64, hasPrev 
 	}
 }
 
-// ──────────────────── parseDiskstats ───────────────────────────
-// fields (1-based per kernel doc):
-// 1 major 2 minor 3 name 4 reads_ok 5 reads_merged 6 sectors_read 7 time_read_ms
-// 8 writes_ok 9 writes_merged 10 sectors_written 11 time_write_ms
-// 12 ios_in_progress 13 time_doing_ios_ms ...
-
-func (c *Collector) parseDiskstats(data []byte, now time.Time, dt float64, hasPrev bool, out *[]Sample) {
-	type devStats struct {
-		name string
-		riops, wiops, rmerged, wmerged uint64
-		rBytes, wBytes                 uint64
-		rtime, wtime                   uint64
-		inflight                       uint64
-		ioutil                         uint64
-	}
-	var devsBuf [16]devStats
-	nDevs := 0
-
-	lines := data
-	for len(lines) > 0 {
-		var line []byte
-		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-			line = lines[:i]; lines = lines[i+1:]
-		} else {
-			line = lines; lines = nil
-		}
-		fields := c.splitFieldsBuf(line)
-		if len(fields) < 14 { continue }
-		// 跳过分区（带数字后缀）—— 直接在 []byte 上判断
-		nameBytes := fields[2]
-		if len(nameBytes) > 0 {
-			last := nameBytes[len(nameBytes)-1]
-			if last >= '0' && last <= '9' { continue }
-		}
-		// 获取或缓存设备名（只在首次见到新设备时分配字符串）
-		name, ok2 := c.getDiskName(nameBytes)
-		if !ok2 { continue }
-
-		var nums [11]uint64
-		ok := true
-		for i, idx := range [11]int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13} {
-			v, err := parseUint64(fields[idx])
-			if err != nil { ok = false; break }
-			nums[i] = v
-		}
-		if !ok { continue }
-		if nDevs < 16 {
-			devsBuf[nDevs] = devStats{
-				name: name,
-				riops: nums[0], rmerged: nums[1], rBytes: nums[2] * 512, rtime: nums[3],
-				wiops: nums[4], wmerged: nums[5], wBytes: nums[6] * 512, wtime: nums[7],
-				inflight: nums[9], ioutil: nums[10],
-			}
-			nDevs++
-		}
-	}
-
-	// 聚合
-	var aggRiops, aggWiops, aggRmerged, aggWmerged uint64
-	var aggRbytes, aggWbytes float64
-	var aggRtime, aggWtime, aggIoutil uint64
-	var aggInflight uint64
-
-	for di := 0; di < nDevs; di++ {
-		d := devsBuf[di]
-		name := d.name
-		prev := c.prevDisks[name]
-
-		aggInflight += d.inflight
-		if hasPrev {
-			riops := rateDiff(d.riops, prev.riops, dt)
-			wiops := rateDiff(d.wiops, prev.wiops, dt)
-			rmerged := uint64(0)
-			if d.rmerged >= prev.riops { rmerged = d.rmerged - prev.riops }
-			wmerged := uint64(0)
-			if d.wmerged >= prev.wiops { wmerged = d.wmerged - prev.wiops }
-			_ = rmerged; _ = wmerged
-
-			aggRiops += safeUintDiff(d.riops, prev.riops)
-			aggWiops += safeUintDiff(d.wiops, prev.wiops)
-			aggRmerged += safeUintDiff(d.rmerged, prev.riops)
-			aggWmerged += safeUintDiff(d.wmerged, prev.wiops)
-			aggRbytes += float64(safeUintDiff(d.rBytes, 0)) // will recalc below
-			aggWbytes += float64(safeUintDiff(d.wBytes, 0))
-			aggRtime += safeUintDiff(d.rtime, prev.rtime)
-			aggWtime += safeUintDiff(d.wtime, prev.wtime)
-			aggIoutil += safeUintDiff(d.ioutil, prev.ioutil)
-			_ = riops; _ = wiops
-
-			// per-device 明细 - 使用缓存的 MetricID 避免字符串拼接分配
-			mids := c.getDiskMIDs(name)
-			if riopsV := rateDiff(d.riops, prev.riops, dt); riopsV >= 0 {
-				*out = append(*out, Sample{MetricID: mids[0], TS: now, Value: riopsV})
-			}
-			if wiopsV := rateDiff(d.wiops, prev.wiops, dt); wiopsV >= 0 {
-				*out = append(*out, Sample{MetricID: mids[1], TS: now, Value: wiopsV})
-			}
-
-			// await (ms per IO)
-			driops := safeUintDiff(d.riops, prev.riops)
-			dwiops := safeUintDiff(d.wiops, prev.wiops)
-			drtime := safeUintDiff(d.rtime, prev.rtime)
-			dwtime := safeUintDiff(d.wtime, prev.wtime)
-			if driops > 0 {
-				*out = append(*out, Sample{MetricID: mids[2], TS: now, Value: float64(drtime) / float64(driops)})
-			}
-			if dwiops > 0 {
-				*out = append(*out, Sample{MetricID: mids[3], TS: now, Value: float64(dwtime) / float64(dwiops)})
-			}
-			dioutil := safeUintDiff(d.ioutil, prev.ioutil)
-			util := float64(dioutil) / (dt * 1000) // ms / ms
-			if util <= 1.0 {
-				*out = append(*out, Sample{MetricID: mids[4], TS: now, Value: util})
-			}
-		}
-		c.prevDisks[name] = diskPrev{
-			riops: d.riops, wiops: d.wiops,
-			rtime: d.rtime, wtime: d.wtime,
-		}
-	}
-
-	if hasPrev && nDevs > 0 {
-		aggRiopsRate := float64(aggRiops) / dt
-		aggWiopsRate := float64(aggWiops) / dt
-		*out = append(*out, Sample{MetricID: "disk.riops", TS: now, Value: aggRiopsRate})
-		*out = append(*out, Sample{MetricID: "disk.wiops", TS: now, Value: aggWiopsRate})
-		*out = append(*out, Sample{MetricID: "disk.inflight", TS: now, Value: float64(aggInflight)})
-		*out = append(*out, Sample{MetricID: "disk.merged", TS: now, Value: float64(aggRmerged+aggWmerged) / dt})
-
-		// aggregate await
-		if aggRiops > 0 {
-			*out = append(*out, Sample{MetricID: "disk.await_r", TS: now, Value: float64(aggRtime) / float64(aggRiops)})
-		}
-		if aggWiops > 0 {
-			*out = append(*out, Sample{MetricID: "disk.await_w", TS: now, Value: float64(aggWtime) / float64(aggWiops)})
-		}
-		aggUtil := float64(aggIoutil) / (dt * 1000)
-		if aggUtil <= 1.0 {
-			*out = append(*out, Sample{MetricID: "disk.util", TS: now, Value: aggUtil})
-		}
-		// aggregate read/write bytes rate
-		// need per-prev tracking; simplified here with summing diffs
-		_ = aggRbytes; _ = aggWbytes
-	}
-}
-
-// ──────────────────── parseNetDev ──────────────────────────────
-
-func (c *Collector) parseNetDev(data []byte, now time.Time, dt float64, hasPrev bool, out *[]Sample) {
-	// 零分配版：固定数组代替 map，unsafe 零分配字符串查找
-	type devEntry struct {
-		name string
-		rx, tx, rxP, txP, rxD, txD uint64
-	}
-	var devsBuf [8]devEntry
-	nDevs := 0
-
-	lines := data
-	lineNo := 0
-	for len(lines) > 0 && nDevs < 8 {
-		var line []byte
-		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-			line = lines[:i]; lines = lines[i+1:]
-		} else {
-			line = lines; lines = nil
-		}
-		lineNo++
-		if lineNo <= 2 { continue }
-		k, rest, ok := bytes.Cut(line, []byte(":"))
-		if !ok { continue }
-		kb := bytes.TrimSpace(k)
-		// 跳过 lo（零分配比较）
-		if len(kb) == 2 && kb[0] == 'l' && kb[1] == 'o' { continue }
-		// 获取缓存或分配设备名
-		//nolint:gosec
-		tmpKey := *(*string)(unsafe.Pointer(&kb))
-		var name string
-		if cached, ok2 := c.netMIDs[tmpKey]; ok2 {
-			name = cached
-		} else {
-			name = string(kb)
-			c.netMIDs[name] = name
-		}
-		fields := c.splitFieldsBuf(bytes.TrimSpace(rest))
-		if len(fields) < 10 { continue }
-		var nums [10]uint64
-		good := true
-		for i := 0; i < 10; i++ {
-			v, err := parseUint64(fields[i])
-			if err != nil { good = false; break }
-			nums[i] = v
-		}
-		if !good { continue }
-		devsBuf[nDevs] = devEntry{
-			name: name,
-			rx: nums[0], rxP: nums[1], rxD: nums[3],
-			tx: nums[8], txP: nums[9], txD: nums[11%len(nums)],
-		}
-		nDevs++
-	}
-
-	var aggRx, aggTx, aggRxP, aggTxP, aggRxD, aggTxD uint64
-	for i := 0; i < nDevs; i++ {
-		d := &devsBuf[i]
-		prev := c.prevNets[d.name]
-		if hasPrev {
-			aggRx  += safeUintDiff(d.rx,  prev.rxBytes)
-			aggTx  += safeUintDiff(d.tx,  prev.txBytes)
-			aggRxP += safeUintDiff(d.rxP, prev.rxPkts)
-			aggTxP += safeUintDiff(d.txP, prev.txPkts)
-			aggRxD += safeUintDiff(d.rxD, prev.rxDrop)
-			aggTxD += safeUintDiff(d.txD, prev.txDrop)
-		}
-		c.prevNets[d.name] = netPrev{rxBytes: d.rx, txBytes: d.tx, rxPkts: d.rxP, txPkts: d.txP, rxDrop: d.rxD, txDrop: d.txD}
-	}
-	if hasPrev && nDevs > 0 {
-		*out = append(*out, Sample{MetricID: "net.rx",      TS: now, Value: float64(aggRx)  / dt})
-		*out = append(*out, Sample{MetricID: "net.tx",      TS: now, Value: float64(aggTx)  / dt})
-		*out = append(*out, Sample{MetricID: "net.rx_pps",  TS: now, Value: float64(aggRxP) / dt})
-		*out = append(*out, Sample{MetricID: "net.tx_pps",  TS: now, Value: float64(aggTxP) / dt})
-		*out = append(*out, Sample{MetricID: "net.rx_drop", TS: now, Value: float64(aggRxD) / dt})
-		*out = append(*out, Sample{MetricID: "net.tx_drop", TS: now, Value: float64(aggTxD) / dt})
-	}
-}
-
 // ──────────────────── parseNetSnmp ─────────────────────────────
 
 func (c *Collector) parseNetSnmp(data []byte, now time.Time, dt float64, hasPrev bool, out *[]Sample) {
@@ -874,32 +652,6 @@ var bAvg10Eq = []byte("avg10=")
 // ──────────────────── helpers ──────────────────────────────────
 
 // getDiskName 在首次遇到新设备时分配字符串并缓存，后续使用 unsafe 零分配查找。
-func (c *Collector) getDiskName(b []byte) (string, bool) {
-	if len(b) == 0 { return "", false }
-	// 零分配 map 查找：unsafe 将 []byte 视作 string，不复制内存
-	//nolint:gosec
-	tmpKey := *(*string)(unsafe.Pointer(&b))
-	if mids, ok := c.diskMIDs[tmpKey]; ok {
-		// 缓存命中：从 mids[0] 中提取设备名（去掉 "disk.riops@" 前缀）
-		return mids[0][len("disk.riops@"):], true
-	}
-	// 首次见到：分配持久化名称，缓存所有 MetricID
-	name := string(b) // 仅在首次见到新设备时分配
-	c.diskMIDs[name] = [5]string{
-		"disk.riops@" + name,
-		"disk.wiops@" + name,
-		"disk.await_r@" + name,
-		"disk.await_w@" + name,
-		"disk.util@" + name,
-	}
-	return name, true
-}
-
-// getDiskMIDs 获取预缓存的磁盘度量 ID 数组（[riops,wiops,await_r,await_w,util]）。
-func (c *Collector) getDiskMIDs(name string) [5]string {
-	return c.diskMIDs[name]
-}
-
 // splitFields 用空格/tab 切分，零分配（返回原始 slice 的子切片）。
 // 包级函数版本（测试/外部使用）。
 func splitFields(b []byte) [][]byte {

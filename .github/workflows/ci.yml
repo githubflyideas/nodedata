@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      faultlab:
+        description: "在 runner 上真实注入故障（cpu,io,mem），约 20 分钟"
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: vet
+        run: go vet ./...
+      - name: unit + race
+        run: go test -race -count=1 ./...
+      - name: 故障语料库（回放）+ 性能护栏
+        run: go test -count=1 -run 'TestFaultCorpus|TestBuildCostFullBuffer|TestLongLagsSurviveRestart' -v ./cmd/nodedata | tee corpus.txt
+      - name: build
+        run: |
+          CGO_ENABLED=0 go build -ldflags "-X main.version=$(git describe --tags --always)" -o nodedata ./cmd/nodedata
+          CGO_ENABLED=0 go build -o faultlab ./cmd/faultlab
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            nodedata
+            faultlab
+            corpus.txt
+
+  faultlab:
+    if: github.event_name == 'workflow_dispatch' && inputs.faultlab
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+      - name: 启动 nodedata 并注入真实故障
+        run: |
+          chmod +x nodedata faultlab
+          sudo ./nodedata serve --port 8888 --data-dir "$PWD/data" > serve.log 2>&1 &
+          ./faultlab --url http://127.0.0.1:8888 --scenarios cpu,io,mem --dir "$PWD" --warmup 20m | tee faultlab.txt
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faultlab-evidence
+          path: |
+            faultlab.txt
+            serve.log
+            data/incidents/

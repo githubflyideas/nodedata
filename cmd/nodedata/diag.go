@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/githubflyideas/nodedata/cmd/nodedata/check"
+	"github.com/githubflyideas/nodedata/internal/collector"
 	"github.com/githubflyideas/nodedata/internal/deviation"
 	"github.com/githubflyideas/nodedata/internal/diagnosis"
+	"github.com/githubflyideas/nodedata/internal/server"
 )
 
 // Diagnoser 组装 L4 输入。
@@ -18,6 +20,8 @@ type Diagnoser struct {
 	dataDir string
 	series  *Series
 	builder *HeatmapBuilder
+	// procs 提供 L1 最近一轮进程快照，供 L4 归因到 PID；nil 时只能归因到设备/接口。
+	procs func() []diagnosis.Proc
 }
 
 func NewDiagnoser(dataDir string, s *Series, b *HeatmapBuilder) *Diagnoser {
@@ -26,9 +30,14 @@ func NewDiagnoser(dataDir string, s *Series, b *HeatmapBuilder) *Diagnoser {
 
 // Run 读取当前 L0 结果与最新一轮 L3 偏离度，返回诊断链。
 func (d *Diagnoser) Run(zThreshold float64) *diagnosis.Chain {
+	var procs []diagnosis.Proc
+	if d.procs != nil {
+		procs = d.procs()
+	}
 	return diagnosis.Diagnose(d.loadL0(), d.latestDeviations(), diagnosis.Options{
 		ZThreshold: zThreshold,
 		MaxItems:   50,
+		Procs:      procs,
 	})
 }
 
@@ -57,8 +66,12 @@ func (d *Diagnoser) loadL0() []diagnosis.L0Category {
 
 // latestDeviations 取每个指标最近一个点的十四档 z。
 func (d *Diagnoser) latestDeviations() []diagnosis.Deviation {
+	return d.latestDeviationsAt(time.Now())
+}
+
+func (d *Diagnoser) latestDeviationsAt(now time.Time) []diagnosis.Deviation {
 	// 只要最后一个点：早期这里每次请求都 Build 整个 1h 窗口，而页面每 5 秒调一次。
-	hm := d.builder.Latest(time.Now())
+	hm := d.builder.Latest(now)
 	if hm == nil {
 		return nil
 	}
@@ -68,14 +81,7 @@ func (d *Diagnoser) latestDeviations() []diagnosis.Deviation {
 			continue
 		}
 		p := m.Points[len(m.Points)-1]
-		z := make([]float64, deviation.NLag)
-		for i := 0; i < deviation.NLag; i++ {
-			if p.Z[i] == nil {
-				z[i] = math.NaN() // nil = 该档未就绪
-				continue
-			}
-			z[i] = float64(*p.Z[i]) / 20.0 // ZInt8 存的是 z×20
-		}
+		z := sustainedZ(m.Points)
 		onset := ""
 		if p.OnsetLag != nil {
 			onset = *p.OnsetLag
@@ -91,4 +97,46 @@ func (d *Diagnoser) latestDeviations() []diagnosis.Deviation {
 		})
 	}
 	return out
+}
+
+// procsFromCollector 把采集器快照转成 diagnosis 的输入类型。
+func procsFromCollector(col *collector.Collector) func() []diagnosis.Proc {
+	return func() []diagnosis.Proc {
+		ps, _ := col.TopProcs()
+		out := make([]diagnosis.Proc, len(ps))
+		for i, p := range ps {
+			out[i] = diagnosis.Proc{PID: p.PID, Comm: p.Comm, Key: p.Key, State: p.State, CPU: p.CPU,
+				ReadBps: p.ReadBps, WriteBps: p.WriteBps, MajFlt: p.MajFlt, RSS: p.RSS,
+				RSSGrowth: p.RSSGrowth, GrowthSpan: p.GrowthSpan, Self: p.Self}
+		}
+		return out
+	}
+}
+
+// sustainedZ：每档取最近几个点里"同号且最小"的 |z|；任一点未就绪则该档未就绪，符号不一致记 0。
+//
+// 为什么：约 40 个指标 × 9 个就绪档 ≈ 360 个 z 格，单点 |z|≥3 纯靠噪声几乎每次评估都会出现一个。
+// 白噪声的极值不会连续三个采样点同向出现，真实的变化会。L3 热力图照样显示单点尖峰，
+// 只有下结论（以及随之的事故留证）才要求持续 15 秒。
+func sustainedZ(pts []server.Point) []float64 {
+	z := make([]float64, deviation.NLag)
+	for i := range z {
+		first := true
+		for _, p := range pts {
+			if p.Z[i] == nil {
+				z[i] = math.NaN()
+				break
+			}
+			v := float64(*p.Z[i]) / 20.0 // ZInt8 存的是 z×20
+			switch {
+			case first:
+				z[i], first = v, false
+			case v*z[i] <= 0:
+				z[i] = 0
+			case math.Abs(v) < math.Abs(z[i]):
+				z[i] = v
+			}
+		}
+	}
+	return z
 }
