@@ -1,42 +1,62 @@
-
 name: Release
 
+# 打 tag 时发布：nodedata serve 所需的一切都在这一个静态二进制里（页面已 go:embed）。
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
         with:
-          go-version: '1.23'
+          fetch-depth: 0   # git describe 需要历史
 
-      - name: Build amd64
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # 发布前必须过：单元 + race、故障语料库、性能护栏。
+      - name: test
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -o nodedata
-          tar czf nodedata-${GITHUB_REF_NAME}-linux-amd64.tar.gz nodedata
+          go vet ./...
+          go test -race -short -count=1 ./...
+          go test -count=1 -run 'TestFaultCorpus|TestBuildCostFullBuffer|TestLongLagsSurviveRestart' -v ./cmd/nodedata
 
-      - name: Build arm64
+      - name: build
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-            go build -o nodedata
-          tar czf nodedata-${GITHUB_REF_NAME}-linux-arm64.tar.gz nodedata
+          set -eu
+          VER="${GITHUB_REF_NAME:-$(git describe --tags --always)}"
+          for ARCH in amd64 arm64; do
+            # 目标必须是 ./cmd/nodedata：仓库根包只有嵌入的页面，没有 main，
+            # `go build -o nodedata` 在根目录产出的是归档文件而不是可执行文件。
+            CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
+              go build -trimpath -ldflags "-s -w -X main.version=$VER" -o nodedata ./cmd/nodedata
+            CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
+              go build -trimpath -ldflags "-s -w" -o faultlab ./cmd/faultlab
+            # 校验产物：必须是对应架构的静态可执行文件
+            file nodedata | tee /dev/stderr | grep -q "statically linked"
+            tar czf "nodedata-$VER-linux-$ARCH.tar.gz" nodedata faultlab install.sh README.md CHANGELOG.md
+            rm -f nodedata faultlab
+          done
+          sha256sum nodedata-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
 
-      - name: Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
-            nodedata-${{ github.ref_name }}-linux-amd64.tar.gz
-            nodedata-${{ github.ref_name }}-linux-arm64.tar.gz
+            nodedata-*.tar.gz
+            SHA256SUMS
+          body: |
+            静态二进制，无外部依赖。解压后：
+
+                sudo ./install.sh ./nodedata          # 常驻，带 CPU/内存上限
+                # 或临时跑一次，见 README 里的 systemd-run 一行命令
+
+            升级：替换 /usr/local/bin/nodedata 后 `sudo systemctl restart nodedata`。
+            `--data-dir` 下的 history/ 会被读回，长期层（L6–L14）不会因升级清零。
