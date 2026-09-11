@@ -27,6 +27,10 @@ func TestCompare(t *testing.T) {
 	for ts := now.Add(-2 * time.Hour); !ts.After(now); ts = ts.Add(5 * time.Second) {
 		s.Add([]collector.Sample{{MetricID: "disk.util@sdb", TS: ts, Value: 90}})
 	}
+	// sdc 一直空闲：不该占行
+	for ts := now.Add(-2 * time.Hour); !ts.After(now); ts = ts.Add(5 * time.Second) {
+		s.Add([]collector.Sample{{MetricID: "disk.util@sdc", TS: ts, Value: 0}})
+	}
 	c := NewHeatmapBuilder(s).Compare(now)
 	rows := map[string]cmpRow{}
 	for _, g := range c.Groups {
@@ -48,6 +52,9 @@ func TestCompare(t *testing.T) {
 	sdb, ok := rows["util % · sdb"]
 	if !ok || *sdb.Now != 90 || sdb.Past[1] != nil {
 		t.Fatalf("per-disk row: ok=%v %+v（6h 前 sdb 不存在，必须是 null 而不是 0）", ok, sdb.Past)
+	}
+	if _, ok := rows["util % · sdc"]; ok {
+		t.Fatalf("an always-idle disk must not get a row")
 	}
 	if _, ok := rows["入向 · eth0"]; ok {
 		t.Fatalf("single NIC must not get per-NIC rows")

@@ -189,8 +189,14 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 			if row.Now = b.valueAt(d, now, 0, true); row.Now == nil {
 				continue // 这台机器没有这项（比如没有 PSI、没有 conntrack）：整行不显示
 			}
+			active := *row.Now != 0
 			for _, c := range compareCols {
-				row.Past = append(row.Past, b.valueAt(d, now.Add(-c.Ago), lookupTol(c.Ago), false))
+				p := b.valueAt(d, now.Add(-c.Ago), lookupTol(c.Ago), false)
+				row.Past = append(row.Past, p)
+				active = active || (p != nil && *p != 0)
+			}
+			if strings.Contains(row.ID, "@") && !active {
+				continue // 逐设备行：一直空闲的盘/网卡不占行
 			}
 			grp.Rows = append(grp.Rows, row)
 		}
