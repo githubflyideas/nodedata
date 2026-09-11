@@ -1,11 +1,14 @@
 # nodedata Changelog
 
-## 未发布
+## [v3.1.2] — 2026-09-11
 
 - 发布流程：`release.yml` 的构建目标由仓库根目录改为 `./cmd/nodedata`。根包只有 `go:embed` 的页面、没有 main，
   `go build -o nodedata` 产出的是 36KB 归档文件而不是可执行文件，发布包里根本没有程序；
   改后同时产出 amd64/arm64，校验"statically linked"，附 faultlab 与 SHA256SUMS，发布前跑 vet + race + 故障语料库。
   删除与 `release.yml` 内容完全相同的 `main.yml`。
+- v3.1.1 没有发布附件，是因为该 tag 指向的提交里还没有 `release.yml`（workflow 是之后才加的），
+  打 tag 只触发了 ci。v3.1.2 起 tag 指向的提交已包含修好的 release.yml。
+- 一直空闲的盘/网卡不在首屏对比表里单独占行。
 
 ## [v3.1.1] — 2026-09-11 · 首屏"关键指标对比"；留证按类别限流
 
