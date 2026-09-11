@@ -104,7 +104,7 @@ func udiff(a, b uint64) float64 {
 func (c *Collector) parseDiskstats(data []byte, now time.Time, dt float64, hasPrev bool, out *[]Sample) {
 	var (
 		aRio, aWio, aRt, aWt, aRsect, aWsect, aMerged, aInflight, maxUtil float64
-		nLeaf, nDisks                                                    int
+		nLeaf, nDisks                                                     int
 	)
 	for len(data) > 0 {
 		var line []byte

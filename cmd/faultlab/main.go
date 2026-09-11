@@ -105,11 +105,12 @@ func main() {
 				r.evidence = "缺失"
 				var list []struct {
 					ID      string   `json:"id"`
+					Class   string   `json:"class"`
 					Culprit *culprit `json:"culprit"`
 				}
 				if getJSON(*url+"/api/incidents", &list) == nil {
-					for _, m := range list {
-						if m.Culprit != nil && m.Culprit.PID == pid {
+					for _, m := range list { // 类别与 PID 都要对上
+						if m.Class == class && m.Culprit != nil && m.Culprit.PID == pid {
 							r.evidence = m.ID
 							break
 						}

@@ -26,7 +26,7 @@ import (
 const (
 	incidentKeep       = 100
 	incidentSigCool    = 30 * time.Minute // 同一类 + 同一责任方
-	incidentMinGap     = time.Minute      // 任意两次之间
+	incidentMinGap     = time.Minute      // 同一类别任意两次之间（不同类别互不阻挡）
 	incidentThreadTop  = 10
 	incidentStackDepth = 24
 	incidentKmsgLines  = 100
@@ -42,9 +42,9 @@ type Recorder struct {
 	procs    func() []diagnosis.Proc
 	devs     func() []diagnosis.Deviation
 
-	mu      sync.Mutex
-	lastSig map[string]time.Time
-	lastAny time.Time
+	mu        sync.Mutex
+	lastSig   map[string]time.Time
+	lastClass map[string]time.Time
 }
 
 func NewRecorder(dir, procRoot string, run func() *diagnosis.Chain, procs func() []diagnosis.Proc, devs func() []diagnosis.Deviation) (*Recorder, error) {
@@ -53,7 +53,7 @@ func NewRecorder(dir, procRoot string, run func() *diagnosis.Chain, procs func()
 	}
 	host, _ := os.Hostname()
 	return &Recorder{dir: dir, procRoot: procRoot, kmsgPath: "/dev/kmsg", host: host,
-		run: run, procs: procs, devs: devs, lastSig: map[string]time.Time{}}, nil
+		run: run, procs: procs, devs: devs, lastSig: map[string]time.Time{}, lastClass: map[string]time.Time{}}, nil
 }
 
 // Loop 周期性执行 L4；与页面是否打开无关。
@@ -92,9 +92,11 @@ func (r *Recorder) Tick(now time.Time) []string {
 		}
 		sig := signature(it)
 		r.mu.Lock()
-		cool := now.Sub(r.lastSig[sig]) < incidentSigCool || now.Sub(r.lastAny) < incidentMinGap
+		// 按类别限流：实测里 IO 故障先触发一份 CPU 证据（写入本身吃 CPU），
+		// 若用全局间隔，紧随其后的 IO 结论会被挡掉，真正的 IO 现场就丢了。
+		cool := now.Sub(r.lastSig[sig]) < incidentSigCool || now.Sub(r.lastClass[it.Class]) < incidentMinGap
 		if !cool {
-			r.lastSig[sig], r.lastAny = now, now
+			r.lastSig[sig], r.lastClass[it.Class] = now, now
 		}
 		r.mu.Unlock()
 		if cool {
@@ -165,9 +167,12 @@ func (r *Recorder) Capture(trigger diagnosis.Item, chain *diagnosis.Chain, now t
 	}
 	id := now.UTC().Format("20060102T150405Z") + "-" + classSlug(cls)
 	ev := &Evidence{ID: id, Host: r.host, Time: now, Version: version, Trigger: trigger, Chain: chain,
-		Threads: map[string][]threadRow{}, ProcDetail: map[string]procDetail{}, System: map[string]string{}}
+		Threads: map[string][]threadRow{}, ProcDetail: map[string]procDetail{}, System: map[string]string{},
+		Deviations: []devRow{}, Procs: []diagnosis.Proc{}, DState: []dRow{}, Kernel: []string{}}
 	if r.procs != nil {
-		ev.Procs = r.procs()
+		if ps := r.procs(); ps != nil {
+			ev.Procs = ps
+		}
 	}
 	if r.devs != nil {
 		for _, d := range r.devs() {
@@ -205,10 +210,13 @@ func (r *Recorder) Capture(trigger diagnosis.Item, chain *diagnosis.Chain, now t
 			ev.ProcDetail[strconv.Itoa(pid)] = r.detail(pid)
 		}
 	}
-	ev.DState = r.dstate()
-	var err error
-	if ev.Kernel, err = r.kernelLog(); err != nil {
+	if d := r.dstate(); d != nil {
+		ev.DState = d
+	}
+	if kl, err := r.kernelLog(); err != nil {
 		ev.Errors = append(ev.Errors, "kernel_log: "+err.Error())
+	} else if kl != nil {
+		ev.Kernel = kl
 	}
 	for _, f := range []string{"loadavg", "uptime", "meminfo", "vmstat", "pressure/cpu", "pressure/io",
 		"pressure/memory", "diskstats", "net/dev", "net/snmp"} {

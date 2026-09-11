@@ -50,6 +50,13 @@ func TestRecorderCapture(t *testing.T) {
 	if again := r.Tick(now.Add(20 * time.Second)); len(again) != 0 {
 		t.Fatalf("same signature within cooldown must not capture again: %v", again)
 	}
+	// 不同类别紧随其后必须照样留证（实测：IO 故障先触发 CPU 证据，全局限流挡掉了 IO 现场）
+	ioItem := diagnosis.Item{Level: diagnosis.Warning, Class: diagnosis.ClassIO, Title: "IO 劣化",
+		Culprits: []diagnosis.Culprit{{Kind: "process", PID: 500, Name: "burner"}}}
+	r.run = func() *diagnosis.Chain { return &diagnosis.Chain{Items: []diagnosis.Item{item, ioItem}} }
+	if got := r.Tick(now.Add(25 * time.Second)); len(got) != 1 || !strings.HasSuffix(got[0], "-io") {
+		t.Fatalf("a different class right after must still be captured, got %v", got)
+	}
 	b, err := r.Get(ids[0])
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +80,14 @@ func TestRecorderCapture(t *testing.T) {
 	if strings.Contains(string(b), "hunter2") {
 		t.Fatalf("cmdline (may contain secrets) must never be captured")
 	}
-	if l := r.List(); len(l) != 1 || l[0].Culprit == nil || l[0].Culprit.PID != 500 {
+	var top map[string]json.RawMessage
+	json.Unmarshal(b, &top)
+	for _, k := range []string{"deviations", "procs", "d_state", "kernel_log"} {
+		if string(top[k]) == "null" {
+			t.Fatalf("%s must be [] not null", k)
+		}
+	}
+	if l := r.List(); len(l) != 2 || l[0].Culprit == nil || l[0].Culprit.PID != 500 {
 		t.Fatalf("list = %+v", l)
 	}
 	if _, err := r.Get("../../etc/passwd"); err == nil {

@@ -203,6 +203,10 @@ func runServe() {
 			},
 		})
 
+	mux.HandleFunc("/api/compare", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, builder.Compare(time.Now()))
+	})
+
 	if recorder != nil {
 		go recorder.Loop(15*time.Second, stop)
 		mux.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) {

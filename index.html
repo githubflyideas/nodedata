@@ -79,6 +79,12 @@ th.sorted .ar{opacity:1}
      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;cursor:copy;border:0}
 .cmd:hover{background:#e3e7ee}
 h3.procs-h{margin:18px 0 6px;font-size:13px;font-weight:600}
+h3.cmp-h{margin:14px 0 6px;font-size:14px;font-weight:600}
+table.cmp td:first-child{white-space:nowrap}
+.cmp-now{font-weight:600}
+.chg{font-size:11px;margin-left:4px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.chg.bad{color:#c0392b}.chg.good{color:#1e8449}
+.na-dash{color:var(--dim)}
 .culp-d{color:var(--dim);font-size:12.5px;margin-left:6px}
 h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .z{display:inline-block;min-width:38px;padding:1px 5px;border-radius:4px;font-variant-numeric:tabular-nums;
@@ -123,6 +129,13 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     <button onclick="refreshAll()">立即刷新</button>
   </div>
 </header>
+<section>
+  <h2>关键指标对比<span class="layer">当前值与 1h / 6h / 12h / 1d / 3d / 7d 前同一时刻的值</span></h2>
+  <div class="sub">箭头与百分比 = 现在相对那个时刻的变化；红色 = 往坏的方向变了 20% 以上；"—" = 那个时刻还没有数据（不当作 0）。
+    变化是否超出这个时段平时的波动、谁造成的，看下面的偏离度与诊断链。</div>
+  <div id="cmpgroups"><p class="empty">加载中…</p></div>
+</section>
+
 <section>
   <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span></h2>
   <div class="sub"><span id="l0sum">—</span>
@@ -459,6 +472,38 @@ document.addEventListener("click",function(e){
   }
 });
 
+/* ================= 关键指标对比 ================= */
+function cmpCell(r,p){
+  if(p==null) return '<span class="na-dash">—</span>';
+  var v=esc(fmt(p,r.unit)), now=r.now, ch;
+  if(p===0&&now===0) ch='<span class="chg">—</span>';
+  else if(p===0) ch='<span class="chg'+(r.bad>0?" bad":"")+'">▲ 新增</span>';
+  else{
+    var pct=(now-p)/Math.abs(p)*100;
+    if(Math.abs(pct)<0.5) ch='<span class="chg">—</span>';
+    else{
+      var up=pct>0, bad=(r.bad>0&&up)||(r.bad<0&&!up);
+      var cls=Math.abs(pct)>=20?(bad?" bad":(r.bad!==0?" good":"")):"";
+      var a=Math.abs(pct), txt=a>=1000?(Math.round(a/100)/10)+"k":a.toFixed(0);
+      ch='<span class="chg'+cls+'">'+(up?"▲":"▼")+" "+txt+'%</span>';
+    }
+  }
+  return v+" "+ch;
+}
+async function loadCompare(){
+  var el=document.getElementById("cmpgroups"), d;
+  try{ d=(await getJSON("/api/compare")).json; }
+  catch(e){ el.innerHTML='<p class="empty">对比数据不可用：'+esc(e.message)+'</p>'; return; }
+  el.innerHTML=(d.groups||[]).map(function(g){
+    return '<h3 class="cmp-h">'+esc(g.name)+'</h3><div class="tbl-wrap"><table class="cmp"><thead><tr><th>指标</th><th class="num">当前</th>'+
+      d.cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
+      g.rows.map(function(r){
+        return '<tr title="'+esc(r.id)+'"><td>'+esc(r.label)+'</td><td class="num cmp-now">'+esc(fmt(r.now,r.unit))+'</td>'+
+          r.past.map(function(p){return '<td class="num">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
+      }).join("")+'</tbody></table></div>';
+  }).join("")||'<p class="empty">还没有数据。</p>';
+}
+
 async function loadIncidents(){
   var el=document.getElementById("incidents"); if(!el) return;
   var list;
@@ -575,7 +620,7 @@ async function clearBaseline(){
   await loadBaseline(); await loadL0();
 }
 async function refreshAll(){
-  await Promise.all([loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadCompare(),loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

@@ -111,7 +111,7 @@ func TestDiskAndNetParsing(t *testing.T) {
 	near("disk.wiops@sda", 100)
 	near("disk.wbytes@sda", 8000*512/5.0)
 	near("disk.inflight@sda", 7) // 旧代码：这里是累计 IO 毫秒数
-	near("disk.util", 80)       // 最忙那块，不是相加
+	near("disk.util", 80)        // 最忙那块，不是相加
 	near("disk.riops", 1000)     // 只算 sda+nvme0n1，dm-0 不重复计入
 	near("disk.wiops", 100)
 	near("disk.merged", 100.0/5)
