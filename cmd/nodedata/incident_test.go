@@ -51,8 +51,9 @@ func TestRecorderCapture(t *testing.T) {
 		t.Fatalf("same signature within cooldown must not capture again: %v", again)
 	}
 	// 不同类别紧随其后必须照样留证（实测：IO 故障先触发 CPU 证据，全局限流挡掉了 IO 现场）
+	// IO 结论的第一个责任方是盘（没有 PID），进程排在后面 —— 列表摘要必须给出进程
 	ioItem := diagnosis.Item{Level: diagnosis.Warning, Class: diagnosis.ClassIO, Title: "IO 劣化",
-		Culprits: []diagnosis.Culprit{{Kind: "process", PID: 500, Name: "burner"}}}
+		Culprits: []diagnosis.Culprit{{Kind: "device", Name: "vda"}, {Kind: "process", PID: 500, Name: "burner"}}}
 	r.run = func() *diagnosis.Chain { return &diagnosis.Chain{Items: []diagnosis.Item{item, ioItem}} }
 	if got := r.Tick(now.Add(25 * time.Second)); len(got) != 1 || !strings.HasSuffix(got[0], "-io") {
 		t.Fatalf("a different class right after must still be captured, got %v", got)
@@ -87,8 +88,19 @@ func TestRecorderCapture(t *testing.T) {
 			t.Fatalf("%s must be [] not null", k)
 		}
 	}
-	if l := r.List(); len(l) != 2 || l[0].Culprit == nil || l[0].Culprit.PID != 500 {
+	l := r.List()
+	if len(l) != 2 {
 		t.Fatalf("list = %+v", l)
+	}
+	for _, m := range l { // 两条都必须能直接看出是哪个进程
+		if m.Culprit == nil || m.Culprit.PID != 500 {
+			t.Fatalf("%s: culprit = %+v, want the process (PID 500), not the device", m.ID, m.Culprit)
+		}
+	}
+	for _, m := range l {
+		if m.Class == diagnosis.ClassIO && (m.Place == nil || m.Place.Name != "vda") {
+			t.Fatalf("IO summary must also carry the device: %+v", m.Place)
+		}
 	}
 	if _, err := r.Get("../../etc/passwd"); err == nil {
 		t.Fatalf("path traversal must be rejected")

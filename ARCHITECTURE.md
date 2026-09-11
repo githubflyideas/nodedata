@@ -144,13 +144,13 @@ bin/
   nodedata-linux-{amd64,arm64}   # Full v2.x (L0+L1+backend)
 tests/acceptance/
   acceptance_test.go             # 37 test cases
-setup.sh / install.sh            # Deployment bootstrap
 ```
 
 ## Deployment
 
-See README.md — one `systemd-run` line (transient) or `sudo ./install.sh ./nodedata` (persistent),
-both with the same CPU/memory limits. The binary embeds the web page; it is the only file to ship.
+See README.md — one `systemd-run` line (transient) or the unit file shown there (persistent).
+Both carry the same CPU/memory limits. The binary embeds the web page; it is the only file to ship.
+The repository contains only Go and HTML — no shell scripts.
 
 ## L0 `exit_code` (field in `/api/check`)
 

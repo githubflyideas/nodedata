@@ -512,6 +512,7 @@ async function loadIncidents(){
   el.innerHTML='<table><thead><tr><th>时间</th><th>结论</th><th>责任方</th><th></th></tr></thead><tbody>'+
     list.slice(0,20).map(function(m){
       var c=m.culprit?(esc(m.culprit.name)+(m.culprit.pid?' (PID '+m.culprit.pid+')':"")):"—";
+      if(m.place&&(!m.culprit||m.place.name!==m.culprit.name)) c+=' <span class="pids">'+esc(m.place.name)+'</span>';
       return '<tr><td class="num">'+esc(new Date(m.time).toLocaleString())+'</td><td>'+esc(m.title)+'</td><td>'+c+
         '</td><td><a href="/api/incidents/'+encodeURIComponent(m.id)+'" target="_blank" rel="noopener">证据 JSON</a></td></tr>';
     }).join("")+'</tbody></table>';

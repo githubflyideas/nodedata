@@ -454,12 +454,34 @@ func readLines(path string, max int) []string {
 
 // IncidentMeta 是列表里的一行。
 type IncidentMeta struct {
-	ID      string             `json:"id"`
-	Time    time.Time          `json:"time"`
-	Title   string             `json:"title"`
-	Class   string             `json:"class"`
-	Level   diagnosis.Level    `json:"level"`
+	ID    string          `json:"id"`
+	Time  time.Time       `json:"time"`
+	Title string          `json:"title"`
+	Class string          `json:"class"`
+	Level diagnosis.Level `json:"level"`
+	// Culprit 是首选的进程责任方；只有设备/接口/宿主机时退回第一个。
+	// 摘要里必须优先给进程：IO 结论的 Culprits[0] 是盘（没有 PID），
+	// 早期这里取 Culprits[0]，列表里就看不到该找哪个进程。
 	Culprit *diagnosis.Culprit `json:"culprit,omitempty"`
+	// Place 是设备 / 接口 / 宿主机（若有）。
+	Place *diagnosis.Culprit `json:"place,omitempty"`
+}
+
+// pickCulprits 从结论里分别挑出进程责任方与地点责任方。
+func pickCulprits(cs []diagnosis.Culprit) (proc, place *diagnosis.Culprit) {
+	for i := range cs {
+		c := cs[i]
+		if c.PID > 0 && proc == nil {
+			proc = &c
+		}
+		if c.PID == 0 && place == nil {
+			place = &c
+		}
+	}
+	if proc == nil && place != nil {
+		proc = place
+	}
+	return proc, place
 }
 
 // List 返回全部证据的摘要（新的在前）。
@@ -481,10 +503,7 @@ func (r *Recorder) List() []IncidentMeta {
 			continue
 		}
 		m := IncidentMeta{ID: ev.ID, Time: ev.Time, Title: ev.Trigger.Title, Class: ev.Trigger.Class, Level: ev.Trigger.Level}
-		if len(ev.Trigger.Culprits) > 0 {
-			c := ev.Trigger.Culprits[0]
-			m.Culprit = &c
-		}
+		m.Culprit, m.Place = pickCulprits(ev.Trigger.Culprits)
 		out = append(out, m)
 	}
 	return out

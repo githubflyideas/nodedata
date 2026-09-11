@@ -1,5 +1,17 @@
 # nodedata Changelog
 
+## [v3.1.3] — 2026-09-11 · 清理：仓库只留 Go 与 HTML
+
+- 删除 `testdata/`（1543 个文件、12MB，其中 `many_procs/` 占 1499 个）。由 `7cc1198` 引入后
+  **没有任何 Go 代码引用**，删除后全部测试照常通过。现有测试都用 `t.TempDir()` 现生成 procfs，
+  不需要版本库里的固定夹具。
+- 删除全部 shell 脚本：`install.sh`（systemd unit 改为写在 README 里，直接贴）、
+  `run_strace_test.sh`（引用的 `bin/snapshot-collector` 早已不存在，无法运行）。
+- 删除 `internal/store`（ClickHouse）：无人引用，却拖着 16 个第三方依赖，
+  并让 `go test ./...` 必须联网。现在 `go.mod` 没有任何 require，整仓库可离线构建与测试。
+- 事故留证列表摘要优先给出**进程**责任方（此前取 `Culprits[0]`，IO 结论的第一个是盘、没有 PID，
+  页面上只显示 "vda" 而看不到该查哪个进程），设备/接口另置 `place` 字段并在页面一并显示。
+
 ## [v3.1.2] — 2026-09-11
 
 - 发布流程：`release.yml` 的构建目标由仓库根目录改为 `./cmd/nodedata`。根包只有 `go:embed` 的页面、没有 main，

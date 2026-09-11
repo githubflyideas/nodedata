@@ -41,7 +41,7 @@ jobs:
               go build -trimpath -ldflags "-s -w" -o faultlab ./cmd/faultlab
             # 校验产物：必须是对应架构的静态可执行文件
             file nodedata | tee /dev/stderr | grep -q "statically linked"
-            tar czf "nodedata-$VER-linux-$ARCH.tar.gz" nodedata faultlab install.sh README.md CHANGELOG.md
+            tar czf "nodedata-$VER-linux-$ARCH.tar.gz" nodedata faultlab README.md CHANGELOG.md
             rm -f nodedata faultlab
           done
           sha256sum nodedata-*.tar.gz > SHA256SUMS
@@ -55,8 +55,7 @@ jobs:
           body: |
             静态二进制，无外部依赖。解压后：
 
-                sudo ./install.sh ./nodedata          # 常驻，带 CPU/内存上限
-                # 或临时跑一次，见 README 里的 systemd-run 一行命令
+                # 临时跑（带 CPU/内存上限）或开机自启，见 README
 
             升级：替换 /usr/local/bin/nodedata 后 `sudo systemctl restart nodedata`。
             `--data-dir` 下的 history/ 会被读回，长期层（L6–L14）不会因升级清零。

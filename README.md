@@ -17,10 +17,28 @@ sudo systemd-run --unit=nodedata -p CPUQuota=20% -p MemoryMax=300M -p Nice=10 -p
 systemctl status nodedata ; journalctl -u nodedata -f ; sudo systemctl stop nodedata
 ```
 
-常驻（开机自启，参数与上面那一行完全相同）：
+开机自启：把下面这段存成 `/etc/systemd/system/nodedata.service`，然后
+`systemctl daemon-reload && systemctl enable --now nodedata`。
+（仓库里只有 Go 与 HTML，不提供安装脚本；这段与上面那一行命令的限制完全相同。）
 
-```bash
-sudo ./install.sh ./nodedata          # 或 sudo PORT=9000 ./install.sh ./nodedata
+```ini
+[Unit]
+Description=nodedata — single-host deviation monitor
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/nodedata serve --port 8888 --data-dir /var/lib/nodedata
+Restart=always
+RestartSec=5
+CPUQuota=20%
+MemoryMax=300M
+Nice=10
+IOSchedulingClass=idle
+Environment=GOMAXPROCS=1
+Environment=GOMEMLIMIT=200MiB
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 不要 systemd、只在前台看一眼：
