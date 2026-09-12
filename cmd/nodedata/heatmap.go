@@ -36,7 +36,7 @@ func NewHeatmapBuilder(s *Series) *HeatmapBuilder {
 //
 // 档位取哪一层：配 v(t-H) 的容差 LagTolerance(H) 不小于长期层步长的一半时，
 // 长期层里一定有足够近的点，就用长期层（L6=3h 及以上）；否则用原始层（L1–L5）。
-// 长期层每天每小时均匀贡献 12 个样本、覆盖 56 天，σ 反映的是"很多天的这个时段"，
+// 长期层每天每小时均匀贡献 12 个样本、覆盖 14 天，σ 反映的是"很多天的这个时段"，
 // 而不是被最近 24 小时的密集原始点主导；也不会因为重启而清零。
 func (b *HeatmapBuilder) RefreshSigma() {
 	toSamples := func(pts []point) []deviation.Sample {

@@ -16,7 +16,7 @@ type QueryFns struct {
 	Detail  func(ts time.Time) (interface{}, error)
 	Raw     func(metricID string, from, to time.Time) (interface{}, error)
 
-	// Window 按窗口名（1h/6h/24h/7d/30d）实时构造转储内容，
+	// Window 按窗口名（1h/6h/24h/7d/14d）实时构造转储内容，
 	// 用于 /data/*.json 在磁盘文件缺失/损坏时兜底，避免页面拿到 404。
 	Window func(name string) (interface{}, error)
 	// Health 实时构造 health.json，同样用于兜底。
@@ -141,7 +141,7 @@ func NewMuxWithConfig(cfg MuxConfig, qfns QueryFns) *http.ServeMux {
 		var v interface{}
 		var err error
 		switch stem {
-		case "1h", "6h", "24h", "7d", "30d":
+		case "1h", "6h", "24h", "7d", "14d":
 			if qfns.Window == nil {
 				http.NotFound(w, r)
 				return

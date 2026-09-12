@@ -10,12 +10,19 @@ import (
 )
 
 // NLag 档位总数。
-const NLag = 14
+const NLag = 10
 
-// LagSeconds 是十四档的滞后时长（秒）。L9+ 必须是 86400 的整数倍。
+// LagSeconds 是十档的滞后时长（秒），从 5 分钟到 7 天。L9+ 必须是 86400 的整数倍。
+//
+// 为什么最长只到 7 天：一档 z 要判断"这个变化算不算异常"，既要往回够 H，
+// 又要拿最近的历史估计这一档平时的波动，所以**需要 2×H 的历史**。
+// 保留期 14 天（见 series.go），能支撑的最长档位就是 7 天。
+//
+// "跟 14 天前比"这件事由对比表与服务表直接摆出两个时刻的值/在否来回答，
+// 不需要统计——跨两周差一倍，人一眼就知道不正常，不必 σ 来告诉他。
 var LagSeconds = [NLag]int{
 	300, 600, 1200, 2400, 5400, 10800, 21600, 43200,
-	86400, 172800, 345600, 604800, 1209600, 2419200,
+	86400, 604800,
 }
 
 // LagID 返回档位名，1-indexed。
@@ -467,13 +474,19 @@ func (d *Deviation) Z(metricID string, v float64, at time.Time) [NLag]float64 {
 // Classify 返回 onset_lag 与 breadth。
 // z 中 NaN 表示未就绪，不计入 breadth。
 func Classify(z [NLag]float64, th float64) (onsetLag string, breadth int) {
-	if th <= 0 { th = 3.0 }
+	if th <= 0 {
+		th = 3.0
+	}
 	onset := -1
 	for i := 0; i < NLag; i++ {
-		if math.IsNaN(z[i]) { continue }
+		if math.IsNaN(z[i]) {
+			continue
+		}
 		if math.Abs(z[i]) >= th {
 			breadth++
-			if onset < 0 { onset = i }
+			if onset < 0 {
+				onset = i
+			}
 		}
 	}
 	if onset >= 0 {
@@ -484,10 +497,16 @@ func Classify(z [NLag]float64, th float64) (onsetLag string, breadth int) {
 
 // ZInt8 将 z 值转为 Int8×20 存储格式（±120 范围）。
 func ZInt8(z float64) int8 {
-	if math.IsNaN(z) { return 0 }
+	if math.IsNaN(z) {
+		return 0
+	}
 	v := z * 20
-	if v > 120 { v = 120 }
-	if v < -120 { v = -120 }
+	if v > 120 {
+		v = 120
+	}
+	if v < -120 {
+		v = -120
+	}
 	return int8(v)
 }
 
@@ -497,12 +516,18 @@ func SigmaRefreshInterval() time.Duration { return 24 * time.Hour }
 // ──────────────────── helpers ──────────────────────────────────
 
 func findNearest(hist []Sample, target time.Time, tol time.Duration) (float64, bool) {
-	if len(hist) == 0 { return 0, false }
+	if len(hist) == 0 {
+		return 0, false
+	}
 	// 二分查找最近时间戳
 	lo, hi := 0, len(hist)-1
 	for lo < hi {
 		mid := (lo + hi) / 2
-		if hist[mid].TS.Before(target) { lo = mid + 1 } else { hi = mid }
+		if hist[mid].TS.Before(target) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
 	}
 	best := lo
 	if lo > 0 && absDur(hist[lo-1].TS.Sub(target)) < absDur(hist[lo].TS.Sub(target)) {
@@ -515,46 +540,64 @@ func findNearest(hist []Sample, target time.Time, tol time.Duration) (float64, b
 }
 
 func absDur(d time.Duration) time.Duration {
-	if d < 0 { return -d }
+	if d < 0 {
+		return -d
+	}
 	return d
 }
 
 func computeMAD(vals []float64) float64 {
-	if len(vals) == 0 { return 0 }
+	if len(vals) == 0 {
+		return 0
+	}
 	med := median(vals)
 	devs := make([]float64, len(vals))
-	for i, v := range vals { devs[i] = math.Abs(v - med) }
+	for i, v := range vals {
+		devs[i] = math.Abs(v - med)
+	}
 	return median(devs)
 }
 
 func median(vals []float64) float64 {
-	if len(vals) == 0 { return 0 }
+	if len(vals) == 0 {
+		return 0
+	}
 	sorted := make([]float64, len(vals))
 	copy(sorted, vals)
 	sort.Float64s(sorted)
 	n := len(sorted)
-	if n%2 == 1 { return sorted[n/2] }
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
 	return (sorted[n/2-1] + sorted[n/2]) / 2
 }
 
 func absSlice(vals []float64) []float64 {
 	out := make([]float64, len(vals))
-	for i, v := range vals { out[i] = math.Abs(v) }
+	for i, v := range vals {
+		out[i] = math.Abs(v)
+	}
 	return out
 }
 
 func histValues(hist []Sample, hour int, from, to time.Time) []float64 {
 	var out []float64
 	for _, s := range hist {
-		if s.TS.Before(from) || s.TS.After(to) { continue }
-		if s.TS.UTC().Hour() != hour { continue }
+		if s.TS.Before(from) || s.TS.After(to) {
+			continue
+		}
+		if s.TS.UTC().Hour() != hour {
+			continue
+		}
 		out = append(out, s.Value)
 	}
 	return out
 }
 
 func itoa(n int) string {
-	if n < 10 { return string(rune('0' + n)) }
+	if n < 10 {
+		return string(rune('0' + n))
+	}
 	return string([]byte{byte('0' + n/10), byte('0' + n%10)})
 }
 

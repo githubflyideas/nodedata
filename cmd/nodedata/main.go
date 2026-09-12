@@ -61,7 +61,7 @@ func runServe() {
 	dumpEvery := fs.String("dump-interval", "30s", "data/*.json dump interval")
 	webRootFlag := fs.String("web-root", "", "从该目录读 index.html 覆盖内置页面（仅前端开发用）")
 	dataDirFlag := fs.String("data-dir", "data", "数据目录：data/*.json 转储、baseline.json、history/")
-	historyDirFlag := fs.String("history-dir", "", "长期层落盘目录，5 分钟一点、保留 56 天（默认 <data-dir>/history）")
+	historyDirFlag := fs.String("history-dir", "", "长期层落盘目录，5 分钟一点、保留 14 天（默认 <data-dir>/history）")
 	fs.Parse(os.Args[2:])
 
 	webDir := ""
@@ -94,7 +94,7 @@ func runServe() {
 	l0.Start()
 	defer l0.Stop()
 
-	// ── L1：/proc 采集 → 内存序列（原始层 24h + 长期层 56 天，长期层落盘）
+	// ── L1：/proc 采集 → 内存序列（原始层 24h + 长期层 14 天，长期层落盘）
 	series := NewSeries()
 	col := collector.New(collector.Config{ProcRoot: *procRoot, SysRoot: *sysRoot, RootFS: *rootFS, Interval: iv})
 	histDir := *historyDirFlag
@@ -144,7 +144,7 @@ func runServe() {
 		recorder = nil
 	}
 
-	// ── L2：静态转储 → data/{1h,6h,24h,7d,30d}.json + health.json
+	// ── L2：静态转储 → data/{1h,6h,24h,7d,14d}.json + health.json
 	dumper := server.NewDumper(webDir, builder.Build, healthFn)
 	dumper.SetDataDir(dataDir)
 
@@ -206,6 +206,20 @@ func runServe() {
 				return diagnoser.Run(th), nil
 			},
 		})
+
+	// ── 服务识别与事件流（14 天保留，跟长期层一致）
+	svcLog := NewServiceLog(filepath.Join(dataDir, "services.jsonl"), coarseRetention)
+	if n, err := svcLog.Load(time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: 服务事件流读取失败: %v\n", err)
+	} else {
+		fmt.Printf("  services      %d 条历史事件\n", n)
+	}
+	defer func() { svcLog.Close(time.Now()) }()
+	go serviceLoop(col, svcLog, stop)
+
+	mux.HandleFunc("/api/services", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, servicesJSON(svcLog, time.Now()))
+	})
 
 	hostname, _ := os.Hostname()
 	mux.HandleFunc("/health.txt", func(w http.ResponseWriter, r *http.Request) {
@@ -293,8 +307,8 @@ func windowDuration(name string) (time.Duration, bool) {
 		return 24 * time.Hour, true
 	case "7d":
 		return 7 * 24 * time.Hour, true
-	case "30d":
-		return 30 * 24 * time.Hour, true
+	case "14d":
+		return 14 * 24 * time.Hour, true
 	}
 	return 0, false
 }
@@ -350,4 +364,24 @@ func sigmaLoop(b *HeatmapBuilder, stop <-chan struct{}) {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// serviceLoop 周期性识别服务。60 秒一次：端口映射要扫 /proc/net/tcp（O(连接数)）
+// 并对每个进程读 /proc/PID/fd，比指标采集贵得多；而服务的监听端口不会一分钟变一次。
+func serviceLoop(col *collector.Collector, l *ServiceLog, stop <-chan struct{}) {
+	tick := func() {
+		now := time.Now()
+		l.Update(col.CollectServices(now), now)
+	}
+	tick()
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			tick()
+		}
+	}
 }

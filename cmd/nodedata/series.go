@@ -19,18 +19,17 @@ import (
 // 5s 间隔 × 17280 点 ≈ 24 小时。
 const maxPointsPerMetric = 17280
 
-// 长期层（v3.0.10）：每 5 分钟从原始点里"抽"一个点（不求平均），保留 56 天，并落盘。
+// 长期层：每 5 分钟从原始点里"抽"一个点（不求平均），保留 14 天，并落盘。
 //
 // 为什么抽点而不平均：z 比的是 Δ=v(t)-v(t-H) 与它的历史分布。抽出来的点仍是原始点，
 // Δ 的分布与用原始数据算的完全同分布，只是样本少；平均会把 Δ 的离散度压小，σ 偏小、z 偏大。
-// 为什么 56 天：σ 用最近 28 天的同时段 Δ 估计，而 L14 的每个 Δ 要往回够 28 天，
-// 所以 L14 要满 28 天参照需要 28+28=56 天历史。只留 35 天时 L14 的参照只有 7 天，
-// 一个持续 3 天的劣化就占参照的 43%，中位数被拖走，劣化自己成了"正常"。
+// 为什么 14 天：对比表与服务表要能看到"14 天前"，而 14 天以前的数据基本不看。
+// 它同时决定 z 的最长档位——一档需要 2×H 的历史，所以 14 天保留期对应最长 7 天档。
 // 长期层用 16 字节的 cpoint（unix 秒 + float64）而不是 32 字节的 point，
-// 56 天 × 5 分钟 = 16128 点 ≈ 258KB/序列。
+// 14 天 × 5 分钟 = 4032 点 ≈ 64KB/序列，85 条序列约 5.5MB。
 const (
 	coarseStep      = 5 * time.Minute
-	coarseRetention = 56 * 24 * time.Hour
+	coarseRetention = 14 * 24 * time.Hour
 	maxCoarsePoints = int(coarseRetention/coarseStep) + 12
 )
 
@@ -49,7 +48,7 @@ type point struct {
 }
 
 // Series 是按 metricID 索引的时间序列缓冲区，并发安全。
-// data 是原始层（24h），coarse 是长期层（5 分钟一点，56 天）。
+// data 是原始层（24h），coarse 是长期层（5 分钟一点，14 天）。
 type Series struct {
 	mu     sync.RWMutex
 	data   map[string][]point
@@ -163,7 +162,7 @@ func sliceRange(buf []point, from, to time.Time) []point {
 }
 
 // Range 返回 [from, to] 区间内某指标的点（副本）。
-// 原始层覆盖不到的更早部分由长期层补上，所以 7d/30d 窗口是真的 7 天/30 天。
+// 原始层覆盖不到的更早部分由长期层补上，所以 7d/14d 窗口是真的 7 天/14 天。
 func (s *Series) Range(metricID string, from, to time.Time) []point {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

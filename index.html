@@ -86,6 +86,14 @@ table.cmp td:first-child{white-space:nowrap}
 .chg.bad{color:#c0392b}.chg.good{color:#1e8449}
 .na-dash{color:var(--dim)}
 .culp-d{color:var(--dim);font-size:12.5px;margin-left:6px}
+tr.gone td{color:var(--dim)}
+tr.gone td:first-child{text-decoration:line-through}
+.st-yes{color:#1e8449;font-weight:600}
+.st-no{color:#c0392b;font-weight:600}
+.st-unk{color:var(--dim)}
+.st-re{color:#b9770e;font-weight:600;font-size:11.5px}
+.svc-port{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--dim)}
+.svc-kind{font-size:11px;color:var(--dim);margin-left:5px}
 h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .z{display:inline-block;min-width:38px;padding:1px 5px;border-radius:4px;font-variant-numeric:tabular-nums;
   font-size:11.5px;font-weight:600}
@@ -144,6 +152,14 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </section>
 
 <section>
+  <h2>服务<span class="layer">这台机器上跑着什么，各自什么时候起来的</span></h2>
+  <div class="sub">只读 /proc 识别：可执行文件名、监听端口、systemd unit 三路交叉，不连服务、不读配置、不执行任何命令。
+    <b>✓</b> = 那时在；<b>—</b> = 那时确实不在；<b>?</b> = nodedata 当时没在跑（不知道，不等于不在）；
+    <b>重启</b> = 那时在，之后换过一次。消失的服务留在表里标灰，不会凭空不见。</div>
+  <div class="tbl-wrap" id="svctbl"><p class="empty">加载中…</p></div>
+</section>
+
+<section>
   <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span></h2>
   <div class="sub"><span id="l0sum">—</span>
     <label class="only"><input type="checkbox" id="l0only"> 只看异常项</label></div>
@@ -170,7 +186,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
       <button data-win="6h">6h</button>
       <button data-win="24h">24h</button>
       <button data-win="7d">7d</button>
-      <button data-win="30d">30d</button>
+      <button data-win="14d">14d</button>
     </div>
     <span class="tabhint" id="tabhint"></span>
   </div>
@@ -524,6 +540,42 @@ async function loadCompare(){
   }).join("")||'<p class="empty">还没有数据。</p>';
 }
 
+/* ================= 服务 ================= */
+function uptimeStr(s){
+  if(s<0) return "—";
+  var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  if(d>0) return d+" 天 "+h+" 小时";
+  if(h>0) return h+" 小时 "+m+" 分";
+  return m+" 分";
+}
+function stCell(v){
+  if(v==="yes")     return '<span class="st-yes">✓</span>';
+  if(v==="no")      return '<span class="st-no">—</span>';
+  if(v==="restart") return '<span class="st-re">重启</span>';
+  return '<span class="st-unk" title="nodedata 当时没在跑，不知道">?</span>';
+}
+async function loadServices(){
+  var el=document.getElementById("svctbl"), d;
+  try{ d=(await getJSON("/api/services")).json; }
+  catch(e){ el.innerHTML='<p class="empty">服务数据不可用：'+esc(e.message)+'</p>'; return; }
+  if(!d.rows||!d.rows.length){ el.innerHTML='<p class="empty">还没有识别到服务（启动后一分钟内完成首次识别）。</p>'; return; }
+  el.innerHTML='<table><thead><tr><th>服务</th><th>进程</th><th class="num">PID</th><th class="num">实例</th>'+
+    '<th>启动时间</th><th class="num">已运行</th><th class="num">CPU</th><th class="num">内存</th>'+
+    d.cols.map(function(c){return '<th class="mid">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
+    d.rows.map(function(r){
+      var ports=r.ports&&r.ports.length?' <span class="svc-port">:'+r.ports.join(",")+'</span>':"";
+      var name=esc(r.name)+ports+(r.self?'<span class="self-tag">nodedata 自身</span>':"");
+      if(!r.alive) return '<tr class="gone"><td>'+name+'</td><td colspan="7">已消失（保留在表里备查）</td>'+
+        r.past.map(function(p){return '<td class="mid">'+stCell(p)+'</td>';}).join("")+'</tr>';
+      var start=new Date(r.start_ts*1000);
+      return '<tr><td>'+name+'</td><td class="mid-id">'+esc(r.exe)+'<span class="svc-kind">'+esc(r.kind)+'</span></td>'+
+        '<td class="num">'+r.pid+'</td><td class="num">'+r.instances+'</td>'+
+        '<td>'+esc(start.toLocaleString())+'</td><td class="num">'+esc(uptimeStr(r.uptime_s))+'</td>'+
+        '<td class="num">'+r.cpu.toFixed(1)+' %</td><td class="num">'+esc(fmt(r.rss,"bytes"))+'</td>'+
+        r.past.map(function(p){return '<td class="mid">'+stCell(p)+'</td>';}).join("")+'</tr>';
+    }).join("")+'</tbody></table>';
+}
+
 async function loadIncidents(){
   var el=document.getElementById("incidents"); if(!el) return;
   var list;
@@ -641,7 +693,7 @@ async function clearBaseline(){
   await loadBaseline(); await loadL0();
 }
 async function refreshAll(){
-  await Promise.all([loadCompare(),loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadCompare(),loadServices(),loadL0(),loadL3(),loadL4(),loadHealth(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

@@ -13,13 +13,13 @@ import (
 	"github.com/githubflyideas/nodedata/internal/deviation"
 )
 
-// TestLongLagsSurviveRestart 是 L9–L14 的端到端验收：
-// 60 天历史经 Series.Add → History 落盘；然后"重启"（新 Series，只从磁盘装回），
+// TestLongLagsSurviveRestart 是长档位（L9=1d、L10=7d）的端到端验收：
+// 16 天历史经 Series.Add → History 落盘；然后"重启"（新 Series，只从磁盘装回），
 // 再采几轮。要求：
-//  1. L9–L14 在重启后立即就绪（不必再等 28 天）；
+//  1. L9/L10 在重启后立即就绪（不必重新攒历史）；
 //  2. 正常指标（有日周期 + 噪声）在长 lag 上不报；
 //  3. 一个"缓慢劣化"的指标 —— 一直平稳，最近 3 天每天涨 5%，每 5 分钟几乎不变，
-//     短 lag 上看不出来 —— 在 L12–L14（7/14/28 天）上必须被抓到。
+//     短 lag 上看不出来 —— 在 L10（7 天）上必须被抓到。
 //
 // 注意 z 的语义：它比的是"这次的 Δ"与"同 lag 的 Δ 平时是多少"。一个一直匀速上涨的
 // 指标（每天都涨 1%），7 天 Δ 平时就是 +7%，z≈0 —— 这是 v3.0.8 起有意的设计
@@ -33,7 +33,7 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 	}
 	r := rand.New(rand.NewSource(3))
 	end := time.Date(2026, 9, 11, 3, 0, 0, 0, time.UTC)
-	start := end.Add(-60 * 24 * time.Hour)
+	start := end.Add(-16 * 24 * time.Hour)
 	daily := func(ts time.Time) float64 { // 日周期
 		return 30 * math.Sin(2*math.Pi*float64(ts.Unix()%86400)/86400)
 	}
@@ -73,7 +73,7 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 	s2 := NewSeries()
 	h2, _ := NewHistory(dir, coarseRetention)
 	lines, pts, err := h2.Load(s2, end)
-	if err != nil || lines < 15000 {
+	if err != nil || lines < 3500 {
 		t.Fatalf("load: lines=%d pts=%d err=%v", lines, pts, err)
 	}
 	// 重启后再采一分钟
@@ -97,7 +97,7 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 		}
 		return float64(*p) / 20
 	}
-	for lag := 9; lag <= 14; lag++ {
+	for lag := 9; lag <= 10; lag++ {
 		if math.IsNaN(zf("cpu.user", lag)) {
 			t.Fatalf("L%d not ready after restart — long-term tier was not used", lag)
 		}
@@ -109,20 +109,18 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 	if !math.IsNaN(zf("cpu.user", 1)) {
 		t.Errorf("L1 should not be ready one minute after restart")
 	}
-	for lag := 12; lag <= 14; lag++ {
-		if zf("mem.used", lag) < 3 {
-			t.Errorf("slow degradation missed at L%d: z=%.2f", lag, zf("mem.used", lag))
-		}
+	if zf("mem.used", 10) < 3 {
+		t.Errorf("slow degradation missed at L10: z=%.2f", zf("mem.used", 10))
 	}
 	for _, id := range []string{"cpu.user", "mem.used"} {
-		t.Logf("after restart %-8s L1..L14: %v", id, fmtZ(zf, id))
+		t.Logf("after restart %-8s L1..L10: %v", id, fmtZ(zf, id))
 	}
 
-	// 30d 窗口是真的 30 天
-	full, _ := b.Build(now.Add(-30*24*time.Hour), now)
+	// 14d 窗口是真的 14 天
+	full, _ := b.Build(now.Add(-14*24*time.Hour), now)
 	for _, m := range full.Metrics {
-		if first := time.Unix(m.Points[0].TS, 0); now.Sub(first) < 29*24*time.Hour {
-			t.Errorf("%s: 30d window only reaches back %v", m.MetricID, now.Sub(first))
+		if first := time.Unix(m.Points[0].TS, 0); now.Sub(first) < 13*24*time.Hour {
+			t.Errorf("%s: 14d window only reaches back %v", m.MetricID, now.Sub(first))
 		}
 	}
 }
@@ -161,7 +159,7 @@ func TestHistoryTruncatedLineAndRetention(t *testing.T) {
 
 func fmtZ(zf func(string, int) float64, id string) string {
 	out := ""
-	for lag := 1; lag <= 14; lag++ {
+	for lag := 1; lag <= deviation.NLag; lag++ {
 		v := zf(id, lag)
 		if math.IsNaN(v) {
 			out += "   — "

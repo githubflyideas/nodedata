@@ -55,6 +55,7 @@ type Collector struct {
 	rngState         uint64
 	readBuf          [65536]byte       // 零分配文件读缓冲，复用于每次 readFileAbs
 	fieldBuf         [64][]byte        // 复用字段切片，避免 splitFields 重复分配
+	bootTS           int64             // 开机时刻，unix 秒（缓存）
 	ctMax            int64             // conntrack 上限，负数表示读过但不可用
 	devNames         map[string]string // 设备/接口名驻留，避免每轮分配
 	diskIDMap        map[string]*diskIDs

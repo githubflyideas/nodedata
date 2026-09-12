@@ -66,6 +66,7 @@ cgroup v1 的机器（CentOS 7/8 默认）上 `MemoryMax` 不生效，改用 `-p
 | `--port` | `8888` | 监听端口 |
 | `--data-dir` | `./data` | 转储 `*.json`、`baseline.json`、`history/` |
 | `--history-dir` | `<data-dir>/history` | 长期层落盘目录 |
+| `--rootfs` | `/` | 要监控容量的挂载点 |
 | `--interval` | `5s` | 采集与 L0 巡检周期 |
 | `--dump-interval` | `30s` | 页面数据转储周期 |
 | `--proc` / `--sys` | `/proc` / `/sys` | 测试用的替代根 |
@@ -78,9 +79,9 @@ cgroup v1 的机器（CentOS 7/8 默认）上 `MemoryMax` 不生效，改用 `-p
   + 每块整盘（`disk.util@nvme0n1` 等）+ 每个网卡（`net.rx_drop@eth1` 等）
   + 每个进程（CPU、块设备读写、主缺页、RSS 与 1 小时增长、状态）。整机磁盘汇总不重复计 dm/md，
   整机网络只汇总物理/virtio 网卡（不重复计 bond 与 VLAN）。
-- **长期层**：每 5 分钟从原始点里抽一个（不求平均，保证 Δ 的分布不变），保留 56 天，
-  追加写到 `history/YYYY-MM-DD.jsonl`（每天约 0.7MB，56 天约 40MB），重启时读回。
-  L6–L14（3 小时 ~ 28 天）和 7d/30d 窗口用它。
+- **长期层**：每 5 分钟从原始点里抽一个（不求平均，保证 Δ 的分布不变），保留 14 天，
+  追加写到 `history/YYYY-MM-DD.jsonl`（每天约 0.7MB，14 天约 9MB），重启时读回。
+  L6–L10（3 小时 ~ 7 天）和 7d/14d 窗口用它。
 - 为什么 56 天：σ 用最近 28 天的同时段 Δ 估计，L14 的每个 Δ 又要往回够 28 天。
   首次部署后 L9 约 1 天就绪、L14 约 29 天就绪，满 56 天后 L14 的参照才完整。
 
@@ -119,6 +120,23 @@ CPU 劣化：cpu.user 上升 6.0σ — 责任方 burner（PID 4242）
 - **真实注入**（实验机）：`./faultlab --url http://127.0.0.1:8888 --scenarios cpu,io,mem`，
   nodedata 需先运行约 10 分钟。网卡丢包：`sudo ./faultlab --scenarios net --iface eth0`（需要 tc 和该口上的 TCP 流量）。
 
+## 服务
+
+页面上单独一个"服务"区块，回答"这台机器上跑着什么、各自什么时候起来的、昨天那个还在不在"。
+
+识别**只读 /proc**：可执行文件名查表 → java 命令行（区分 ELK / Kafka / Tomcat）→
+监听端口反查 → 都不认就显示可执行文件名。不连服务、不读配置、不执行任何命令。
+把 mysqld 改名部署也能靠 3306 认出来。内置表覆盖 Nginx / Apache / Caddy / HAProxy /
+MySQL / MariaDB / PostgreSQL / MongoDB / Redis / Memcached / ClickHouse / etcd /
+Elasticsearch / Kibana / Logstash / Kafka / ZooKeeper / RabbitMQ / Docker / containerd /
+BIND / CoreDNS / PHP-FPM 等。
+
+每行给出：服务名与监听端口、进程名、PID、实例数、启动时间、已运行时长、CPU、内存，
+以及 1h / 6h / 12h / 1d / 3d / 7d / 14d 前在不在（`✓` 在 / `—` 不在 / `?` 当时 nodedata 没在跑 /
+`重启` 那时在但之后换过一次）。**消失的服务留在表里标灰**，不会凭空不见。
+
+服务变化只呈现、不告警：我们分不清"挂了"和"运维手动停的"，分不清就不该报警。
+
 ## 给监控系统的接口
 
 `GET /health.txt` 一行文本，关键字打头，主机名在同一行：
@@ -154,6 +172,7 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 | `/api/check` | L0 绝对判定 |
 | `/api/diagnosis?z=3` | L4 诊断链 |
 | `/health.txt` | 一行文本，给监控 grep |
+| `/api/services` | 服务清单与历史在否 |
 | `/api/baseline` | GET / POST / DELETE 人工基线 |
 | `/api/incidents` | GET 留证列表；POST 立即留证 |
 | `/api/incidents/<id>` | 一份证据 |

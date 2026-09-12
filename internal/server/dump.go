@@ -4,6 +4,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/githubflyideas/nodedata/internal/deviation"
 	"os"
 	"path/filepath"
 	"time"
@@ -62,11 +63,12 @@ type MetricPoints struct {
 }
 
 type Point struct {
-	TS       int64     `json:"ts"`
-	V        float64   `json:"v"`
-	Z        [14]*int8 `json:"z"`
-	OnsetLag *string   `json:"onset_lag"`
-	Breadth  int       `json:"breadth"`
+	TS int64   `json:"ts"`
+	V  float64 `json:"v"`
+	// Z 每档一个值，nil = 该档未就绪。长度是 deviation.NLag。
+	Z        [deviation.NLag]*int8 `json:"z"`
+	OnsetLag *string               `json:"onset_lag"`
+	Breadth  int                   `json:"breadth"`
 }
 
 type RuleHit struct {
@@ -123,7 +125,7 @@ func (d *Dumper) DumpAll() error {
 		{"6h", 6 * time.Hour},
 		{"24h", 24 * time.Hour},
 		{"7d", 7 * 24 * time.Hour},
-		{"30d", 30 * 24 * time.Hour},
+		{"14d", 14 * 24 * time.Hour},
 	}
 
 	if err := os.MkdirAll(d.dir(), 0755); err != nil {

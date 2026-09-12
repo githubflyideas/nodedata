@@ -9,7 +9,7 @@ import (
 	"github.com/githubflyideas/nodedata/internal/collector"
 )
 
-// TestBuildCostFullBuffer 是 v3.0.9 的回归护栏：原始层灌满 24h、长期层灌满 56 天后，
+// TestBuildCostFullBuffer 是 v3.0.9 的回归护栏：原始层灌满 24h、长期层灌满 14 天后，
 // 一轮转储（5 个窗口）和一次 σ 重算都必须远低于采集周期。
 //
 // v3.0.8 在这个用例上：Build 每指标每窗口 ~370ms（Series.Lookup 线性扫 17280 点，
@@ -32,7 +32,7 @@ func TestBuildCostFullBuffer(t *testing.T) {
 		}
 		s.Add(batch)
 	}
-	// 长期层灌满 56 天（在原始层之前）
+	// 长期层灌满 14 天（在原始层之前）
 	cstart := start.Add(-coarseRetention)
 	for m := 0; m < M; m++ {
 		id := fmt.Sprintf("cpu.m%02d", m)
@@ -50,7 +50,7 @@ func TestBuildCostFullBuffer(t *testing.T) {
 	sig := time.Since(t0)
 
 	t1 := time.Now()
-	for _, w := range []string{"1h", "6h", "24h", "7d", "30d"} {
+	for _, w := range []string{"1h", "6h", "24h", "7d", "14d"} {
 		d, _ := windowDuration(w)
 		hm, _ := b.Build(end.Add(-d), end)
 		if len(hm.Metrics) != M {
@@ -63,7 +63,7 @@ func TestBuildCostFullBuffer(t *testing.T) {
 		}
 	}
 	dump := time.Since(t1)
-	t.Logf("M=%d full raw 24h + coarse 56d: RefreshSigma %v, one dump round (5 windows) %v", M, sig, dump)
+	t.Logf("M=%d full raw 24h + coarse 14d: RefreshSigma %v, one dump round (5 windows) %v", M, sig, dump)
 
 	// 预算放得很宽（-race 下也要过），但比旧实现低两个数量级。
 	if dump > 2*time.Second {
