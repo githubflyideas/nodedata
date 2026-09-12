@@ -313,3 +313,6 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 	}
 	return out
 }
+
+func nan() float64         { return math.NaN() }
+func isNaN(v float64) bool { return math.IsNaN(v) || math.IsInf(v, 0) }

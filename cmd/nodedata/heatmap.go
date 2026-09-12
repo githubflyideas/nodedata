@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/githubflyideas/nodedata/internal/deviation"
@@ -22,6 +23,75 @@ type HeatmapBuilder struct {
 	host   string
 	// procsFn 提供最近一轮进程快照；nil 时不输出。
 	procsFn func() ([]server.ProcTop, time.Time)
+
+	// frozen 是"处在异常中"的指标 → 异常起始时刻。见 MarkAnomaly。
+	frozenMu sync.Mutex
+	frozen   map[string]time.Time
+}
+
+// 基线排除（v4.3.0）。
+//
+// σ 每 5 分钟用最近历史重算，历史里**包含正在发生的故障**。尺度取 MAD / 四分位差 /
+// 十分位差的最大者，而一个持续几天的阶跃故障会让十分位差张到故障幅度那么大：
+// 实测一个持续 3 天的故障，峰值 z 从 4.45 掉到 −1.70 —— 机器还病着，报警自己没了。
+//
+// 对策：某指标一进入 L4 结论，就记下"异常从何时开始"，之后重算 σ 时把那之后的样本剔除，
+// 基线仍是故障前的形状。
+//
+// 上限按**比例**而不是按时长：业务真的扩容了、流量真的涨一倍，那是新常态，该学进去。
+// deviation.MaxExcludedFrac = 1/4，超过就不再排除。按时长封顶是行不通的——
+// 试过 2 小时上限，3 天的故障里解冻 36 次，照样被污染干净。
+//
+// 只影响 σ 的样本选取，不改 z 的算法、不动任何页面或接口。
+
+// anomalyBackdate 是异常起点的回溯量。
+//
+// 我们总是**事后**才发现故障：L4 每 15 秒跑一次、σ 每 5 分钟重算一次，从故障真正开始
+// 到被标记，中间那几分钟的样本已经进了基线。实测这点污染就足以坏事——
+// 标记晚 30 分钟（6 个长期层样本）就让十分位差张开，峰值 z 从 5.29 掉到 2.00。
+// 多排除一小时历史的代价被 MaxExcludedFrac 兜住，不会失控。
+const anomalyBackdate = time.Hour
+
+// MarkAnomaly 记录这些指标的异常起点（已记过的不覆盖，保留最早的那次）。
+func (b *HeatmapBuilder) MarkAnomaly(ids []string, since time.Time) {
+	since = since.Add(-anomalyBackdate)
+	if len(ids) == 0 {
+		return
+	}
+	b.frozenMu.Lock()
+	defer b.frozenMu.Unlock()
+	if b.frozen == nil {
+		b.frozen = make(map[string]time.Time, len(ids))
+	}
+	for _, id := range ids {
+		if _, ok := b.frozen[id]; !ok {
+			b.frozen[id] = since
+		}
+	}
+}
+
+// ClearAnomaly 指标恢复正常后清除标记（下一轮 σ 就会把这段学进来）。
+func (b *HeatmapBuilder) ClearAnomaly(keep map[string]bool) {
+	b.frozenMu.Lock()
+	defer b.frozenMu.Unlock()
+	for id := range b.frozen {
+		if !keep[id] {
+			delete(b.frozen, id)
+		}
+	}
+}
+
+func (b *HeatmapBuilder) anomalySince(id string) time.Time {
+	b.frozenMu.Lock()
+	defer b.frozenMu.Unlock()
+	return b.frozen[id]
+}
+
+// AnomalyCount 供测试观察。
+func (b *HeatmapBuilder) AnomalyCount() int {
+	b.frozenMu.Lock()
+	defer b.frozenMu.Unlock()
+	return len(b.frozen)
 }
 
 func NewHeatmapBuilder(s *Series) *HeatmapBuilder {
@@ -58,7 +128,7 @@ func (b *HeatmapBuilder) RefreshSigma() {
 			if len(hist) < 2 {
 				continue
 			}
-			all := deviation.ComputeSigmaLag(lagSec, hist)
+			all := deviation.ComputeSigmaLagExcluding(lagSec, hist, b.anomalySince(id))
 			for hour := 0; hour < 24; hour++ {
 				b.sigma.Set(id, lagIdx, hour, all[hour])
 			}

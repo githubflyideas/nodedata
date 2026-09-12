@@ -80,6 +80,18 @@ th.sorted .ar{opacity:1}
 .cmd:hover{background:#e3e7ee}
 h3.procs-h{margin:18px 0 6px;font-size:13px;font-weight:600}
 h3.cmp-h{margin:14px 0 6px;font-size:14px;font-weight:600}
+.chartgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.chartbox{border:1px solid var(--line);border-radius:6px;padding:8px 10px 4px;background:#fff}
+.chartbox h4{margin:0 0 2px;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;align-items:baseline}
+.chartbox h4 b{font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.chartbox svg{display:block;width:100%;height:84px}
+.chartbox .ax{font-size:9.5px;fill:var(--dim)}
+.chartbox .gl{stroke:var(--line);stroke-width:1}
+.chartbox .ln{fill:none;stroke:#1d4ed8;stroke-width:1.5;stroke-linejoin:round}
+.chartbox .ar{fill:#1d4ed8;opacity:.07}
+.chartbox .hv{stroke:#94a3b8;stroke-width:1;stroke-dasharray:2 2}
+.chartbox .flat{font-size:10px;fill:var(--dim)}
+.chartcap{font-size:10.5px;color:var(--dim);margin-top:2px;min-height:14px}
 .panetabs{display:flex;gap:2px;margin:18px 0 4px;border-bottom:1px solid var(--line)}
 .panetabs button{appearance:none;border:0;background:none;cursor:pointer;font:inherit;font-size:13.5px;
   padding:8px 14px;color:var(--dim);border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -138,7 +150,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     <span id="overall" class="badge idle">加载中</span>
     <span>数据源 <b id="src">—</b></span>
     <span>更新于 <b id="ts">--:--:--</b></span>
-    <button id="auto" class="on" onclick="toggleAuto()">自动刷新 5s</button>
+    <button id="auto" class="on" onclick="toggleAuto()">自动刷新 20s</button>
     <button onclick="refreshAll()">立即刷新</button>
   </div>
 </header>
@@ -164,10 +176,21 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 
 <div class="pane" data-pane="key">
 <section>
-  <h2>关键指标<span class="layer">当前值与 1h / 6h / 12h / 1d / 3d / 7d / 14d 前同一时刻的值</span></h2>
-  <div class="sub">箭头与百分比 = 现在相对那个时刻的变化；红色 = 往坏的方向变了 20% 以上；"—" = 那个时刻还没有数据（不当作 0）。
-    每类只列最关键的几项，完整采集项见"OS 指标"。</div>
-  <div id="cmpcore"><p class="empty">加载中…</p></div>
+  <h2>关键指标<span class="layer">每类最关键的几项，随时间的变化曲线</span></h2>
+  <div class="sub">曲线看的是<b>形状</b>：阶跃（某个时刻突然换了水平）、爬坡（持续上涨，多是泄漏）、
+    周期尖峰（跑批、定时任务）—— 三种形状对应完全不同的排查方向。断开处 = 那段没有数据。
+    要看具体数值和完整采集项，去"OS 指标"。</div>
+  <div class="toolbar">
+    <div class="grp" id="kwins">
+      <button data-kwin="1h">1h</button>
+      <button data-kwin="6h" class="on">6h</button>
+      <button data-kwin="24h">24h</button>
+      <button data-kwin="7d">7d</button>
+      <button data-kwin="14d">14d</button>
+    </div>
+    <span class="tabhint">鼠标悬停看具体时刻的值</span>
+  </div>
+  <div id="keycharts"><p class="empty">加载中…</p></div>
 </section>
 
 <section>
@@ -234,7 +257,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </div>
 <script>
 "use strict";
-var state={pane:"key",tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
+var state={pane:"key",kwin:"6h",tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9,10,11,12,13];     // L5..L14 : 5400s .. 28d
 var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
@@ -566,12 +589,97 @@ function cmpRender(el,d,coreOnly){
   }).join("")||'<p class="empty">还没有数据。</p>';
 }
 async function loadCompare(){
-  var core=document.getElementById("cmpcore"), all=document.getElementById("cmpall"), d;
+  var all=document.getElementById("cmpall"), d;
   try{ d=(await getJSON("/api/compare")).json; }
-  catch(e){ var m='<p class="empty">对比数据不可用：'+esc(e.message)+'</p>'; core.innerHTML=m; all.innerHTML=m; return; }
-  cmpRender(core,d,true);
+  catch(e){ all.innerHTML='<p class="empty">对比数据不可用：'+esc(e.message)+'</p>'; return; }
   cmpRender(all,d,false);
 }
+
+/* ================= 关键指标曲线（内联 SVG，零依赖，离线可用） ================= */
+var CH={w:600,h:120,l:44,r:8,t:10,b:18};   // viewBox 坐标系，靠 CSS 缩放
+function niceStep(span){                    // 取 1/2/5×10^n 里最接近 span/3 的
+  if(span<=0) return 1;
+  var p=Math.pow(10,Math.floor(Math.log10(span/3))), c=[1,2,5,10];
+  for(var i=0;i<c.length;i++) if(c[i]*p>=span/3) return c[i]*p;
+  return 10*p;
+}
+function chartSVG(s,from,to){
+  var n=s.v.length, vals=s.v.filter(function(v){return v!==null&&isFinite(v);});
+  if(!vals.length) return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'"><text class="flat" x="'+CH.l+'" y="'+(CH.h/2)+'">这段时间没有数据</text></svg>';
+  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
+  if(mx===mn){ mx=mn+(Math.abs(mn)||1)*0.05; mn=mn-(Math.abs(mn)||1)*0.05; }
+  else { var pad=(mx-mn)*0.12; mx+=pad; mn-=pad; }
+  if(mn>0&&mn<(mx-mn)) mn=0;                // 接近 0 就从 0 起，避免夸大波动
+  var x=function(i){return CH.l+(CH.w-CH.l-CH.r)*(n<2?0:i/(n-1));},
+      y=function(v){return CH.t+(CH.h-CH.t-CH.b)*(1-(v-mn)/(mx-mn));};
+  // 折线：null 处断开
+  var segs=[],cur=[];
+  for(var i=0;i<n;i++){
+    var v=s.v[i];
+    if(v===null||!isFinite(v)){ if(cur.length)segs.push(cur); cur=[]; continue; }
+    cur.push(x(i).toFixed(1)+","+y(v).toFixed(1));
+  }
+  if(cur.length)segs.push(cur);
+  var line=segs.map(function(g){return '<path class="ln" d="M'+g.join("L")+'"/>';}).join("");
+  var area=segs.filter(function(g){return g.length>1;}).map(function(g){
+    var a=g[0].split(",")[0], b=g[g.length-1].split(",")[0], base=y(Math.max(mn,0)).toFixed(1);
+    return '<path class="ar" d="M'+a+','+base+'L'+g.join("L")+'L'+b+','+base+'Z"/>';}).join("");
+  // y 轴两三条刻度
+  var st=niceStep(mx-mn), gl="";
+  for(var g0=Math.ceil(mn/st)*st; g0<=mx; g0+=st){
+    var yy=y(g0).toFixed(1);
+    gl+='<line class="gl" x1="'+CH.l+'" y1="'+yy+'" x2="'+(CH.w-CH.r)+'" y2="'+yy+'"/>'+
+        '<text class="ax" x="'+(CH.l-4)+'" y="'+(+yy+3)+'" text-anchor="end">'+esc(fmt(g0,s.unit))+'</text>';
+  }
+  var t0=new Date(from*1000),t1=new Date(to*1000),hm=function(d){return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);};
+  var xl='<text class="ax" x="'+CH.l+'" y="'+(CH.h-4)+'">'+hm(t0)+'</text>'+
+         '<text class="ax" x="'+(CH.w-CH.r)+'" y="'+(CH.h-4)+'" text-anchor="end">'+hm(t1)+'</text>';
+  return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'" preserveAspectRatio="none">'+gl+area+line+xl+'</svg>';
+}
+function lastVal(s){
+  for(var i=s.v.length-1;i>=0;i--) if(s.v[i]!==null&&isFinite(s.v[i])) return s.v[i];
+  return null;
+}
+async function loadKeyCharts(){
+  var el=document.getElementById("keycharts"), d;
+  try{ d=(await getJSON("/api/keyseries?win="+encodeURIComponent(state.kwin))).json; }
+  catch(e){ el.innerHTML='<p class="empty">曲线数据不可用：'+esc(e.message)+'</p>'; return; }
+  if(!d.groups||!d.groups.length){ el.innerHTML='<p class="empty">还没有数据。</p>'; return; }
+  el.innerHTML=d.groups.map(function(g){
+    return '<h3 class="cmp-h">'+esc(g.name)+'</h3><div class="chartgrid">'+
+      g.series.map(function(s){
+        var lv=lastVal(s);
+        return '<div class="chartbox" data-id="'+esc(s.id)+'"><h4>'+esc(s.label)+
+          '<b>'+esc(lv===null?"—":fmt(lv,s.unit))+'</b></h4>'+chartSVG(s,d.from,d.at)+
+          '<div class="chartcap"></div></div>';
+      }).join("")+'</div>';
+  }).join("");
+  bindHover(d);
+}
+// 悬停读值：不引库，自己算最近的采样点
+function bindHover(d){
+  var byId={};
+  d.groups.forEach(function(g){g.series.forEach(function(s){byId[s.id]=s;});});
+  [].forEach.call(document.querySelectorAll("#keycharts .chartbox"),function(box){
+    var s=byId[box.getAttribute("data-id")]; if(!s) return;
+    var svg=box.querySelector("svg"), cap=box.querySelector(".chartcap");
+    svg.addEventListener("mousemove",function(ev){
+      var rc=svg.getBoundingClientRect();
+      var frac=(ev.clientX-rc.left)/rc.width;
+      var inner=(CH.w-CH.l-CH.r)/CH.w, off=CH.l/CH.w;
+      var i=Math.round((frac-off)/inner*(s.v.length-1));
+      if(i<0)i=0; if(i>=s.v.length)i=s.v.length-1;
+      var v=s.v[i];
+      cap.textContent=new Date(s.ts[i]*1000).toLocaleString()+"　"+(v===null||!isFinite(v)?"无数据":fmt(v,s.unit));
+    });
+    svg.addEventListener("mouseleave",function(){cap.textContent="";});
+  });
+}
+document.getElementById("kwins").addEventListener("click",function(e){
+  var b=e.target.closest("button[data-kwin]"); if(!b) return;
+  [].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});
+  state.kwin=b.getAttribute("data-kwin"); loadKeyCharts();
+});
 
 /* ================= 服务对比 ================= */
 function uptimeStr(s){
@@ -692,12 +800,12 @@ function toggleAuto(){
   state.auto=!state.auto;
   var b=document.getElementById("auto");
   b.classList.toggle("on",state.auto);
-  b.textContent=state.auto?"自动刷新 5s":"自动刷新 已停";
+  b.textContent=state.auto?"自动刷新 20s":"自动刷新 已停";
   if(state.auto){ schedule(); } else if(state.timer){ clearInterval(state.timer); state.timer=null; }
 }
 function schedule(){
   if(state.timer) clearInterval(state.timer);
-  state.timer=setInterval(refreshAll,5000);
+  state.timer=setInterval(refreshAll,20000);
 }
 async function loadBaseline(){
   try{
@@ -726,7 +834,7 @@ async function clearBaseline(){
   await loadBaseline(); await loadL0();
 }
 async function refreshAll(){
-  await Promise.all([loadCompare(),loadServices(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadKeyCharts(),loadCompare(),loadServices(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

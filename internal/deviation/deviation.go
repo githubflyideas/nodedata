@@ -85,12 +85,42 @@ func ComputeSigma(lagSeconds int, hour int, hist []Sample) (LagSigma, error) {
 // 14×24=336 遍；这里每个 lag 只扫一遍，v(t-H) 用双指针推进（t 单调 ⇒ t-H 单调），
 // 结果与逐桶计算逐位相同（见 TestComputeSigmaLagMatchesLegacy）。
 func ComputeSigmaLag(lagSeconds int, hist []Sample) [24]LagSigma {
+	return ComputeSigmaLagExcluding(lagSeconds, hist, time.Time{})
+}
+
+// MaxExcludedFrac 是"异常期样本"最多能占历史的比例。超过它就不再排除——
+// 占了历史四分之一以上的状态，已经不是异常，是新常态，该学进去。
+const MaxExcludedFrac = 0.25
+
+// ComputeSigmaLagExcluding 与 ComputeSigmaLag 相同，但把 excludeFrom 之后的样本
+// 从 Δ 分布里剔除（用于把正在发生的故障排除在基线之外）。
+//
+// 为什么需要：σ 的尺度取 MAD / 四分位差 / 十分位差的最大者，而一个持续几天的阶跃故障
+// 会让十分位差直接张到故障幅度那么大 —— 实测一个持续 3 天的故障，z 从 4.45 掉到 −1.70：
+// 机器还病着，报警自己没了。
+//
+// 为什么按比例而不是按时长封顶：业务真的扩容了、流量真的涨一倍，那是新常态。
+// 用"最多排除 1/4 历史"这个界，既挡住了几天量级的故障被学成正常，
+// 又保证真的长期变化最终会被接受。excludeFrom 为零值时行为与 ComputeSigmaLag 完全一致。
+func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Time) [24]LagSigma {
 	var out [24]LagSigma
 	for h := range out {
 		out[h] = LagSigma{Sigma: 1e-9}
 	}
 	if len(hist) == 0 {
 		return out
+	}
+	// 先看排除的量是否在上限之内；超了就当作新常态，不再排除。
+	if !excludeFrom.IsZero() {
+		n := 0
+		for _, sm := range hist {
+			if !sm.TS.Before(excludeFrom) {
+				n++
+			}
+		}
+		if float64(n) > MaxExcludedFrac*float64(len(hist)) {
+			excludeFrom = time.Time{}
+		}
 	}
 	H := time.Duration(lagSeconds) * time.Second
 	// 容差必须与 Z 里配 v(t-H) 用的一致，否则 σ 是"松配对"的尺度、
@@ -107,6 +137,9 @@ func ComputeSigmaLag(lagSeconds int, hist []Sample) [24]LagSigma {
 		s := hist[i]
 		if s.TS.Before(cutoff) {
 			continue
+		}
+		if !excludeFrom.IsZero() && !s.TS.Before(excludeFrom) {
+			continue // 异常期的样本不参与基线
 		}
 		target := s.TS.Add(-H)
 		if target.Before(histStart) {

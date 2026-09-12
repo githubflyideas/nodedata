@@ -126,7 +126,7 @@ CPU 劣化：cpu.user 上升 6.0σ — 责任方 burner（PID 4242）
 
 | 标签页 | 内容 |
 |---|---|
-| 关键指标 | 每类最关键的几项 + 诊断链 + 事故留证 |
+| 关键指标 | 25 条曲线（1h/6h/24h/7d/14d 可选）+ 诊断链 + 事故留证 |
 | OS 指标 | 全部采集项：CPU / 内存 / 磁盘 / 网络 / 套接字 / 进程 |
 | 整体偏离度和占用 | z 热力图 + 此刻谁在用资源（带下一步命令） |
 | 服务对比 | 服务清单与历史在否 |
@@ -184,6 +184,7 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 | `/api/diagnosis?z=3` | L4 诊断链 |
 | `/health.txt` | 一行文本，给监控 grep |
 | `/api/services` | 服务清单与历史在否 |
+| `/api/keyseries?win=6h` | 关键指标曲线数据 |
 | `/api/baseline` | GET / POST / DELETE 人工基线 |
 | `/api/incidents` | GET 留证列表；POST 立即留证 |
 | `/api/incidents/<id>` | 一份证据 |

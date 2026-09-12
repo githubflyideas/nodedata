@@ -128,7 +128,6 @@ func runServe() {
 		}
 		return out, ts
 	}
-	go sigmaLoop(builder, stop)
 
 	healthFn := func() server.HealthJSON { return builder.Health(col.Health()) }
 
@@ -146,6 +145,7 @@ func runServe() {
 
 	diagnoser := NewDiagnoser(dataDir, series, builder)
 	diagnoser.procs = procsFromCollector(col, svcLog)
+	go sigmaLoop(builder, diagnoser, stop)
 
 	// ── 事故留证：后台每 15 秒跑一次 L4，出现带归因的结论就把现场存下来（不依赖页面打开）
 	recorder, err := NewRecorder(filepath.Join(dataDir, "incidents"), *procRoot,
@@ -229,6 +229,19 @@ func runServe() {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		fmt.Fprint(w, healthLine(hostname, l0, diagnoser.Run(3.0), builder.healthValues(now), now))
+	})
+
+	mux.HandleFunc("/api/keyseries", func(w http.ResponseWriter, r *http.Request) {
+		win := r.URL.Query().Get("win")
+		if win == "" {
+			win = "6h"
+		}
+		d, ok := windowDuration(win)
+		if !ok {
+			http.Error(w, "bad window", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, builder.KeySeries(win, d, time.Now()))
 	})
 
 	mux.HandleFunc("/api/compare", func(w http.ResponseWriter, r *http.Request) {
@@ -347,8 +360,10 @@ func persist(hist *History, kept []collector.Sample) {
 
 var histWarned atomic.Bool
 
-// sigmaLoop 周期性重算 σ 表。
-func sigmaLoop(b *HeatmapBuilder, stop <-chan struct{}) {
+// sigmaLoop 周期性重算 σ 表；重算前标记"正处在 L4 结论里"的指标，
+// 它们的异常期样本不参与基线，否则持续几天的故障会被 σ 学成常态、自己"痊愈"
+// （见 heatmap.go 的 MarkAnomaly）。
+func sigmaLoop(b *HeatmapBuilder, d *Diagnoser, stop <-chan struct{}) {
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
 	for {
@@ -357,6 +372,22 @@ func sigmaLoop(b *HeatmapBuilder, stop <-chan struct{}) {
 			return
 		case now := <-t.C:
 			b.Prune(now)
+			// 先标异常：Run 用的是当前 σ，所以必须在 RefreshSigma 之前问它"现在谁在报警"
+			if d != nil {
+				if chain := d.Run(3.0); chain != nil {
+					active := map[string]bool{}
+					for _, it := range chain.Items {
+						if it.Class == "" {
+							continue
+						}
+						b.MarkAnomaly(it.Metrics, now)
+						for _, m := range it.Metrics {
+							active[m] = true
+						}
+					}
+					b.ClearAnomaly(active) // 恢复正常的指标解除标记
+				}
+			}
 			b.RefreshSigma()
 		}
 	}
