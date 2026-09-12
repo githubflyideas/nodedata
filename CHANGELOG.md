@@ -1,5 +1,32 @@
 # nodedata Changelog
 
+## [v3.3.0] — 2026-09-12 · 补齐指标覆盖；修两处会毁掉信任的误报
+
+对照 host-dns-perf §4.2 的模块表逐项核对，补上此前缺失的采集。
+
+### 新增采集
+- **套接字（整块缺失）**：`/proc/net/sockstat` → socket 总数、TCP inuse/orphan/TIME_WAIT/alloc、UDP inuse；
+  `/proc/net/snmp` Tcp: → `tcp.estab`（已建立）、被动新建连接/秒、连接失败/秒。
+  TIME_WAIT 堆积与 orphan 上涨是端口耗尽和连接泄漏的早期信号。
+- **UDP 错误（关键缺失）**：`udp.rcvbuf_errors`（接收缓冲区溢出）、`udp.in_errors`、`udp.no_ports`、收发包速率。
+  对 DNS/NTP/syslog 这类 UDP 服务，应用来不及收包时内核直接丢，**网卡层 rx_drop 一个都不涨**，
+  业务侧却已经在超时 —— 只看 `net.rx_drop` 永远看不到。
+- **容量**：`fs.used_pct`、`fs.avail`、`fs.inode_used_pct`（statfs，唯一不走 /proc 的采集）；`mem.used_pct`；
+  `conntrack.used_pct`。有硬上限的资源，绝对值无法设阈值，占上限的百分比才行。
+- `/proc/net/snmp` 改为**按表头名取字段**：列的位置随内核版本变化，旧实现按固定下标会取错；
+  表头与数值行不配对时整行跳过而不是错位取值。
+
+### 修两处误报（比漏报更致命）
+- **根分区使用率**：L0 用 `(Blocks-Bavail)/Blocks`，把"存在但不可分配"的块算成已用。
+  实测一台 `df` 显示 52% 的机器被判成 **96.4%**、直接 fail，`health.txt` 恒为 DOWN。
+  改为 `used/(used+avail)`，与 df 同口径；新增与 `df -P` 实测对比的测试。
+- **丢包率**：`6 丢 / 77 收 = 7.79%` 也会判 fail。比率要有意义，分母必须够大；
+  现在收发包数不足 10000 时跳过判定并说明原因。
+
+### 对比表
+新增"套接字"组；关键指标补入内存使用 %、根分区使用 %、收发包速率、UDP 缓冲区溢出、
+TCP 已建立 / TIME_WAIT / conntrack 水位。
+
 ## [v3.2.0] — 2026-09-12 · 接进现有告警；默认不对外监听
 
 参考 host-dns-perf 的设计文档，补上两处它做对、而 nodedata 一直缺的东西。

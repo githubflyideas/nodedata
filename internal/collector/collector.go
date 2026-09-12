@@ -4,15 +4,15 @@ package collector
 
 import (
 	"bytes"
-	"unsafe"
 	"math"
 	"os"
-	"syscall"
 	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 // Sample 是单条落库记录。
@@ -25,71 +25,74 @@ type Sample struct {
 // Config 是采集器配置。
 type Config struct {
 	ProcRoot string
+	RootFS   string // 要看容量的挂载点，默认 "/"
 	SysRoot  string // 默认 /sys；用于区分物理网卡与 bond/VLAN
 	Interval time.Duration
 }
 
 // Collector 实现 /proc 采集与自监控。
 type Collector struct {
-	cfg         Config
-	mu          sync.Mutex
-	prevGlobal  map[string]uint64
-	prevTS      time.Time
-	prevDisks   map[string]diskPrev
-	prevNets    map[string]netPrev
-	procs       procState
+	cfg        Config
+	mu         sync.Mutex
+	prevGlobal map[string]uint64
+	prevTS     time.Time
+	prevDisks  map[string]diskPrev
+	prevNets   map[string]netPrev
+	procs      procState
 
-	psiAvailable  int32
-	taskstatsOK   int32
-	degraded      int32
-	procsScanned  int32
-	procsSkipped  int32
-	rowsDropped   int64
-	walBytes      int64
-	durationMS    int64
+	psiAvailable    int32
+	taskstatsOK     int32
+	degraded        int32
+	procsScanned    int32
+	procsSkipped    int32
+	rowsDropped     int64
+	walBytes        int64
+	durationMS      int64
 	currentInterval int64
 
-	overBudgetCount    int
-	consecutiveEmpty   int32
-	rngState           uint64
-	readBuf            [65536]byte // 零分配文件读缓冲，复用于每次 readFileAbs
-	fieldBuf           [64][]byte   // 复用字段切片，避免 splitFields 重复分配
-	devNames     map[string]string // 设备/接口名驻留，避免每轮分配
-	diskIDMap    map[string]*diskIDs
-	netIDMap     map[string]*netIDs
-	ifaceClass   map[string]bool
-	ifaceClassAt time.Time
-	sysNetOK     bool
-	cachedProcRoot string    // 上次使用的 procRoot
-	cachedStat     string
-	cachedLoadavg  string
-	cachedMeminfo  string
-	cachedVmstat   string
-	cachedDisk     string
-	cachedNetDev   string
-	cachedNetSnmp  string
-	cachedConntrack string
-	cachedPsiCPU   string
-	cachedPsiMem   string
-	cachedPsiIO    string
+	overBudgetCount  int
+	consecutiveEmpty int32
+	rngState         uint64
+	readBuf          [65536]byte       // 零分配文件读缓冲，复用于每次 readFileAbs
+	fieldBuf         [64][]byte        // 复用字段切片，避免 splitFields 重复分配
+	ctMax            int64             // conntrack 上限，负数表示读过但不可用
+	devNames         map[string]string // 设备/接口名驻留，避免每轮分配
+	diskIDMap        map[string]*diskIDs
+	netIDMap         map[string]*netIDs
+	ifaceClass       map[string]bool
+	ifaceClassAt     time.Time
+	sysNetOK         bool
+	cachedProcRoot   string // 上次使用的 procRoot
+	cachedStat       string
+	cachedLoadavg    string
+	cachedMeminfo    string
+	cachedVmstat     string
+	cachedDisk       string
+	cachedNetDev     string
+	cachedNetSnmp    string
+	cachedSockstat   string
+	cachedConntrack  string
+	cachedPsiCPU     string
+	cachedPsiMem     string
+	cachedPsiIO      string
 
 	// null-terminated 路径缓存，用于直接 RawSyscall，避免 ByteSliceFromString 分配
-	ntStat       []byte
-	ntLoadavg    []byte
-	ntMeminfo    []byte
-	ntVmstat     []byte
-	ntDisk       []byte
-	ntNetDev     []byte
-	ntNetSnmp    []byte
-	ntConntrack  []byte
-	ntPsiCPU     []byte
-	ntPsiMem     []byte
-	ntPsiIO      []byte
+	ntStat      []byte
+	ntLoadavg   []byte
+	ntMeminfo   []byte
+	ntVmstat    []byte
+	ntDisk      []byte
+	ntNetDev    []byte
+	ntNetSnmp   []byte
+	ntSockstat  []byte
+	ntConntrack []byte
+	ntPsiCPU    []byte
+	ntPsiMem    []byte
+	ntPsiIO     []byte
 
 	openedMu    sync.Mutex
 	openedPaths map[string]struct{} // 去重后的路径集合（PID 段归一成 <pid>）
 }
-
 
 // New 创建采集器。
 func New(cfg Config) *Collector {
@@ -98,6 +101,9 @@ func New(cfg Config) *Collector {
 	}
 	if cfg.SysRoot == "" {
 		cfg.SysRoot = "/sys"
+	}
+	if cfg.RootFS == "" {
+		cfg.RootFS = "/"
 	}
 	if cfg.Interval == 0 {
 		cfg.Interval = 30 * time.Second
@@ -244,31 +250,33 @@ func (c *Collector) CollectGlobal(procRoot string, now time.Time) ([]Sample, err
 
 	// 路径缓存：同 procRoot 时复用预拼接字符串，避免 filepath.Join 分配
 	if c.cachedProcRoot != procRoot {
-		c.cachedProcRoot  = procRoot
-		c.cachedStat      = procRoot + "/stat"
-		c.cachedLoadavg   = procRoot + "/loadavg"
-		c.cachedMeminfo   = procRoot + "/meminfo"
-		c.cachedVmstat    = procRoot + "/vmstat"
-		c.cachedDisk      = procRoot + "/diskstats"
-		c.cachedNetDev    = procRoot + "/net/dev"
-		c.cachedNetSnmp   = procRoot + "/net/snmp"
+		c.cachedProcRoot = procRoot
+		c.cachedStat = procRoot + "/stat"
+		c.cachedLoadavg = procRoot + "/loadavg"
+		c.cachedMeminfo = procRoot + "/meminfo"
+		c.cachedVmstat = procRoot + "/vmstat"
+		c.cachedDisk = procRoot + "/diskstats"
+		c.cachedNetDev = procRoot + "/net/dev"
+		c.cachedNetSnmp = procRoot + "/net/snmp"
+		c.cachedSockstat = procRoot + "/net/sockstat"
 		c.cachedConntrack = procRoot + "/sys/net/netfilter/nf_conntrack_count"
-		c.cachedPsiCPU    = procRoot + "/pressure/cpu"
-		c.cachedPsiMem    = procRoot + "/pressure/memory"
-		c.cachedPsiIO     = procRoot + "/pressure/io"
+		c.cachedPsiCPU = procRoot + "/pressure/cpu"
+		c.cachedPsiMem = procRoot + "/pressure/memory"
+		c.cachedPsiIO = procRoot + "/pressure/io"
 		// null-terminated 字节数组，供 rawOpen 直接传 syscall，避免 ByteSliceFromString 分配
 		mkNT := func(s string) []byte { b := make([]byte, len(s)+1); copy(b, s); return b }
-		c.ntStat      = mkNT(c.cachedStat)
-		c.ntLoadavg   = mkNT(c.cachedLoadavg)
-		c.ntMeminfo   = mkNT(c.cachedMeminfo)
-		c.ntVmstat    = mkNT(c.cachedVmstat)
-		c.ntDisk      = mkNT(c.cachedDisk)
-		c.ntNetDev    = mkNT(c.cachedNetDev)
-		c.ntNetSnmp   = mkNT(c.cachedNetSnmp)
+		c.ntStat = mkNT(c.cachedStat)
+		c.ntLoadavg = mkNT(c.cachedLoadavg)
+		c.ntMeminfo = mkNT(c.cachedMeminfo)
+		c.ntVmstat = mkNT(c.cachedVmstat)
+		c.ntDisk = mkNT(c.cachedDisk)
+		c.ntNetDev = mkNT(c.cachedNetDev)
+		c.ntNetSnmp = mkNT(c.cachedNetSnmp)
+		c.ntSockstat = mkNT(c.cachedSockstat)
 		c.ntConntrack = mkNT(c.cachedConntrack)
-		c.ntPsiCPU    = mkNT(c.cachedPsiCPU)
-		c.ntPsiMem    = mkNT(c.cachedPsiMem)
-		c.ntPsiIO     = mkNT(c.cachedPsiIO)
+		c.ntPsiCPU = mkNT(c.cachedPsiCPU)
+		c.ntPsiMem = mkNT(c.cachedPsiMem)
+		c.ntPsiIO = mkNT(c.cachedPsiIO)
 	}
 
 	out := make([]Sample, 0, 128) // 预分配容量，避免 append 触发扩容分配
@@ -303,14 +311,24 @@ func (c *Collector) CollectGlobal(procRoot string, now time.Time) ([]Sample, err
 	if data, ok := c.readFileNT(c.ntNetDev); ok {
 		c.parseNetDev(data, now, dt, hasPrev, &out)
 	}
-	// /proc/net/snmp
+	// /proc/net/snmp：TCP 重传/已建立/连接失败 + UDP 错误与缓冲区溢出
 	if data, ok := c.readFileNT(c.ntNetSnmp); ok {
-		c.parseNetSnmp(data, now, dt, hasPrev, &out)
+		c.parseNetSnmpV2(data, now, dt, hasPrev, &out)
 	}
+	// /proc/net/sockstat：socket 总数与 TCP 状态分布
+	if data, ok := c.readFileNT(c.ntSockstat); ok {
+		c.parseSockstat(data, now, &out)
+	}
+	// 根分区容量（statfs，不走 /proc）
+	c.parseFilesystem(now, &out)
 	// /proc/sys/net/netfilter/nf_conntrack_count（O(1)）
 	if data, ok := c.readFileNT(c.ntConntrack); ok {
 		if v, e2 := parseUint64(bytes.TrimSpace(data)); e2 == nil {
 			out = append(out, Sample{MetricID: "conntrack", TS: now, Value: float64(v)})
+			// 有硬上限的资源，绝对值无法设阈值，占上限的百分比才能。上限极少变，缓存读取。
+			if max := c.conntrackMax(); max > 0 {
+				out = append(out, Sample{MetricID: "conntrack.used_pct", TS: now, Value: float64(v) * 100 / float64(max)})
+			}
 		}
 	}
 	// /proc/pressure/*: 每次检测基于当前 procRoot
@@ -348,7 +366,10 @@ func (c *Collector) CollectGlobal(procRoot string, now time.Time) ([]Sample, err
 
 // ──────────────────── parseStat ────────────────────────────────
 
-var statCPUMetrics = [5]struct{ id string; fi int }{
+var statCPUMetrics = [5]struct {
+	id string
+	fi int
+}{
 	{"cpu.user", 1},
 	{"cpu.sys", 3},
 	{"cpu.iowait", 5},
@@ -472,20 +493,22 @@ type meminfoEntry struct {
 	id     string
 }
 
-var meminfoEntries = [9]meminfoEntry{
-	{[]byte("MemFree:"),      "mem.free"},
+var meminfoEntries = [10]meminfoEntry{
+	{[]byte("MemTotal:"), "__mem_total"},
+	{[]byte("MemFree:"), "mem.free"},
 	{[]byte("MemAvailable:"), "mem.available"},
-	{[]byte("Cached:"),       "mem.cached"},
-	{[]byte("Buffers:"),      "mem.buffers"},
-	{[]byte("Dirty:"),        "mem.dirty"},
-	{[]byte("Writeback:"),    "mem.writeback"},
-	{[]byte("Slab:"),         "slab"},
-	{[]byte("SwapTotal:"),    "__swap_total"},
-	{[]byte("SwapFree:"),     "__swap_free"},
+	{[]byte("Cached:"), "mem.cached"},
+	{[]byte("Buffers:"), "mem.buffers"},
+	{[]byte("Dirty:"), "mem.dirty"},
+	{[]byte("Writeback:"), "mem.writeback"},
+	{[]byte("Slab:"), "slab"},
+	{[]byte("SwapTotal:"), "__swap_total"},
+	{[]byte("SwapFree:"), "__swap_free"},
 }
 
 func (c *Collector) parseMeminfo(data []byte, now time.Time, out *[]Sample) {
 	// 零分配：直接前缀匹配，使用包级别预分配前缀，无需 map 或 string 转换
+	var memTotal, memAvail float64
 	var swapTotal, swapFree float64
 	var haveSwapTotal, haveSwapFree bool
 
@@ -493,25 +516,40 @@ func (c *Collector) parseMeminfo(data []byte, now time.Time, out *[]Sample) {
 	for len(lines) > 0 {
 		var line []byte
 		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-			line = lines[:i]; lines = lines[i+1:]
+			line = lines[:i]
+			lines = lines[i+1:]
 		} else {
-			line = lines; lines = nil
+			line = lines
+			lines = nil
 		}
 		for i := range meminfoEntries {
 			e := &meminfoEntries[i]
-			if !bytes.HasPrefix(line, e.prefix) { continue }
+			if !bytes.HasPrefix(line, e.prefix) {
+				continue
+			}
 			rest := bytes.TrimSpace(line[len(e.prefix):])
 			fields := c.splitFieldsBuf(rest)
-			if len(fields) == 0 { break }
+			if len(fields) == 0 {
+				break
+			}
 			v, err := parseUint64(fields[0])
-			if err != nil { break }
+			if err != nil {
+				break
+			}
 			fv := float64(v) * 1024 // kB → bytes
 			switch e.id {
+			case "__mem_total":
+				memTotal = fv
 			case "__swap_total":
-				swapTotal = fv; haveSwapTotal = true
+				swapTotal = fv
+				haveSwapTotal = true
 			case "__swap_free":
-				swapFree = fv; haveSwapFree = true
+				swapFree = fv
+				haveSwapFree = true
 			default:
+				if e.id == "mem.available" {
+					memAvail = fv
+				}
 				*out = append(*out, Sample{MetricID: e.id, TS: now, Value: fv})
 			}
 			break
@@ -519,6 +557,11 @@ func (c *Collector) parseMeminfo(data []byte, now time.Time, out *[]Sample) {
 	}
 	if haveSwapTotal && haveSwapFree {
 		*out = append(*out, Sample{MetricID: "swap.used", TS: now, Value: swapTotal - swapFree})
+	}
+	// 使用率 = 1 - available/total。用 MemAvailable 而不是 MemFree：
+	// page cache 可回收，按 MemFree 算会把一台健康机器报成 95% 已用。
+	if memTotal > 0 && memAvail > 0 {
+		*out = append(*out, Sample{MetricID: "mem.used_pct", TS: now, Value: (1 - memAvail/memTotal) * 100})
 	}
 }
 
@@ -529,12 +572,16 @@ func (c *Collector) parseVmstat(data []byte, now time.Time, dt float64, hasPrev 
 	for len(lines) > 0 {
 		var line []byte
 		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-			line = lines[:i]; lines = lines[i+1:]
+			line = lines[:i]
+			lines = lines[i+1:]
 		} else {
-			line = lines; lines = nil
+			line = lines
+			lines = nil
 		}
 		fields := c.splitFieldsBuf(line)
-		if len(fields) < 2 { continue }
+		if len(fields) < 2 {
+			continue
+		}
 		var metricID string
 		switch {
 		case bytes.Equal(fields[0], []byte("pgfault")):
@@ -545,7 +592,9 @@ func (c *Collector) parseVmstat(data []byte, now time.Time, dt float64, hasPrev 
 			continue
 		}
 		v, err := parseUint64(fields[1])
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		if hasPrev {
 			prev := c.prevGlobal[metricID]
 			if v >= prev {
@@ -568,17 +617,22 @@ func (c *Collector) parseNetSnmp(data []byte, now time.Time, dt float64, hasPrev
 	for len(lines) > 0 && pass < 2 {
 		var line []byte
 		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-			line = lines[:i]; lines = lines[i+1:]
+			line = lines[:i]
+			lines = lines[i+1:]
 		} else {
-			line = lines; lines = nil
+			line = lines
+			lines = nil
 		}
-		if !bytes.HasPrefix(line, []byte("Tcp:")) { continue }
+		if !bytes.HasPrefix(line, []byte("Tcp:")) {
+			continue
+		}
 		fields := c.splitFieldsBuf(line[4:])
 		if pass == 0 {
 			// 找 RetransSegs 列
 			for i, f := range fields {
 				if bytes.Equal(f, []byte("RetransSegs")) {
-					retransIdx = i; break
+					retransIdx = i
+					break
 				}
 			}
 			pass++
@@ -586,7 +640,9 @@ func (c *Collector) parseNetSnmp(data []byte, now time.Time, dt float64, hasPrev
 			// 读值
 			if retransIdx >= 0 && retransIdx < len(fields) {
 				v, err := parseUint64(fields[retransIdx])
-				if err == nil { retransVal = v }
+				if err == nil {
+					retransVal = v
+				}
 			}
 			pass++
 		}
@@ -605,9 +661,9 @@ func (c *Collector) parseNetSnmp(data []byte, now time.Time, dt float64, hasPrev
 // ──────────────────── parsePressure ────────────────────────────
 
 var pressureMetrics = [3]struct{ file, id string }{
-	{"pressure/cpu",    "psi.cpu.some10"},
+	{"pressure/cpu", "psi.cpu.some10"},
 	{"pressure/memory", "psi.mem.some10"},
-	{"pressure/io",     "psi.io.some10"},
+	{"pressure/io", "psi.io.some10"},
 }
 
 func (c *Collector) parsePressure(procRoot string, now time.Time, out *[]Sample) {
@@ -615,9 +671,13 @@ func (c *Collector) parsePressure(procRoot string, now time.Time, out *[]Sample)
 	ntPaths := [3][]byte{c.ntPsiCPU, c.ntPsiMem, c.ntPsiIO}
 	for i, m := range pressureMetrics {
 		data, ok := c.readFileNT(ntPaths[i])
-		if !ok { continue }
+		if !ok {
+			continue
+		}
 		v, ok2 := c.parsePSISome10(data)
-		if !ok2 { continue }
+		if !ok2 {
+			continue
+		}
 		*out = append(*out, Sample{MetricID: m.id, TS: now, Value: v})
 	}
 }
@@ -630,23 +690,29 @@ func (c *Collector) parsePSISome10(data []byte) (float64, bool) {
 	for len(lines) > 0 {
 		var line []byte
 		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-			line = lines[:i]; lines = lines[i+1:]
+			line = lines[:i]
+			lines = lines[i+1:]
 		} else {
-			line = lines; lines = nil
+			line = lines
+			lines = nil
 		}
-		if !bytes.HasPrefix(line, bSomeSp) { continue }
+		if !bytes.HasPrefix(line, bSomeSp) {
+			continue
+		}
 		fields := c.splitFieldsBuf(line)
 		for _, f := range fields {
 			if bytes.HasPrefix(f, bAvg10Eq) {
 				v, ok := parseFloatBytes(f[6:])
-				if ok { return v, true }
+				if ok {
+					return v, true
+				}
 			}
 		}
 	}
 	return 0, false
 }
 
-var bSomeSp  = []byte("some ")
+var bSomeSp = []byte("some ")
 var bAvg10Eq = []byte("avg10=")
 
 // ──────────────────── helpers ──────────────────────────────────
@@ -701,7 +767,9 @@ func parseFloatBytes(b []byte) (float64, bool) {
 	dot := false
 	for _, ch := range b {
 		if ch == '.' {
-			if dot { return 0, false }
+			if dot {
+				return 0, false
+			}
 			dot = true
 		} else if ch >= '0' && ch <= '9' {
 			d := uint64(ch - '0')
@@ -733,18 +801,24 @@ func parseUint64(b []byte) (uint64, error) {
 }
 
 func safeUintDiff(cur, prev uint64) uint64 {
-	if cur >= prev { return cur - prev }
+	if cur >= prev {
+		return cur - prev
+	}
 	return 0
 }
 
 func rateDiff(cur, prev uint64, dt float64) float64 {
-	if cur < prev { return -1 } // signal wrap
+	if cur < prev {
+		return -1
+	} // signal wrap
 	return float64(cur-prev) / dt
 }
 
 func isPartition(name string) bool {
 	// sda1, nvme0n1p1, mmcblk0p1 等
-	if len(name) == 0 { return false }
+	if len(name) == 0 {
+		return false
+	}
 	last := name[len(name)-1]
 	if last >= '0' && last <= '9' {
 		// check for common patterns
@@ -757,3 +831,22 @@ func isPartition(name string) bool {
 var _ = math.NaN
 var _ = sort.Strings
 var _ []string
+
+// conntrackMax 读 nf_conntrack_max（几乎不变，读一次就缓存；不可用时记 -1 不再重试）。
+func (c *Collector) conntrackMax() int64 {
+	if c.ctMax != 0 {
+		return c.ctMax
+	}
+	b, err := os.ReadFile(c.cfg.ProcRoot + "/sys/net/netfilter/nf_conntrack_max")
+	if err != nil {
+		c.ctMax = -1
+		return -1
+	}
+	v, err := parseUint64(bytes.TrimSpace(b))
+	if err != nil || v == 0 {
+		c.ctMax = -1
+		return -1
+	}
+	c.ctMax = int64(v)
+	return c.ctMax
+}

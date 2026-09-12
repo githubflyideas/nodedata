@@ -34,6 +34,9 @@ type FullResult struct {
 	ExitCode   int        `json:"exit_code"`
 }
 
+// minPktsForRatio 是丢包率判定所需的最小分母。
+const minPktsForRatio = 10000
+
 // ── 判定辅助 ────────────────────────────────────────────────────────────
 
 // grade 按 warn/fail 阈值定级；fail 为 0 表示这项最高只到 warn。
@@ -314,8 +317,13 @@ func statfsUsage(dir string) (fsUsage, bool) {
 		return fsUsage{}, false
 	}
 	var u fsUsage
-	if st.Blocks > 0 {
-		u.spacePct = float64(st.Blocks-st.Bavail) / float64(st.Blocks) * 100
+	// 必须用 used/(used+avail)，与 df 同口径。
+	// 旧式 (Blocks-Bavail)/Blocks 把"存在但不可分配"的块也算成已用：
+	// 实测一台 df 显示 52% 的机器被判成 96.4%，L0 直接报 fail、health.txt 变 DOWN —— 纯误报。
+	if used := int64(st.Blocks) - int64(st.Bfree); used >= 0 {
+		if denom := used + int64(st.Bavail); denom > 0 {
+			u.spacePct = float64(used) / float64(denom) * 100
+		}
 	}
 	if st.Files > 0 {
 		u.inodePct = float64(st.Files-st.Ffree) / float64(st.Files) * 100
@@ -651,19 +659,23 @@ func checkNetworkCategory(ctx context.Context) Category {
 			txP, txE, txD = txP+g(9), txE+g(10), txD+g(11)
 		}
 	}
-	if rxP > 0 {
+	// 比率要有意义，分母必须够大。实测一台刚起的机器"6 丢 / 77 收 = 7.79%"就被判 fail，
+	// health.txt 恒为 DOWN —— 而 6 个丢包在任何机器上都不值一提。
+	if rxP >= minPktsForRatio {
 		r := pct(rxE+rxD, rxP)
 		cs = append(cs, judge("N02", "收包错误/丢包", r, 0.01, 0.1,
 			fmt.Sprintf("%.0f 错 + %.0f 丢 / %.0f 收 = %.4f%%", rxE, rxD, rxP, r)))
 	} else {
-		cs = append(cs, skip("N02", "收包错误/丢包", "还没有收包计数"))
+		cs = append(cs, skip("N02", "收包错误/丢包",
+			fmt.Sprintf("收包数 %.0f 不足 %d，比率没有意义", rxP, minPktsForRatio)))
 	}
-	if txP > 0 {
+	if txP >= minPktsForRatio {
 		r := pct(txE+txD, txP)
 		cs = append(cs, judge("N03", "发包错误/丢包", r, 0.01, 0.1,
 			fmt.Sprintf("%.0f 错 + %.0f 丢 / %.0f 发 = %.4f%%", txE, txD, txP, r)))
 	} else {
-		cs = append(cs, skip("N03", "发包错误/丢包", "还没有发包计数"))
+		cs = append(cs, skip("N03", "发包错误/丢包",
+			fmt.Sprintf("发包数 %.0f 不足 %d，比率没有意义", txP, minPktsForRatio)))
 	}
 
 	// N04 TCP 重传率

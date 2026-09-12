@@ -57,6 +57,7 @@ func runServe() {
 	interval := fs.String("interval", "5s", "Collect / check interval")
 	procRoot := fs.String("proc", "/proc", "procfs root")
 	sysRoot := fs.String("sys", "/sys", "sysfs root")
+	rootFS := fs.String("rootfs", "/", "要监控容量的挂载点")
 	dumpEvery := fs.String("dump-interval", "30s", "data/*.json dump interval")
 	webRootFlag := fs.String("web-root", "", "从该目录读 index.html 覆盖内置页面（仅前端开发用）")
 	dataDirFlag := fs.String("data-dir", "data", "数据目录：data/*.json 转储、baseline.json、history/")
@@ -95,7 +96,7 @@ func runServe() {
 
 	// ── L1：/proc 采集 → 内存序列（原始层 24h + 长期层 56 天，长期层落盘）
 	series := NewSeries()
-	col := collector.New(collector.Config{ProcRoot: *procRoot, SysRoot: *sysRoot, Interval: iv})
+	col := collector.New(collector.Config{ProcRoot: *procRoot, SysRoot: *sysRoot, RootFS: *rootFS, Interval: iv})
 	histDir := *historyDirFlag
 	if histDir == "" {
 		histDir = filepath.Join(dataDir, "history")
