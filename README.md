@@ -62,7 +62,8 @@ cgroup v1 的机器（CentOS 7/8 默认）上 `MemoryMax` 不生效，改用 `-p
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--port` | `8888` | 监听 `0.0.0.0:<port>`，无鉴权 —— 页面会显示进程名与 PID，请用防火墙限制来源 |
+| `--listen` | `127.0.0.1` | 监听地址。设为 `0.0.0.0` 前请确认有防火墙或反代鉴权 |
+| `--port` | `8888` | 监听端口 |
 | `--data-dir` | `./data` | 转储 `*.json`、`baseline.json`、`history/` |
 | `--history-dir` | `<data-dir>/history` | 长期层落盘目录 |
 | `--interval` | `5s` | 采集与 L0 巡检周期 |
@@ -117,6 +118,31 @@ CPU 劣化：cpu.user 上升 6.0σ — 责任方 burner（PID 4242）
 - **真实注入**（实验机）：`./faultlab --url http://127.0.0.1:8888 --scenarios cpu,io,mem`，
   nodedata 需先运行约 10 分钟。网卡丢包：`sudo ./faultlab --scenarios net --iface eth0`（需要 tc 和该口上的 TCP 流量）。
 
+## 给监控系统的接口
+
+`GET /health.txt` 一行文本，关键字打头，主机名在同一行：
+
+```
+NODEDATA host=jp02-dns-01 status=WARN cpu=182% load=9.14 mem_avail=1.2GiB disk_util=96 \
+  culprit=fl-io/236 reason="IO 劣化：disk.await_w 上升 6.0σ" ts=2026-09-12T03:10:51Z
+```
+
+```bash
+curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' || 告警
+```
+
+`status` 取 L0 绝对判定与 L4 归因结论中较严重者：`DOWN`（L0 有 fail）、
+`WARN`（L0 有 warn，或 L4 给出了带责任方的结论）、`NORMAL`。异常时 `reason=` 说明原因，
+`culprit=` 直接给出进程名/PID，派单时不用再登机器。
+自由文本里的 `NODEDATA`、`status=`、换行与引号都会被中和 —— 进程名是攻击者可控的，
+否则一个叫 `NODEDATA status=NORMAL` 的进程就能让监控的 grep 在真告警时匹配成功。
+
+## 监听与访问控制
+
+默认只监听 `127.0.0.1`。页面会列出进程名、PID 与主机负载水位，是内网侦察的现成材料，
+所以要给别人看必须显式 `--listen 0.0.0.0`，并自行用防火墙限制来源或放在带鉴权的反代之后
+（程序本身不做鉴权）。绑非回环地址时启动会打印一行警告。
+
 ## API
 
 | 路径 | 说明 |
@@ -126,6 +152,7 @@ CPU 劣化：cpu.user 上升 6.0σ — 责任方 burner（PID 4242）
 | `/data/health.json` | 采集器自检，含 `self.cpu_pct`、`self.rss_mb` |
 | `/api/check` | L0 绝对判定 |
 | `/api/diagnosis?z=3` | L4 诊断链 |
+| `/health.txt` | 一行文本，给监控 grep |
 | `/api/baseline` | GET / POST / DELETE 人工基线 |
 | `/api/incidents` | GET 留证列表；POST 立即留证 |
 | `/api/incidents/<id>` | 一份证据 |

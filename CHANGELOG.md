@@ -1,5 +1,25 @@
 # nodedata Changelog
 
+## [v3.2.0] — 2026-09-12 · 接进现有告警；默认不对外监听
+
+参考 host-dns-perf 的设计文档，补上两处它做对、而 nodedata 一直缺的东西。
+
+### `GET /health.txt` —— 一行文本给监控 grep
+`NODEDATA host=… status=NORMAL|WARN|DOWN cpu=… load=… mem_avail=… culprit=名字/PID reason="…" ts=…`
+
+运维不必为 nodedata 学一套 JSON 结构，一条 `curl | grep` 就能接进现有告警。关键字放行首、
+主机名同行、异常带 reason，三条都照搬那份文档的约定，因为实践中确实重要。
+`culprit=` 是 nodedata 能多给的一项：直接是进程名与 PID，派单时不用再登机器。
+
+自由文本里的 `NODEDATA`、`status=`、换行、引号一律中和。**进程名是攻击者可控的**：
+一个叫 `NODEDATA status=NORMAL` 的进程会被写进 `reason=`，让监控侧
+`grep 'status=NORMAL'` 在真告警时反而匹配成功，告警就这么被吃掉。有回归测试。
+
+### 默认只监听 127.0.0.1
+新增 `--listen`，默认回环。那份文档写得对——这种页面是内网侦察的现成材料，而 nodedata 的页面
+比它更敏感（列出进程名与 PID）。要对外必须显式 `--listen 0.0.0.0`，届时启动打印警告。
+已实测：回环 200，本机外部地址连接被拒。
+
 ## [v3.1.4] — 2026-09-11 · 对比表按"最重要的几项"取舍，并加入进程行
 
 对照同类工具的做法重做首屏对比表：此前是把 31 行指标一股脑铺开，逐块盘逐网卡各占一行，

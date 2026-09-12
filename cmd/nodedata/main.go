@@ -51,6 +51,9 @@ L0 绝对判定在 serve 里每个采集周期跑一次，结果在首页和 /ap
 func runServe() {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	port := fs.String("port", "8888", "HTTP server port")
+	// 默认只监听回环：页面会列出进程名、PID、主机负载水位，是内网侦察的现成材料。
+	// 要给别人看就显式 --listen 0.0.0.0，并自己在防火墙/反代上加访问控制。
+	listen := fs.String("listen", "127.0.0.1", "监听地址；默认仅本机。设为 0.0.0.0 前请确认有防火墙或反代鉴权")
 	interval := fs.String("interval", "5s", "Collect / check interval")
 	procRoot := fs.String("proc", "/proc", "procfs root")
 	sysRoot := fs.String("sys", "/sys", "sysfs root")
@@ -203,6 +206,15 @@ func runServe() {
 			},
 		})
 
+	hostname, _ := os.Hostname()
+	mux.HandleFunc("/health.txt", func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		l0 := diagnoser.loadL0()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		fmt.Fprint(w, healthLine(hostname, l0, diagnoser.Run(3.0), builder.healthValues(now), now))
+	})
+
 	mux.HandleFunc("/api/compare", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, builder.Compare(time.Now()))
 	})
@@ -248,7 +260,10 @@ func runServe() {
 		dumpState = "off (serving live)"
 	}
 	fmt.Printf("nodedata %s\n", version)
-	fmt.Printf("  listen        http://localhost:%s/\n", *port)
+	fmt.Printf("  listen        http://%s:%s/\n", *listen, *port)
+	if *listen == "0.0.0.0" || *listen == "::" {
+		fmt.Fprintf(os.Stderr, "warn: 监听在 %s，页面无鉴权且会显示进程名与 PID —— 请用防火墙限制来源，或放在带鉴权的反代之后\n", *listen)
+	}
 	if webDir != "" {
 		fmt.Printf("  web root      %s（覆盖内置页面）\n", webDir)
 	}
@@ -260,7 +275,7 @@ func runServe() {
 	fmt.Printf("  metrics       %d series, %d points buffered\n",
 		len(series.MetricIDs()), series.Count())
 
-	if err := server.ListenAndServe("0.0.0.0:"+*port, mux); err != nil {
+	if err := server.ListenAndServe(*listen+":"+*port, mux); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
