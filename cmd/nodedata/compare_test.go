@@ -2,6 +2,7 @@ package main
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,15 @@ func TestCompare(t *testing.T) {
 	// sdc 一直空闲：不该占行
 	for ts := now.Add(-2 * time.Hour); !ts.After(now); ts = ts.Add(5 * time.Second) {
 		s.Add([]collector.Sample{{MetricID: "disk.util@sdc", TS: ts, Value: 0}})
+	}
+	// 进程序列：java 占 6GiB、mysqld 占 1GiB
+	for ts := now.Add(-24 * time.Hour); !ts.After(now); ts = ts.Add(5 * time.Second) {
+		s.Add([]collector.Sample{
+			{MetricID: "proc.rss.java", TS: ts, Value: 6 << 30},
+			{MetricID: "proc.cpu.java", TS: ts, Value: 40},
+			{MetricID: "proc.rss.mysqld", TS: ts, Value: 1 << 30},
+			{MetricID: "proc.cpu.__others__", TS: ts, Value: 3},
+		})
 	}
 	c := NewHeatmapBuilder(s).Compare(now)
 	rows := map[string]cmpRow{}
@@ -61,5 +71,41 @@ func TestCompare(t *testing.T) {
 	}
 	if len(c.Cols) != 6 || c.Cols[0] != "1h" || c.Cols[5] != "7d" {
 		t.Fatalf("cols = %v", c.Cols)
+	}
+	// 进程组：内存大的在前，__others__ 不当成进程
+	var pg *cmpGroup
+	for i := range c.Groups {
+		if c.Groups[i].Name == "进程" {
+			pg = &c.Groups[i]
+		}
+	}
+	if pg == nil || pg.Rows[0].Label != "java 内存" || pg.Rows[1].Label != "java CPU" {
+		t.Fatalf("process group = %+v", pg)
+	}
+	for _, r := range pg.Rows {
+		if strings.Contains(r.Label, "__others__") {
+			t.Fatalf("__others__ must not appear as a process")
+		}
+	}
+	// 默认只显示核心行；其余归入"更多指标"
+	nCore, nMore := 0, 0
+	for _, g := range c.Groups {
+		for _, r := range g.Rows {
+			if r.Core {
+				nCore++
+			} else {
+				nMore++
+			}
+		}
+	}
+	if nCore == 0 || nMore == 0 || nCore > 20 {
+		t.Fatalf("core=%d more=%d：默认行数要少而关键", nCore, nMore)
+	}
+	for _, g := range c.Groups {
+		for _, r := range g.Rows {
+			if strings.Contains(r.ID, "@") && r.Core {
+				t.Fatalf("逐设备行不应默认显示: %s", r.Label)
+			}
+		}
 	}
 }

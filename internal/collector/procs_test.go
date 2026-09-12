@@ -191,11 +191,19 @@ func TestProcIOMemState(t *testing.T) {
 	}
 
 	// 跨过 5 分钟格三次，java RSS 100MB → 400MB：1 小时增长窗口里 +300MB
+	var lastSamples map[string]float64
 	for i, rss := range []uint64{200, 300, 400} {
 		now := t0.Add(time.Duration(i+1) * rssRingStep)
 		writeStatFull(t, root, 301, "java", 'S', 500, 102+uint64(i), 11, rss*mb/pg)
 		writeStatFull(t, root, 300, "rsync", 'S', 0, 102+uint64(i), 10, 1000)
-		mustCollect(t, c, root, now)
+		lastSamples = samplesMap(mustCollect(t, c, root, now))
+	}
+	// 进程内存也要有序列（对比表里的"某进程内存 vs 1d 前"靠它）
+	if got := lastSamples["proc.rss.java"]; got != float64(400*mb) {
+		t.Fatalf("proc.rss.java = %v, want 400MiB", got)
+	}
+	if _, ok := lastSamples["proc.rss.rsync"]; !ok {
+		t.Fatalf("进程数少于上限时，小进程也该有 RSS 序列（小机器上最大的进程也可能很小）")
 	}
 	top, _ = c.TopProcs()
 	for _, p := range top {

@@ -23,6 +23,7 @@ var compareCols = []struct {
 
 type cmpRow struct {
 	Label string     `json:"label"`
+	Core  bool       `json:"core"` // 默认显示；其余收在"更多指标"里
 	Unit  string     `json:"unit"`
 	Now   *float64   `json:"now"`
 	Past  []*float64 `json:"past"`
@@ -45,17 +46,23 @@ type CompareJSON struct {
 type cmpDef struct {
 	label, unit string
 	bad         int
+	core        bool
 	ids         []string
 	f           func(v []float64) float64
 }
 
+// one 是"更多指标"里的一行；core 是默认显示的关键行。
 func one(label, unit string, bad int, id string) cmpDef {
 	return cmpDef{label: label, unit: unit, bad: bad, ids: []string{id}}
 }
 
-func perCPU(label string, ids ...string) cmpDef {
+func core(label, unit string, bad int, id string) cmpDef {
+	return cmpDef{label: label, unit: unit, bad: bad, core: true, ids: []string{id}}
+}
+
+func perCPU(label string, isCore bool, ids ...string) cmpDef {
 	n := float64(runtime.NumCPU())
-	return cmpDef{label: label, unit: "percent", bad: 1, ids: ids, f: func(v []float64) float64 {
+	return cmpDef{label: label, unit: "percent", bad: 1, core: isCore, ids: ids, f: func(v []float64) float64 {
 		s := 0.0
 		for _, x := range v {
 			s += x
@@ -69,46 +76,111 @@ var compareDefs = []struct {
 	rows []cmpDef
 }{
 	{"CPU", []cmpDef{
-		perCPU("CPU 忙碌 %", "cpu.user", "cpu.sys", "cpu.softirq"),
-		perCPU("iowait %", "cpu.iowait"),
-		perCPU("steal %（虚机被宿主机抢占）", "cpu.steal"),
-		one("1 分钟负载", "load", 1, "loadavg.1m"),
+		perCPU("CPU 忙碌 %", true, "cpu.user", "cpu.sys", "cpu.softirq"),
+		core("1 分钟负载", "load", 1, "loadavg.1m"),
+		perCPU("iowait %", true, "cpu.iowait"),
+		perCPU("steal %（虚机被宿主机抢占）", true, "cpu.steal"),
+		perCPU("软中断 %", false, "cpu.softirq"),
 		one("运行队列", "count", 1, "procs_running"),
 		one("CPU 压力 PSI %", "percent", 1, "psi.cpu.some10"),
 		one("上下文切换/秒", "/s", 0, "ctxt"),
 		one("中断/秒", "/s", 0, "intr"),
 	}},
 	{"内存", []cmpDef{
-		one("可用内存", "bytes", -1, "mem.available"),
+		core("可用内存", "bytes", -1, "mem.available"),
+		core("swap 使用", "bytes", 1, "swap.used"),
+		core("内核 slab", "bytes", 1, "slab"),
 		one("页缓存", "bytes", 0, "mem.cached"),
 		one("脏页", "bytes", 1, "mem.dirty"),
-		one("内核 slab", "bytes", 1, "slab"),
-		one("swap 使用", "bytes", 1, "swap.used"),
 		one("内存压力 PSI %", "percent", 1, "psi.mem.some10"),
 		one("主缺页/秒", "/s", 1, "pgmajfault"),
 	}},
 	{"磁盘", []cmpDef{
-		one("最忙盘 util %", "percent", 1, "disk.util"),
-		one("读延迟", "ms", 1, "disk.await_r"),
-		one("写延迟", "ms", 1, "disk.await_w"),
+		core("最忙盘 util %", "percent", 1, "disk.util"),
+		core("写延迟", "ms", 1, "disk.await_w"),
+		core("读延迟", "ms", 1, "disk.await_r"),
+		core("D 状态进程（卡在 IO）", "count", 1, "procs_blocked"),
 		one("读 IOPS", "/s", 0, "disk.riops"),
 		one("写 IOPS", "/s", 0, "disk.wiops"),
 		one("读吞吐", "bytes/s", 0, "disk.rbytes"),
 		one("写吞吐", "bytes/s", 0, "disk.wbytes"),
 		one("IO 压力 PSI %", "percent", 1, "psi.io.some10"),
-		one("D 状态进程", "count", 1, "procs_blocked"),
 	}},
 	{"网络", []cmpDef{
-		one("网卡入向", "bytes/s", 0, "net.rx"),
-		one("网卡出向", "bytes/s", 0, "net.tx"),
+		core("网卡入向", "bytes/s", 0, "net.rx"),
+		core("网卡出向", "bytes/s", 0, "net.tx"),
+		core("收丢包/秒", "/s", 1, "net.rx_drop"),
+		core("TCP 重传/秒", "/s", 1, "tcp.retrans"),
 		one("收包/秒", "/s", 0, "net.rx_pps"),
 		one("发包/秒", "/s", 0, "net.tx_pps"),
-		one("收丢包/秒", "/s", 1, "net.rx_drop"),
 		one("发丢包/秒", "/s", 1, "net.tx_drop"),
-		one("TCP 重传/秒", "/s", 1, "tcp.retrans"),
 		one("conntrack 条目", "count", 1, "conntrack"),
 	}},
 }
+
+// procRows 生成"进程"组：占用最高的几个进程，各给 CPU 与内存两行。
+// 这是对比表里最该有的东西 —— "DNS 进程内存比昨天多了 5 倍"比任何整机指标都直接。
+func (b *HeatmapBuilder) procRows(now time.Time, ids []string) []cmpDef {
+	type cand struct {
+		key string
+		rss float64
+		cpu float64
+	}
+	byKey := map[string]*cand{}
+	get := func(k string) *cand {
+		if c, ok := byKey[k]; ok {
+			return c
+		}
+		c := &cand{key: k}
+		byKey[k] = c
+		return c
+	}
+	last := func(id string) float64 {
+		if p, ok := b.series.Last(id); ok && now.Sub(p.TS) <= 2*time.Minute {
+			return p.V
+		}
+		return 0
+	}
+	for _, id := range ids {
+		switch {
+		case strings.HasPrefix(id, "proc.rss."):
+			get(strings.TrimPrefix(id, "proc.rss.")).rss = last(id)
+		case strings.HasPrefix(id, "proc.cpu."):
+			if k := strings.TrimPrefix(id, "proc.cpu."); k != "__others__" {
+				get(k).cpu = last(id)
+			}
+		}
+	}
+	cs := make([]*cand, 0, len(byKey))
+	for _, c := range byKey {
+		if c.rss > 0 || c.cpu > 0 {
+			cs = append(cs, c)
+		}
+	}
+	// 内存大的优先（泄漏是主要场景），同级按 CPU
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].rss != cs[j].rss {
+			return cs[i].rss > cs[j].rss
+		}
+		return cs[i].cpu > cs[j].cpu
+	})
+	if len(cs) > procCmpTop {
+		cs = cs[:procCmpTop]
+	}
+	var out []cmpDef
+	for _, c := range cs {
+		if c.rss > 0 {
+			out = append(out, core(c.key+" 内存", "bytes", 1, "proc.rss."+c.key))
+		}
+		if c.cpu > 0 {
+			out = append(out, core(c.key+" CPU", "percent", 1, "proc.cpu."+c.key))
+		}
+	}
+	return out
+}
+
+// procCmpTop 对比表里最多列几个进程。
+const procCmpTop = 5
 
 // lookupTol：历史值的时间容差，约为回看时长的 1%，夹在 30 秒到 10 分钟之间。
 func lookupTol(ago time.Duration) time.Duration {
@@ -172,7 +244,18 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 		}
 		return rows
 	}
-	for _, g := range compareDefs {
+	groups := make([]struct {
+		name string
+		rows []cmpDef
+	}, len(compareDefs))
+	copy(groups, compareDefs)
+	if pr := b.procRows(now, ids); len(pr) > 0 {
+		groups = append(groups, struct {
+			name string
+			rows []cmpDef
+		}{"进程", pr})
+	}
+	for _, g := range groups {
 		defs := g.rows
 		switch g.name {
 		case "磁盘":
@@ -185,7 +268,7 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 		}
 		grp := cmpGroup{Name: g.name}
 		for _, d := range defs {
-			row := cmpRow{Label: d.label, Unit: d.unit, Bad: d.bad, ID: strings.Join(d.ids, "+")}
+			row := cmpRow{Label: d.label, Unit: d.unit, Bad: d.bad, Core: d.core, ID: strings.Join(d.ids, "+")}
 			if row.Now = b.valueAt(d, now, 0, true); row.Now == nil {
 				continue // 这台机器没有这项（比如没有 PSI、没有 conntrack）：整行不显示
 			}

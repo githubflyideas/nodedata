@@ -132,8 +132,10 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 <section>
   <h2>关键指标对比<span class="layer">当前值与 1h / 6h / 12h / 1d / 3d / 7d 前同一时刻的值</span></h2>
   <div class="sub">箭头与百分比 = 现在相对那个时刻的变化；红色 = 往坏的方向变了 20% 以上；"—" = 那个时刻还没有数据（不当作 0）。
+    默认只列每类最关键的几项与占用最高的进程；逐块盘、逐网卡等在"显示全部指标"里。
     变化是否超出这个时段平时的波动、谁造成的，看下面的偏离度与诊断链。</div>
   <div id="cmpgroups"><p class="empty">加载中…</p></div>
+  <button class="cmd" id="cmpall" style="cursor:pointer;margin-top:8px" onclick="toggleCmpAll(this)">显示全部指标</button>
 </section>
 
 <section>
@@ -490,18 +492,28 @@ function cmpCell(r,p){
   }
   return v+" "+ch;
 }
+var cmpAll=false;
+function cmpTable(cols,rows){
+  return '<div class="tbl-wrap"><table class="cmp"><thead><tr><th>指标</th><th class="num">当前</th>'+
+    cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
+    rows.map(function(r){
+      return '<tr title="'+esc(r.id)+'"><td>'+esc(r.label)+'</td><td class="num cmp-now">'+esc(fmt(r.now,r.unit))+'</td>'+
+        r.past.map(function(p){return '<td class="num">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
+    }).join("")+'</tbody></table></div>';
+}
+function toggleCmpAll(btn){ cmpAll=!cmpAll; btn.textContent=cmpAll?"只看关键指标":"显示全部指标"; loadCompare(); }
 async function loadCompare(){
   var el=document.getElementById("cmpgroups"), d;
   try{ d=(await getJSON("/api/compare")).json; }
   catch(e){ el.innerHTML='<p class="empty">对比数据不可用：'+esc(e.message)+'</p>'; return; }
+  var n=0;
   el.innerHTML=(d.groups||[]).map(function(g){
-    return '<h3 class="cmp-h">'+esc(g.name)+'</h3><div class="tbl-wrap"><table class="cmp"><thead><tr><th>指标</th><th class="num">当前</th>'+
-      d.cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
-      g.rows.map(function(r){
-        return '<tr title="'+esc(r.id)+'"><td>'+esc(r.label)+'</td><td class="num cmp-now">'+esc(fmt(r.now,r.unit))+'</td>'+
-          r.past.map(function(p){return '<td class="num">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
-      }).join("")+'</tbody></table></div>';
+    var rows=g.rows.filter(function(r){return cmpAll||r.core;});
+    if(!rows.length) return "";
+    n+=rows.length;
+    return '<h3 class="cmp-h">'+esc(g.name)+'</h3>'+cmpTable(d.cols,rows);
   }).join("")||'<p class="empty">还没有数据。</p>';
+  var b=document.getElementById("cmpall"); if(b) b.textContent=cmpAll?"只看关键指标":"显示全部指标";
 }
 
 async function loadIncidents(){

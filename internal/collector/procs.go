@@ -44,6 +44,10 @@ const (
 	procTrackMax = 32
 	// procTrackMinIO：某个名字的块设备读写达到 1MiB/s 才为它建 proc.io.<名字> 序列。
 	procTrackMinIO = 1 << 20
+	// procRSSTop：为本轮内存占用最高的这么多个名字建 proc.rss.<名字> 序列。
+	// 用相对排名而不是绝对阈值：小机器上最大的进程可能只有 30MiB，用绝对阈值就一个进程行都没有。
+	// 内存泄漏是"几小时慢慢涨"，只有进程内存也有历史，才能在对比表里看出"比昨天多了多少"。
+	procRSSTop = 8
 	// rssRingSlots × rssRingStep = RSS 增长的回看窗口（1 小时）。
 	rssRingSlots = 12
 	rssRingStep  = 5 * time.Minute
@@ -81,13 +85,14 @@ type procPrev struct {
 }
 
 type procState struct {
-	prev      map[int]procPrev
-	gen       uint32
-	prevTS    time.Time
-	tracked   map[string]time.Time // proc.cpu.<名字>：名字 → 最近一次活跃时间
-	trackedIO map[string]time.Time // proc.io.<名字>
-	ringSlot  int64                // 当前 RSS 环所在的 5 分钟格
-	selfPID   int
+	prev       map[int]procPrev
+	gen        uint32
+	prevTS     time.Time
+	tracked    map[string]time.Time // proc.cpu.<名字>：名字 → 最近一次活跃时间
+	trackedIO  map[string]time.Time // proc.io.<名字>
+	trackedRSS map[string]time.Time // proc.rss.<名字>
+	ringSlot   int64                // 当前 RSS 环所在的 5 分钟格
+	selfPID    int
 
 	topMu   sync.Mutex
 	top     []ProcTop
@@ -103,6 +108,7 @@ func (p *procState) init() {
 		p.prev = make(map[int]procPrev, 1024)
 		p.tracked = make(map[string]time.Time, procTrackMax)
 		p.trackedIO = make(map[string]time.Time, procTrackMax)
+		p.trackedRSS = make(map[string]time.Time, procTrackMax)
 		p.selfPID = os.Getpid()
 	}
 }
@@ -210,6 +216,7 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		all      []ProcTop
 		byKey    = make(map[string]float64, 64)
 		byKeyIO  = make(map[string]float64, 64)
+		byKeyRSS = make(map[string]float64, 64)
 		total    float64
 		scanned  int32
 		skipped  int32
@@ -262,6 +269,7 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		key := ProcKey(ps.comm)
 		total += pct
 		byKey[key] += pct
+		byKeyRSS[key] += float64(ps.rss) // 同名多进程（php-fpm、nginx worker）合计
 		t := ProcTop{PID: pid, Comm: ps.comm, Key: key, CPU: pct, RSS: ps.rss,
 			State: string(ps.state), MajFlt: udiff(ps.majflt, prev.majflt) / dt}
 		if cur.ioOK && prev.ioOK {
@@ -305,6 +313,7 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		}
 		out = append(out, Sample{MetricID: "proc.cpu.__others__", TS: now, Value: other})
 		emitTracked(p.trackedIO, byKeyIO, procTrackMinIO, "proc.io.", now, &out)
+		emitTracked(p.trackedRSS, topByValue(byKeyRSS, procRSSTop), 0, "proc.rss.", now, &out)
 	}
 
 	p.topMu.Lock()
@@ -391,5 +400,27 @@ func pickSnapshot(all []ProcTop) []ProcTop {
 	take(func(a, b ProcTop) bool { return a.RSS > b.RSS }, 5, func(t ProcTop) bool { return t.RSS > 0 })
 	take(func(a, b ProcTop) bool { return a.PID < b.PID }, ProcTopN, func(t ProcTop) bool { return t.State == "D" })
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CPU > out[j].CPU })
+	return out
+}
+
+// topByValue 返回值最大的 n 个键（其余丢弃）。用于把 RSS 序列限制在占用最高的几个进程上。
+func topByValue(m map[string]float64, n int) map[string]float64 {
+	if len(m) <= n {
+		return m
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if m[keys[i]] != m[keys[j]] {
+			return m[keys[i]] > m[keys[j]]
+		}
+		return keys[i] < keys[j] // 同值时稳定，避免序列集合每轮抖动
+	})
+	out := make(map[string]float64, n)
+	for _, k := range keys[:n] {
+		out[k] = m[k]
+	}
 	return out
 }
