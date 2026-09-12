@@ -80,6 +80,13 @@ th.sorted .ar{opacity:1}
 .cmd:hover{background:#e3e7ee}
 h3.procs-h{margin:18px 0 6px;font-size:13px;font-weight:600}
 h3.cmp-h{margin:14px 0 6px;font-size:14px;font-weight:600}
+h2 .fold{appearance:none;border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer;
+  font:inherit;font-size:11.5px;color:var(--dim);padding:1px 8px;margin-left:10px;font-weight:400}
+h2 .fold:hover{color:#1d4ed8;border-color:#1d4ed8}
+table[data-sid] thead th{cursor:pointer;user-select:none;white-space:nowrap}
+table[data-sid] thead th:hover{color:var(--fg,#1f2937)}
+table[data-sid] thead th .ar{display:inline-block;width:10px;margin-left:2px;opacity:.35;font-weight:400}
+table[data-sid] thead th.sorted .ar{opacity:1}
 .chartgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
 .chartbox{border:1px solid var(--line);border-radius:6px;padding:8px 10px 4px;background:#fff}
 .chartbox h4{margin:0 0 2px;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;align-items:baseline}
@@ -155,16 +162,19 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   </div>
 </header>
 <section>
-  <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span></h2>
+  <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span>
+    <button class="fold" id="l0fold" onclick="toggleL0()">折叠</button></h2>
   <div class="sub"><span id="l0sum">—</span>
     <label class="only"><input type="checkbox" id="l0only"> 只看异常项</label></div>
-  <div class="sub baseline">
-    <span id="blinfo">累计型计数器（conntrack 丢弃、listen 溢出、OOM、内核 taint）只判增量。</span>
-    <button id="blset" onclick="setBaseline()">把当前状态设为基线</button>
-    <button id="blclear" onclick="clearBaseline()" hidden>清除基线</button>
+  <div id="l0body">
+    <div class="sub baseline">
+      <span id="blinfo">累计型计数器（conntrack 丢弃、listen 溢出、OOM、内核 taint）只判增量。</span>
+      <button id="blset" onclick="setBaseline()">把当前状态设为基线</button>
+      <button id="blclear" onclick="clearBaseline()" hidden>清除基线</button>
+    </div>
+    <div id="l0err"></div>
+    <div><div class="cats" id="cats"><div class="empty">加载中…</div></div></div>
   </div>
-  <div id="l0err"></div>
-  <div><div class="cats" id="cats"><div class="empty">加载中…</div></div></div>
 </section>
 
 <div class="panetabs" id="panetabs">
@@ -237,7 +247,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   <div id="l3err"></div>
   <div class="tbl-wrap"><table id="l3tbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
   <h3 class="procs-h">此刻谁在用资源<span id="procsub">CPU 前 10 ∪ 读写前 10 ∪ RSS 增长前 5 ∪ RSS 最大前 5 ∪ D 状态 ∪ nodedata 自身。CPU 以"占一个核的百分比"计，读写为块设备口径。点命令即复制。</span></h3>
-  <div class="tbl-wrap"><table id="procstbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
+  <div class="tbl-wrap"><table id="procstbl" data-sid="procs"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
 </section>
 
 </div>
@@ -257,7 +267,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </div>
 <script>
 "use strict";
-var state={pane:"key",kwin:"6h",tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
+var state={pane:"key",kwin:"6h",l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9,10,11,12,13];     // L5..L14 : 5400s .. 28d
 var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
@@ -502,14 +512,17 @@ function renderProcs(){
   el.innerHTML='<thead><tr><th class="num">PID</th><th>进程</th><th class="mid">状态</th><th class="num">CPU</th>'+
     '<th class="num">读</th><th class="num">写</th><th class="num">RSS</th><th class="num">RSS 增长</th><th class="num">主缺页</th><th>下一步</th></tr></thead><tbody>'+
     ps.map(function(p){
-      return '<tr><td class="num">'+p.pid+'</td><td class="mid-id">'+esc(p.comm)+
+      return '<tr><td class="num" data-sort="'+p.pid+'">'+p.pid+'</td><td class="mid-id">'+esc(p.comm)+
         (p.self?'<span class="self-tag">nodedata 自身</span>':"")+'</td>'+
         '<td class="mid">'+esc(p.state||"")+'</td>'+
-        '<td class="num">'+p.cpu.toFixed(1)+' %</td>'+
-        '<td class="num">'+(p.read_bps?fmt(p.read_bps,"bytes/s"):"—")+'</td>'+
-        '<td class="num">'+(p.write_bps?fmt(p.write_bps,"bytes/s"):"—")+'</td>'+
-        '<td class="num">'+esc(fmt(p.rss,"bytes"))+'</td><td class="num">'+growth(p)+'</td>'+
-        '<td class="num">'+(p.majflt?p.majflt.toFixed(0)+" /s":"—")+'</td><td>'+cmdButtons(cmds(p))+'</td></tr>';}).join("")+'</tbody>';
+        '<td class="num" data-sort="'+p.cpu+'">'+p.cpu.toFixed(1)+' %</td>'+
+        '<td class="num" data-sort="'+(p.read_bps||"")+'">'+(p.read_bps?fmt(p.read_bps,"bytes/s"):"—")+'</td>'+
+        '<td class="num" data-sort="'+(p.write_bps||"")+'">'+(p.write_bps?fmt(p.write_bps,"bytes/s"):"—")+'</td>'+
+        '<td class="num" data-sort="'+p.rss+'">'+esc(fmt(p.rss,"bytes"))+'</td>'+
+        '<td class="num" data-sort="'+(p.growth_span?p.rss_growth:"")+'">'+growth(p)+'</td>'+
+        '<td class="num" data-sort="'+(p.majflt||"")+'">'+(p.majflt?p.majflt.toFixed(0)+" /s":"—")+'</td>'+
+        '<td>'+cmdButtons(cmds(p))+'</td></tr>';}).join("")+'</tbody>';
+  applySort(el);
 }
 
 /* ================= L4 ================= */
@@ -555,6 +568,62 @@ function cmpCell(r,p){
   }
   return v+" "+ch;
 }
+/* ================= 通用表格排序 =================
+   任何带 data-sid 的表格都可点表头排序。状态按 sid 记住，
+   20 秒自动刷新后排序保持——否则每次刷新都跳回原序，等于没有排序。
+   数值列在渲染时写 data-sort 原始值：单元格里是 "2.40 KiB/s"、"1 天 0 小时" 这类
+   格式化文本，按文本排会得出 "9 > 10" 这种错误顺序。*/
+var SORT={};
+function cellKey(tr,i){
+  var td=tr.children[i]; if(!td) return null;
+  var ds=td.getAttribute("data-sort");
+  if(ds!==null&&ds!==""){ var n=parseFloat(ds); return isNaN(n)?ds:n; }
+  var t=td.textContent.trim();
+  return (t===""||t==="—"||t==="?")?null:t;
+}
+function applySort(tb){
+  var sid=tb.getAttribute("data-sid"), st=SORT[sid]; if(!st) return;
+  var body=tb.tBodies[0]; if(!body) return;
+  var rows=[].slice.call(body.rows);
+  rows.sort(function(a,b){
+    var A=cellKey(a,st.i),B=cellKey(b,st.i);
+    if(A===null&&B===null) return 0;
+    if(A===null) return 1;              // 空值永远垫底，不管升降
+    if(B===null) return -1;
+    if(typeof A==="number"&&typeof B==="number") return (A-B)*st.dir;
+    return String(A).localeCompare(String(B))*st.dir;
+  });
+  rows.forEach(function(r){body.appendChild(r);});
+  var ths=tb.tHead?tb.tHead.rows[0].children:[];
+  [].forEach.call(ths,function(th,i){
+    th.classList.toggle("sorted",i===st.i);
+    var ar=th.querySelector(".ar");
+    if(!ar){ ar=document.createElement("span"); ar.className="ar"; th.appendChild(ar); }
+    ar.textContent = i===st.i ? (st.dir<0?"▼":"▲") : "↕";
+  });
+}
+function applySortAll(){ [].forEach.call(document.querySelectorAll("table[data-sid]"),applySort); }
+document.addEventListener("click",function(e){
+  var th=e.target.closest&&e.target.closest("table[data-sid] thead th"); if(!th) return;
+  var tb=th.closest("table"), sid=tb.getAttribute("data-sid");
+  var i=[].indexOf.call(th.parentNode.children,th);
+  if(SORT[sid]&&SORT[sid].i===i) SORT[sid].dir=-SORT[sid].dir;
+  else{
+    // 首次点某列：数值列先降序（先看最大的），文本列先升序
+    var first=null, rows=tb.tBodies[0]?tb.tBodies[0].rows:[];
+    for(var k=0;k<rows.length&&first===null;k++) first=cellKey(rows[k],i);
+    SORT[sid]={i:i,dir:(typeof first==="number")?-1:1};
+  }
+  applySort(tb);
+});
+
+function toggleL0(){
+  var body=document.getElementById("l0body"), btn=document.getElementById("l0fold");
+  state.l0fold=!state.l0fold;
+  body.hidden=state.l0fold;
+  btn.textContent=state.l0fold?"展开":"折叠";
+}
+
 /* ================= 关键指标 / OS 指标 ================= */
 function cmpCell(r,p){
   if(p==null) return '<span class="na-dash">—</span>';
@@ -573,20 +642,22 @@ function cmpCell(r,p){
   }
   return v+" "+ch;
 }
-function cmpTable(cols,rows){
-  return '<div class="tbl-wrap"><table class="cmp"><thead><tr><th>指标</th><th class="num">当前</th>'+
+function cmpTable(sid,cols,rows){
+  return '<div class="tbl-wrap"><table class="cmp" data-sid="'+esc(sid)+'"><thead><tr><th>指标</th><th class="num">当前</th>'+
     cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
     rows.map(function(r){
-      return '<tr title="'+esc(r.id)+'"><td>'+esc(r.label)+'</td><td class="num cmp-now">'+esc(fmt(r.now,r.unit))+'</td>'+
-        r.past.map(function(p){return '<td class="num">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
+      return '<tr title="'+esc(r.id)+'"><td data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
+        '<td class="num cmp-now" data-sort="'+r.now+'">'+esc(fmt(r.now,r.unit))+'</td>'+
+        r.past.map(function(p){return '<td class="num" data-sort="'+(p===null?"":p)+'">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
     }).join("")+'</tbody></table></div>';
 }
 function cmpRender(el,d,coreOnly){
   el.innerHTML=(d.groups||[]).map(function(g){
     var rows=coreOnly?g.rows.filter(function(r){return r.core;}):g.rows;
     if(!rows.length) return "";
-    return '<h3 class="cmp-h">'+esc(g.name)+'</h3>'+cmpTable(d.cols,rows);
+    return '<h3 class="cmp-h">'+esc(g.name)+'</h3>'+cmpTable("cmp:"+g.name,d.cols,rows);
   }).join("")||'<p class="empty">还没有数据。</p>';
+  applySortAll();
 }
 async function loadCompare(){
   var all=document.getElementById("cmpall"), d;
@@ -700,21 +771,27 @@ async function loadServices(){
   try{ d=(await getJSON("/api/services")).json; }
   catch(e){ el.innerHTML='<p class="empty">服务数据不可用：'+esc(e.message)+'</p>'; return; }
   if(!d.rows||!d.rows.length){ el.innerHTML='<p class="empty">还没有识别到服务（启动后一分钟内完成首次识别）。</p>'; return; }
-  el.innerHTML='<table><thead><tr><th>服务</th><th>进程</th><th class="num">PID</th><th class="num">实例</th>'+
+  el.innerHTML='<table data-sid="svc"><thead><tr><th>服务</th><th>进程</th><th class="num">PID</th><th class="num">实例</th>'+
     '<th>启动时间</th><th class="num">已运行</th><th class="num">CPU</th><th class="num">内存</th>'+
     d.cols.map(function(c){return '<th class="mid">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
     d.rows.map(function(r){
       var ports=r.ports&&r.ports.length?' <span class="svc-port">:'+r.ports.join(",")+'</span>':"";
       var name=esc(r.name)+ports+(r.self?'<span class="self-tag">nodedata 自身</span>':"");
-      if(!r.alive) return '<tr class="gone"><td>'+name+'</td><td colspan="7">已消失（保留在表里备查）</td>'+
-        r.past.map(function(p){return '<td class="mid">'+stCell(p)+'</td>';}).join("")+'</tr>';
+      var st=function(p){return '<td class="mid" data-sort="'+p+'">'+stCell(p)+'</td>';};
+      if(!r.alive) return '<tr class="gone"><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
+        '<td colspan="7">已消失（保留在表里备查）</td>'+r.past.map(st).join("")+'</tr>';
       var start=new Date(r.start_ts*1000);
-      return '<tr><td>'+name+'</td><td class="mid-id">'+esc(r.exe)+'<span class="svc-kind">'+esc(r.kind)+'</span></td>'+
-        '<td class="num">'+r.pid+'</td><td class="num">'+r.instances+'</td>'+
-        '<td>'+esc(start.toLocaleString())+'</td><td class="num">'+esc(uptimeStr(r.uptime_s))+'</td>'+
-        '<td class="num">'+r.cpu.toFixed(1)+' %</td><td class="num">'+esc(fmt(r.rss,"bytes"))+'</td>'+
-        r.past.map(function(p){return '<td class="mid">'+stCell(p)+'</td>';}).join("")+'</tr>';
+      return '<tr><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
+        '<td class="mid-id">'+esc(r.exe)+'<span class="svc-kind">'+esc(r.kind)+'</span></td>'+
+        '<td class="num" data-sort="'+r.pid+'">'+r.pid+'</td>'+
+        '<td class="num" data-sort="'+r.instances+'">'+r.instances+'</td>'+
+        '<td data-sort="'+r.start_ts+'">'+esc(start.toLocaleString())+'</td>'+
+        '<td class="num" data-sort="'+r.uptime_s+'">'+esc(uptimeStr(r.uptime_s))+'</td>'+
+        '<td class="num" data-sort="'+r.cpu+'">'+r.cpu.toFixed(1)+' %</td>'+
+        '<td class="num" data-sort="'+r.rss+'">'+esc(fmt(r.rss,"bytes"))+'</td>'+
+        r.past.map(st).join("")+'</tr>';
     }).join("")+'</tbody></table>';
+  applySortAll();
 }
 
 /* 顶层标签页：只切换显示，数据照常后台刷新（切回来不用等）。*/
