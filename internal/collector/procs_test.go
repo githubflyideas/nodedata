@@ -217,3 +217,59 @@ func TestProcIOMemState(t *testing.T) {
 	}
 	t.Fatalf("java missing from snapshot")
 }
+
+// TestTrackEvictsIdle：fork 风暴占满跟踪集合后，真正失控的新进程必须能挤进来。
+// 早期实现是"满了就拒收新的"，最该被抓的那个反而永远没有自己的序列。
+func TestTrackEvictsIdle(t *testing.T) {
+	tracked := map[string]time.Time{}
+	now := time.Unix(1_800_000_000, 0)
+
+	// 风暴：32 个各占 2% 核的短命进程，把集合占满
+	storm := map[string]float64{}
+	for i := 0; i < procTrackMax; i++ {
+		storm[fmt.Sprintf("worker-%02d", i)] = 2
+	}
+	var out []Sample
+	emitTracked(tracked, storm, procTrackMinCPU, "proc.cpu.", now, &out)
+	if len(tracked) != procTrackMax {
+		t.Fatalf("集合应被占满，got %d", len(tracked))
+	}
+
+	// 一小时后风暴进程都不活跃了，来一个吃 150% 核的真凶
+	later := now.Add(time.Hour)
+	out = out[:0]
+	emitTracked(tracked, map[string]float64{"runaway": 150}, procTrackMinCPU, "proc.cpu.", later, &out)
+	if _, ok := tracked["runaway"]; !ok {
+		t.Fatalf("失控进程必须挤进跟踪集合（淘汰最久未活跃的），当前集合 %d 项", len(tracked))
+	}
+	if len(tracked) > procTrackMax {
+		t.Fatalf("集合超出上限: %d", len(tracked))
+	}
+	found := false
+	for _, s := range out {
+		if s.MetricID == "proc.cpu.runaway" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("失控进程应有自己的序列，否则 L4 无法给出\"相对自身历史 +Nσ\"")
+	}
+
+	// 但不能因为一个更闲的新名字就把更忙的老名字挤掉（防抖）
+	tracked2 := map[string]time.Time{}
+	busy := map[string]float64{}
+	for i := 0; i < procTrackMax; i++ {
+		busy[fmt.Sprintf("busy-%02d", i)] = 50
+	}
+	out = out[:0]
+	emitTracked(tracked2, busy, procTrackMinCPU, "proc.cpu.", now, &out)
+	// 下一轮 busy 仍然忙（真实情况：byKey 含本轮全部用量），来一个只占 1.5% 的新名字
+	stillBusy := map[string]float64{"tiny": 1.5}
+	for k, v := range busy {
+		stillBusy[k] = v
+	}
+	emitTracked(tracked2, stillBusy, procTrackMinCPU, "proc.cpu.", now.Add(time.Hour), &out)
+	if _, ok := tracked2["tiny"]; ok {
+		t.Fatalf("更闲的新名字不该挤掉更忙的老名字")
+	}
+}

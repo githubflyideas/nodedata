@@ -60,6 +60,9 @@ func healthLine(host string, l0 []diagnosis.L0Category, chain *diagnosis.Chain, 
 				for _, c := range it.Culprits {
 					if c.PID > 0 {
 						culprit = c.Name + "/" + strconv.Itoa(c.PID)
+						if c.Service != "" && c.Service != c.Name {
+							culprit = c.Service + "(" + c.Name + ")/" + strconv.Itoa(c.PID)
+						}
 						break
 					}
 				}

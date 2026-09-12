@@ -287,3 +287,29 @@ func (l *ServiceLog) Vanished() []svcEvent {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+// ServiceOf 返回 PID 所属的服务名与监听端口。同组的 worker 也算在内。
+// 用于把 L4 结论从"责任方 mysqld(PID 1200)"变成"责任方 MySQL(mysqld, PID 1200)"。
+func (l *ServiceLog) ServiceOf(pid int) (string, []int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, s := range l.cur {
+		if s.PID == pid {
+			return s.Name, s.Ports
+		}
+	}
+	return "", nil
+}
+
+// ServiceByKey 按进程名匹配服务（PID 对不上时的兜底：
+// 服务识别每分钟一次，L4 每 15 秒一次，worker 进程的 PID 可能还没进集合）。
+func (l *ServiceLog) ServiceByKey(exe string) (string, []int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, s := range l.cur {
+		if s.Exe == exe || collector.ProcKey(s.Exe) == exe {
+			return s.Name, s.Ports
+		}
+	}
+	return "", nil
+}

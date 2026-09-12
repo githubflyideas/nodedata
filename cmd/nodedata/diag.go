@@ -99,8 +99,8 @@ func (d *Diagnoser) latestDeviationsAt(now time.Time) []diagnosis.Deviation {
 	return out
 }
 
-// procsFromCollector 把采集器快照转成 diagnosis 的输入类型。
-func procsFromCollector(col *collector.Collector) func() []diagnosis.Proc {
+// procsFromCollector 把采集器快照转成 diagnosis 的输入类型，并附上所属服务。
+func procsFromCollector(col *collector.Collector, svc *ServiceLog) func() []diagnosis.Proc {
 	return func() []diagnosis.Proc {
 		ps, _ := col.TopProcs()
 		out := make([]diagnosis.Proc, len(ps))
@@ -108,6 +108,13 @@ func procsFromCollector(col *collector.Collector) func() []diagnosis.Proc {
 			out[i] = diagnosis.Proc{PID: p.PID, Comm: p.Comm, Key: p.Key, State: p.State, CPU: p.CPU,
 				ReadBps: p.ReadBps, WriteBps: p.WriteBps, MajFlt: p.MajFlt, RSS: p.RSS,
 				RSSGrowth: p.RSSGrowth, GrowthSpan: p.GrowthSpan, Self: p.Self}
+			if svc != nil {
+				name, ports := svc.ServiceOf(p.PID)
+				if name == "" {
+					name, ports = svc.ServiceByKey(p.Key)
+				}
+				out[i].Service, out[i].Ports = name, ports
+			}
 		}
 		return out
 	}

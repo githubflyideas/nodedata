@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -34,15 +35,20 @@ type Proc struct {
 	RSSGrowth  int64
 	GrowthSpan int
 	Self       bool
+	// Service 是该进程所属的服务名（MySQL、Nginx…）。空表示没识别出来。
+	// 值班的人问的是"MySQL 是不是又卡了"，不是"pid 1200 怎么了"。
+	Service string
+	Ports   []int
 }
 
 // Culprit 是一条结论的责任方。
 type Culprit struct {
-	Kind   string `json:"kind"` // process | device | interface | host | kernel
-	PID    int    `json:"pid,omitempty"`
-	Name   string `json:"name"`
-	Detail string `json:"detail"`
-	Self   bool   `json:"self,omitempty"`
+	Kind    string `json:"kind"` // process | device | interface | host | kernel
+	PID     int    `json:"pid,omitempty"`
+	Name    string `json:"name"`
+	Service string `json:"service,omitempty"` // 所属服务，若识别出来
+	Detail  string `json:"detail"`
+	Self    bool   `json:"self,omitempty"`
 }
 
 const (
@@ -182,6 +188,9 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		case procC != nil && procC.Self:
 			it.Title += fmt.Sprintf(" — 责任方 nodedata 自身（PID %d）", procC.PID)
 			it.Description += "这是监控程序自身的开销，请把本条连同事故留证反馈给 nodedata 维护方。"
+		case procC != nil && procC.Service != "" && procC.Service != procC.Name:
+			// 服务名优先：值班的人认的是 MySQL，不是 mysqld
+			it.Title += fmt.Sprintf(" — 责任方 %s（%s，PID %d）", procC.Service, procC.Name, procC.PID)
 		case procC != nil:
 			it.Title += fmt.Sprintf(" — 责任方 %s（PID %d）", procC.Name, procC.PID)
 		case place != nil:
@@ -289,7 +298,21 @@ func has(ts []trig, id string) (trig, bool) {
 }
 
 func procCulprit(p Proc, detail string) Culprit {
-	return Culprit{Kind: "process", PID: p.PID, Name: p.Comm, Detail: detail, Self: p.Self}
+	c := Culprit{Kind: "process", PID: p.PID, Name: p.Comm, Service: p.Service, Detail: detail, Self: p.Self}
+	if p.Service != "" && len(p.Ports) > 0 {
+		c.Detail += fmt.Sprintf("；属于 %s（监听 %s）", p.Service, joinInts(p.Ports))
+	} else if p.Service != "" {
+		c.Detail += "；属于 " + p.Service
+	}
+	return c
+}
+
+func joinInts(v []int) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = strconv.Itoa(x)
+	}
+	return strings.Join(parts, ",")
 }
 
 func attributeCPU(it *Item, ts []trig, byID map[string]Deviation, procs []Proc, lags []int, thr float64) {

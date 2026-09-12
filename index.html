@@ -480,6 +480,8 @@ function culpritsHTML(cs){
   if(!cs||!cs.length) return "";
   return cs.map(function(c,i){
     var who=c.pid?esc(c.name)+' <span class="pids">PID <b>'+c.pid+'</b></span>':esc(c.name);
+    if(c.service&&c.service!==c.name) who=esc(c.service)+' <span class="pids">('+esc(c.name)+')</span>'+
+      (c.pid?' <span class="pids">PID <b>'+c.pid+'</b></span>':"");
     if(c.self) who+='<span class="self-tag">nodedata 自身</span>';
     return '<p class="kv"><b>'+(i===0?"责任方":"&nbsp;")+'</b> '+who+' <span class="culp-d">'+esc(c.detail||"")+'</span></p>';
   }).join("");

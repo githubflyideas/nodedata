@@ -133,8 +133,19 @@ func runServe() {
 	healthFn := func() server.HealthJSON { return builder.Health(col.Health()) }
 
 	// ── L4：诊断链（读 L0 结果 + L3 偏离度）
+	// 服务识别与事件流（14 天保留，跟长期层一致）。放在 diagnoser 之前：
+	// L4 的责任方要带服务名。
+	svcLog := NewServiceLog(filepath.Join(dataDir, "services.jsonl"), coarseRetention)
+	if n, err := svcLog.Load(time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: 服务事件流读取失败: %v\n", err)
+	} else {
+		fmt.Printf("  services      %d 条历史事件\n", n)
+	}
+	defer func() { svcLog.Close(time.Now()) }()
+	go serviceLoop(col, svcLog, stop)
+
 	diagnoser := NewDiagnoser(dataDir, series, builder)
-	diagnoser.procs = procsFromCollector(col)
+	diagnoser.procs = procsFromCollector(col, svcLog)
 
 	// ── 事故留证：后台每 15 秒跑一次 L4，出现带归因的结论就把现场存下来（不依赖页面打开）
 	recorder, err := NewRecorder(filepath.Join(dataDir, "incidents"), *procRoot,
@@ -206,16 +217,6 @@ func runServe() {
 				return diagnoser.Run(th), nil
 			},
 		})
-
-	// ── 服务识别与事件流（14 天保留，跟长期层一致）
-	svcLog := NewServiceLog(filepath.Join(dataDir, "services.jsonl"), coarseRetention)
-	if n, err := svcLog.Load(time.Now()); err != nil {
-		fmt.Fprintf(os.Stderr, "warn: 服务事件流读取失败: %v\n", err)
-	} else {
-		fmt.Printf("  services      %d 条历史事件\n", n)
-	}
-	defer func() { svcLog.Close(time.Now()) }()
-	go serviceLoop(col, svcLog, stop)
 
 	mux.HandleFunc("/api/services", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, servicesJSON(svcLog, time.Now()))

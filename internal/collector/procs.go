@@ -345,13 +345,38 @@ func (c *Collector) procHealth(h map[string]float64) {
 }
 
 // emitTracked 维护一个"被跟踪名字"集合并为其每轮出点（空闲出 0，序列才连续）。返回被跟踪部分之和。
+//
+// 集合满了要**淘汰最久没活跃的**，而不是拒收新来的。早期实现是后者：
+// 一次 fork 风暴把 32 个位置占满之后，真正失控的那个新进程反而进不了跟踪集合，
+// 于是它永远没有自己的序列、L4 也就没法说"该进程相对自身历史 +Nσ" —— 最该被抓的跑掉了。
 func emitTracked(tracked map[string]time.Time, byKey map[string]float64, minV float64, prefix string, now time.Time, out *[]Sample) float64 {
+	// 先按本轮用量从大到小考虑，保证同一轮里挤进来的是用得最多的那个
+	cands := make([]string, 0, len(byKey))
 	for key, v := range byKey {
 		if v >= minV {
-			if _, in := tracked[key]; in || len(tracked) < procTrackMax {
-				tracked[key] = now
-			}
+			cands = append(cands, key)
 		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return byKey[cands[i]] > byKey[cands[j]] })
+	for _, key := range cands {
+		if _, in := tracked[key]; in {
+			tracked[key] = now
+			continue
+		}
+		if len(tracked) >= procTrackMax {
+			// 淘汰最久未活跃的；若它本轮仍比新来的更忙，就不换（避免来回抖动）
+			oldest, oldestAt := "", now
+			for k, at := range tracked {
+				if at.Before(oldestAt) {
+					oldest, oldestAt = k, at
+				}
+			}
+			if oldest == "" || byKey[oldest] >= byKey[key] {
+				continue
+			}
+			delete(tracked, oldest)
+		}
+		tracked[key] = now
 	}
 	var sum float64
 	for key, last := range tracked {

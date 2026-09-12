@@ -27,18 +27,18 @@ func TestPageLevelZIsNotAllRed(t *testing.T) {
 
 	// 正常指标：各自的"平时长什么样"。
 	normal := map[string]func(i int) float64{
-		"net.rx":        func(i int) float64 { return float64(i) * 6e6 },              // 恒速计数器
-		"net.tx":        func(i int) float64 { return float64(i) * 2e6 },              // 恒速计数器
-		"disk.inflight": func(i int) float64 { return float64(i) * 37 },               // 恒速计数器
-		"mem.cached":    func(i int) float64 { return 8.9e9 + float64(i)*1e5 },        // 慢涨
-		"slab":          func(i int) float64 { return 9.0e8 + float64(i%13)*1e6 },     // 锯齿
-		"mem.free":      func(i int) float64 { return 2.7e9 - float64(i%97)*3e6 },     // 上下波动
-		"procs_running": func(i int) float64 { return float64((i*7919) % 5) },         // 小整数乱跳
-		"proc.cpu.a":    func(i int) float64 { return float64((i * 31) % 3) },         // 整数 0/1/2
-		"proc.cpu.b":    func(i int) float64 { return 0 },                            // 恒 0
-		"proc.cpu.c":    func(i int) float64 { return float64(i / 60) },               // 每分钟 +1
-		"loadavg.1m":    func(i int) float64 { return 0.4 + float64(i%23)*0.01 },      // 浮点小波动
-		"disk.wiops":    func(i int) float64 { return 7.6 + float64((i*13)%9)*0.1 },   // 浮点噪声
+		"net.rx":        func(i int) float64 { return float64(i) * 6e6 },            // 恒速计数器
+		"net.tx":        func(i int) float64 { return float64(i) * 2e6 },            // 恒速计数器
+		"disk.inflight": func(i int) float64 { return float64(i) * 37 },             // 恒速计数器
+		"mem.cached":    func(i int) float64 { return 8.9e9 + float64(i)*1e5 },      // 慢涨
+		"slab":          func(i int) float64 { return 9.0e8 + float64(i%13)*1e6 },   // 锯齿
+		"mem.free":      func(i int) float64 { return 2.7e9 - float64(i%97)*3e6 },   // 上下波动
+		"procs_running": func(i int) float64 { return float64((i * 7919) % 5) },     // 小整数乱跳
+		"proc.cpu.a":    func(i int) float64 { return float64((i * 31) % 3) },       // 整数 0/1/2
+		"proc.cpu.b":    func(i int) float64 { return 0 },                           // 恒 0
+		"proc.cpu.c":    func(i int) float64 { return float64(i / 60) },             // 每分钟 +1
+		"loadavg.1m":    func(i int) float64 { return 0.4 + float64(i%23)*0.01 },    // 浮点小波动
+		"disk.wiops":    func(i int) float64 { return 7.6 + float64((i*13)%9)*0.1 }, // 浮点噪声
 	}
 	// 注入异常：这个指标在最后一段时间里增速翻了 40 倍。
 	const anomalous = "disk.await"
