@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -32,11 +31,7 @@ func bootID() string {
 }
 
 func monoNow() float64 {
-	var ts syscall.Timespec
-	if err := syscall.ClockGettime(syscall.CLOCK_MONOTONIC, &ts); err != nil {
-		return 0
-	}
-	return float64(ts.Sec) + float64(ts.Nsec)/1e9
+	return float64(time.Now().UnixNano()) / 1e9
 }
 
 func wallNow() float64 {
