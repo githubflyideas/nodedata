@@ -91,7 +91,7 @@ table[data-sid] thead th.sorted .ar{opacity:1}
 .chartbox{border:1px solid var(--line);border-radius:6px;padding:8px 10px 4px;background:#fff}
 .chartbox h4{margin:0 0 2px;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;align-items:baseline}
 .chartbox h4 b{font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.chartbox svg{display:block;width:100%;height:84px}
+.chartbox svg{display:block;width:100%;height:auto}
 .chartbox .ax{font-size:9.5px;fill:var(--dim)}
 .chartbox .gl{stroke:var(--line);stroke-width:1}
 .chartbox .ln{fill:none;stroke:#1d4ed8;stroke-width:1.5;stroke-linejoin:round}
@@ -729,7 +729,8 @@ function niceStep(span){                    // 取 1/2/5×10^n 里最接近 span
   return 10*p;
 }
 function chartSVG(s,from,to){
-  return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'" preserveAspectRatio="none">'+buildSVG(s,from,to,CH)+'</svg>';
+  // 小图同样不拉伸：CSS 里给的是固定高度，一拉伸刻度数字就变形
+  return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'">'+buildSVG(s,from,to,CH)+'</svg>';
 }
 function lastVal(s){
   for(var i=s.v.length-1;i>=0;i--) if(s.v[i]!==null&&isFinite(s.v[i])) return s.v[i];
