@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -58,7 +59,11 @@ func runServe() {
 	procRoot := fs.String("proc", "/proc", "procfs root")
 	sysRoot := fs.String("sys", "/sys", "sysfs root")
 	rootFS := fs.String("rootfs", "/", "要监控容量的挂载点")
-	dumpEvery := fs.String("dump-interval", "30s", "data/*.json dump interval")
+	// 默认不转储：实测每轮写 2~7MB，30 秒一轮就是每天 4~21GB 的写入量
+	// （刚启动 4.2GB/天，缓冲区攒满后约 21GB/天）。而页面读 /data/*.json 时
+	// 磁盘缺文件会自动用内存实时构造兜底，转储对页面并非必需。
+	// 需要把结果落盘带走（离线分析、留存现场）时再显式打开。
+	dumpEvery := fs.String("dump-interval", "0", "data/*.json 转储周期；0 = 不转储（页面照常从内存实时构造）")
 	webRootFlag := fs.String("web-root", "", "从该目录读 index.html 覆盖内置页面（仅前端开发用）")
 	dataDirFlag := fs.String("data-dir", "data", "数据目录：data/*.json 转储、baseline.json、history/")
 	historyDirFlag := fs.String("history-dir", "", "长期层落盘目录，5 分钟一点、保留 14 天（默认 <data-dir>/history）")
@@ -75,12 +80,13 @@ func runServe() {
 		iv = 5 * time.Second
 	}
 	dv, err := time.ParseDuration(*dumpEvery)
-	if err != nil || dv <= 0 {
-		dv = 30 * time.Second
+	if err != nil {
+		dv = 0
 	}
 
 	// data 目录必须可写，否则转储会静默失败 → 页面 404。提前显式报错。
-	dumpToDisk := true
+	// dv <= 0 表示不转储（默认），页面从内存实时构造。
+	dumpToDisk := dv > 0
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: data dir %s not writable (%v)\n", dataDir, err)
 		fmt.Fprintf(os.Stderr, "      falling back to in-memory only; /data/*.json still served live\n")
@@ -90,7 +96,7 @@ func runServe() {
 	// ── L0：后台 sanity check → data/check.json
 	// -proc 之前只传给了 L1 采集器，L0 仍在读真 /proc，导致 -proc 对 L0 无效。
 	check.SetRoots(*procRoot, *sysRoot)
-	l0 := NewBackgroundCheckRunner(iv, dataDir)
+	l0 := NewBackgroundCheckRunner(iv, dataDir, dumpToDisk)
 	l0.Start()
 	defer l0.Stop()
 
@@ -107,6 +113,7 @@ func runServe() {
 		hist = nil
 	} else {
 		defer hist.Close()
+		defer func() { flushHistory(hist) }()
 		t0 := time.Now()
 		lines, pts, err := hist.Load(series, t0)
 		if err != nil {
@@ -145,6 +152,7 @@ func runServe() {
 
 	diagnoser := NewDiagnoser(dataDir, series, builder)
 	diagnoser.procs = procsFromCollector(col, svcLog)
+	diagnoser.l0Fn = l0.GetLatest
 	go sigmaLoop(builder, diagnoser, stop)
 
 	// ── 事故留证：后台每 15 秒跑一次 L4，出现带归因的结论就把现场存下来（不依赖页面打开）
@@ -161,7 +169,7 @@ func runServe() {
 
 	// 首轮：先采一次、算一次、落一次盘，避免页面开局吃到 404/空文件
 	if samples, err := col.CollectGlobal(*procRoot, time.Now()); err == nil {
-		persist(hist, series.Add(samples))
+		persist(hist, series.Add(samples), time.Now())
 	} else {
 		fmt.Fprintf(os.Stderr, "warn: initial collect: %v\n", err)
 	}
@@ -199,6 +207,7 @@ func runServe() {
 			BaselineClear: func() error { return check.ClearBaseline(dataDir) },
 		},
 		server.QueryFns{
+			Check:   func() (interface{}, error) { return l0.GetLatest(), nil },
 			Heatmap: builder.Build,
 			Detail:  func(ts time.Time) (interface{}, error) { return builder.Build(ts.Add(-time.Hour), ts) },
 			Raw: func(metricID string, from, to time.Time) (interface{}, error) {
@@ -286,7 +295,7 @@ func runServe() {
 
 	dumpState := "on"
 	if !dumpToDisk {
-		dumpState = "off (serving live)"
+		dumpState = "关（页面从内存实时构造；--dump-interval 30s 可开启）"
 	}
 	fmt.Printf("nodedata %s\n", version)
 	fmt.Printf("  listen        http://%s:%s/\n", *listen, *port)
@@ -300,7 +309,11 @@ func runServe() {
 	fmt.Printf("  procfs        %s\n", *procRoot)
 	fmt.Printf("  sysfs         %s\n", *sysRoot)
 	fmt.Printf("  collect every %s\n", iv)
-	fmt.Printf("  dump every    %s  [%s]\n", dv, dumpState)
+	if dumpToDisk {
+		fmt.Printf("  dump every    %s  [%s]\n", dv, dumpState)
+	} else {
+		fmt.Printf("  dump          %s\n", dumpState)
+	}
 	fmt.Printf("  metrics       %d series, %d points buffered\n",
 		len(series.MetricIDs()), series.Count())
 
@@ -343,22 +356,58 @@ func collectLoop(col *collector.Collector, s *Series, hist *History, procRoot st
 			if samples, err := col.CollectProcs(procRoot, now); err == nil {
 				batch = append(batch, samples...)
 			}
-			persist(hist, s.Add(batch))
+			persist(hist, s.Add(batch), now)
 		}
 	}
 }
 
 // persist 把本轮抽进长期层的点写盘；失败只记一次，不影响采集。
-func persist(hist *History, kept []collector.Sample) {
-	if hist == nil || len(kept) == 0 {
+// persist 把本轮抽进长期层的点攒起来，每个长期层周期只写一次。
+//
+// 不能来一批写一批：新出现的指标（进程名一直在变）会立刻开一个长期层点并单独落一行，
+// 实测本该 5 分钟一行的文件，每个周期写了 4~6 行、每行几十到一百个指标。
+// 合并之后写入次数降到 1/5，而且一行就是一个完整的时刻切面，读回时也更整齐。
+func persist(hist *History, kept []collector.Sample, now time.Time) {
+	if hist == nil {
 		return
 	}
-	if err := hist.Append(kept); err != nil && histWarned.CompareAndSwap(false, true) {
+	histMu.Lock()
+	histPend = append(histPend, kept...)
+	// 对齐到长期层周期边界，避免"攒够时长才写"导致最后一批一直不落盘
+	if now.Unix()/int64(coarseStep/time.Second) == histSlot || len(histPend) == 0 {
+		histMu.Unlock()
+		return
+	}
+	histSlot = now.Unix() / int64(coarseStep/time.Second)
+	batch := histPend
+	histPend = nil
+	histMu.Unlock()
+
+	if err := hist.Append(batch); err != nil && histWarned.CompareAndSwap(false, true) {
 		fmt.Fprintf(os.Stderr, "warn: 历史落盘失败（后续不再提示）: %v\n", err)
 	}
 }
 
-var histWarned atomic.Bool
+// flushHistory 退出前把攒着的点写掉。
+func flushHistory(hist *History) {
+	if hist == nil {
+		return
+	}
+	histMu.Lock()
+	batch := histPend
+	histPend = nil
+	histMu.Unlock()
+	if len(batch) > 0 {
+		_ = hist.Append(batch)
+	}
+}
+
+var (
+	histWarned atomic.Bool
+	histMu     sync.Mutex
+	histPend   []collector.Sample
+	histSlot   int64
+)
 
 // sigmaLoop 周期性重算 σ 表；重算前标记"正处在 L4 结论里"的指标，
 // 它们的异常期样本不参与基线，否则持续几天的故障会被 σ 学成常态、自己"痊愈"

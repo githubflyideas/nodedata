@@ -23,6 +23,9 @@ type QueryFns struct {
 	Health func() (interface{}, error)
 	// Diagnosis 返回 L4 诊断链。
 	Diagnosis func(zThreshold float64) (interface{}, error)
+	// Check 返回最近一次 L0 判定（来自内存）。L0 每个采集周期跑一次，
+	// 结果无条件落盘就是每天上百 MB 的写入，而它本来就在内存里。
+	Check func() (interface{}, error)
 }
 
 // MuxConfig 显式指定 web 根目录与 data 目录，避免依赖进程 cwd。
@@ -239,15 +242,18 @@ func NewMuxWithConfig(cfg MuxConfig, qfns QueryFns) *http.ServeMux {
 
 	// L0 检查端点
 	mux.HandleFunc("/api/check", func(w http.ResponseWriter, r *http.Request) {
-		checkPath := filepath.Join(dataDir, "check.json")
-		data, err := os.ReadFile(checkPath)
-		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"timestamp":"","categories":[],"exit_code":-1}`))
+		w.Header().Set("Content-Type", "application/json")
+		if qfns.Check != nil {
+			if v, err := qfns.Check(); err == nil {
+				_ = json.NewEncoder(w).Encode(v)
+				return
+			}
+		}
+		if data, err := os.ReadFile(filepath.Join(dataDir, "check.json")); err == nil {
+			w.Write(data)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
+		w.Write([]byte(`{"timestamp":"","categories":[],"exit_code":-1}`))
 	})
 
 	return mux

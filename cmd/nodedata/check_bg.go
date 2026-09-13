@@ -12,18 +12,21 @@ import (
 )
 
 type BackgroundCheckRunner struct {
-	interval time.Duration
-	dataDir  string
-	mu       sync.Mutex
-	latest   check.FullResult
-	done     chan struct{}
+	interval  time.Duration
+	dataDir   string
+	mu        sync.Mutex
+	latest    check.FullResult
+	writeFile bool // 是否把结果落盘（默认否，见 runCheck）
+	done      chan struct{}
 }
 
-func NewBackgroundCheckRunner(interval time.Duration, dataDir string) *BackgroundCheckRunner {
+// NewBackgroundCheckRunner：writeFile 为真时才把每轮结果写成 data/check.json。
+func NewBackgroundCheckRunner(interval time.Duration, dataDir string, writeFile bool) *BackgroundCheckRunner {
 	return &BackgroundCheckRunner{
-		interval: interval,
-		dataDir:  dataDir,
-		done:     make(chan struct{}),
+		interval:  interval,
+		dataDir:   dataDir,
+		writeFile: writeFile,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -54,11 +57,22 @@ func (bcr *BackgroundCheckRunner) runCheck() {
 	bcr.mu.Lock()
 	bcr.latest = results
 	bcr.mu.Unlock()
+	// 默认不落盘：L0 每个采集周期跑一次，7.4KB 的 check.json 无条件重写就是每天上百 MB
+	// 的写入（判定文案里嵌着"已用 52.15%""刚启动 324 秒"这类活数字，每次都变，
+	// 按内容去重也拦不住）。结果已经在 bcr.latest 里，页面与 L4 都从内存读。
+	// 只有显式开启转储时才写文件，供离线查看。
+	if !bcr.writeFile {
+		return
+	}
+	data, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return
+	}
 	checkPath := filepath.Join(bcr.dataDir, "check.json")
 	tmpPath := checkPath + ".tmp"
-	data, _ := json.MarshalIndent(results, "", "  ")
-	os.WriteFile(tmpPath, data, 0644)
-	os.Rename(tmpPath, checkPath)
+	if os.WriteFile(tmpPath, data, 0644) == nil {
+		os.Rename(tmpPath, checkPath)
+	}
 }
 
 func (bcr *BackgroundCheckRunner) GetLatest() check.FullResult {

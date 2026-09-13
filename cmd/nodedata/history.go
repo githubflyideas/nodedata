@@ -85,27 +85,50 @@ func (h *History) Load(s *Series, now time.Time) (lines, points int, err error) 
 	return lines, points, nil
 }
 
-// Append 写一行。samples 来自同一轮采集（Series.Add 的返回值），时间戳取第一条。
+// Append 落盘一批长期层样本：按时间戳分组，每个时刻一行，但只做一次写系统调用。
+//
+// 必须按各自的时间戳分组，不能拿第一条的时间戳给整批打标：
+// 一批里的样本可能相差一个长期层周期（5 分钟），而短档位配对的容差只有 30 秒，
+// 错标时间戳会让这些点永远配不上对。
 func (h *History) Append(samples []collector.Sample) error {
 	if len(samples) == 0 {
 		return nil
 	}
-	ts := samples[0].TS
-	hl := histLine{T: ts.Unix(), V: make(map[string]float64, len(samples))}
+	byTS := make(map[int64]map[string]float64, 4)
+	var order []int64
 	for _, sm := range samples {
-		if !math.IsNaN(sm.Value) && !math.IsInf(sm.Value, 0) { // JSON 表示不了
-			hl.V[sm.MetricID] = sm.Value
+		if math.IsNaN(sm.Value) || math.IsInf(sm.Value, 0) { // JSON 表示不了
+			continue
 		}
+		t := sm.TS.Unix()
+		m, ok := byTS[t]
+		if !ok {
+			m = make(map[string]float64, len(samples))
+			byTS[t] = m
+			order = append(order, t)
+		}
+		m[sm.MetricID] = sm.Value
 	}
-	b, err := json.Marshal(hl)
-	if err != nil {
-		return err
+	if len(order) == 0 {
+		return nil
 	}
-	b = append(b, '\n')
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+
+	var buf []byte
+	for _, t := range order {
+		b, err := json.Marshal(histLine{T: t, V: byTS[t]})
+		if err != nil {
+			continue
+		}
+		buf = append(append(buf, b...), '\n')
+	}
+	if len(buf) == 0 {
+		return nil
+	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if d := dayOf(ts); d != h.day || h.f == nil {
+	if d := dayOf(time.Unix(order[0], 0)); d != h.day || h.f == nil {
 		if h.f != nil {
 			h.f.Close()
 		}
@@ -115,9 +138,9 @@ func (h *History) Append(samples []collector.Sample) error {
 			return err
 		}
 		h.f, h.day = f, d
-		h.expire(ts)
+		h.expire(time.Unix(order[0], 0))
 	}
-	_, err = h.f.Write(b) // 一次 write 一整行
+	_, err := h.f.Write(buf) // 一次 write 写完整批
 	return err
 }
 

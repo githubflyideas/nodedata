@@ -729,26 +729,53 @@ func checkNetworkCategory(ctx context.Context) Category {
 
 // ── F：文件系统 ────────────────────────────────────────────────────────
 
+// writeProbeEvery 是"真的写一次"这个探针的最小间隔。
+//
+// 这个判定要抓的是"文件系统被重挂成只读"（磁盘出错后内核会这么做，只看挂载选项看不出来），
+// 所以必须真的写。但每个采集周期都做一次 create+write+unlink，在 ext4 上每次都要分配 inode、
+// 提交日志：5 秒一次 = 一天 17280 次，实测块层写入约 150MB/天——
+// 一个巡检工具自己成了磁盘写入的大头。
+//
+// 文件系统转只读是个持续状态，不是瞬时事件，5 分钟内发现完全够用。
+const writeProbeEvery = 5 * time.Minute
+
+var (
+	probeMu   sync.Mutex
+	probeAt   time.Time
+	probeLast Check
+)
+
+// writeProbe 真写一次临时文件，结果缓存 writeProbeEvery。
+func writeProbe() Check {
+	probeMu.Lock()
+	defer probeMu.Unlock()
+	if !probeAt.IsZero() && time.Since(probeAt) < writeProbeEvery {
+		return probeLast
+	}
+	probeAt = time.Now()
+	tmp, err := os.CreateTemp("", ".nodedata-probe-*")
+	if err != nil {
+		probeLast = Check{ID: "F01", Name: "临时目录可写", Level: 2,
+			Message: fmt.Sprintf("建临时文件失败：%v", err)}
+		return probeLast
+	}
+	_, werr := tmp.WriteString("probe")
+	cerr := tmp.Close()
+	os.Remove(tmp.Name())
+	if werr != nil || cerr != nil {
+		probeLast = Check{ID: "F01", Name: "临时目录可写", Level: 2,
+			Message: fmt.Sprintf("能建文件但写不进去：%v", werr)}
+	} else {
+		probeLast = ok("F01", "临时目录可写", fmt.Sprintf("实际写入并删除成功（每 %v 探一次）", writeProbeEvery))
+	}
+	return probeLast
+}
+
 func checkFilesystemCategory(ctx context.Context) Category {
 	cat := Category{Name: "Filesystem"}
 	cs := make([]Check, 0, 3)
 
-	// F01 真的写一次，而不是只看挂载选项
-	tmp, err := os.CreateTemp("", ".nodedata-probe-*")
-	if err == nil {
-		_, werr := tmp.WriteString("probe")
-		cerr := tmp.Close()
-		os.Remove(tmp.Name())
-		if werr != nil || cerr != nil {
-			cs = append(cs, Check{ID: "F01", Name: "临时目录可写", Level: 2,
-				Message: fmt.Sprintf("能建文件但写不进去：%v", werr)})
-		} else {
-			cs = append(cs, ok("F01", "临时目录可写", "实际写入并删除成功"))
-		}
-	} else {
-		cs = append(cs, Check{ID: "F01", Name: "临时目录可写", Level: 2,
-			Message: fmt.Sprintf("建临时文件失败：%v", err)})
-	}
+	cs = append(cs, writeProbe())
 
 	// F02 除根以外的真实挂载点，取最紧张的一个
 	var worst float64

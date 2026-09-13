@@ -22,6 +22,8 @@ type Diagnoser struct {
 	builder *HeatmapBuilder
 	// procs 提供 L1 最近一轮进程快照，供 L4 归因到 PID；nil 时只能归因到设备/接口。
 	procs func() []diagnosis.Proc
+	// l0Fn 提供内存中的 L0 结果；nil 时回落到读 check.json。
+	l0Fn func() check.FullResult
 }
 
 func NewDiagnoser(dataDir string, s *Series, b *HeatmapBuilder) *Diagnoser {
@@ -41,8 +43,12 @@ func (d *Diagnoser) Run(zThreshold float64) *diagnosis.Chain {
 	})
 }
 
-// loadL0 从 data/check.json 读取 L0 结果并转成 diagnosis 的输入类型。
+// loadL0 取最近一次 L0 判定并转成 diagnosis 的输入类型。
+// 优先用内存中的结果（l0Fn）；没接上时才回落到 data/check.json。
 func (d *Diagnoser) loadL0() []diagnosis.L0Category {
+	if d.l0Fn != nil {
+		return l0ToDiagnosis(d.l0Fn())
+	}
 	b, err := os.ReadFile(filepath.Join(d.dataDir, "check.json"))
 	if err != nil {
 		return nil
@@ -51,17 +57,7 @@ func (d *Diagnoser) loadL0() []diagnosis.L0Category {
 	if err := json.Unmarshal(b, &fr); err != nil {
 		return nil
 	}
-	out := make([]diagnosis.L0Category, 0, len(fr.Categories))
-	for _, c := range fr.Categories {
-		dc := diagnosis.L0Category{Name: c.Name, Level: c.Level}
-		for _, ck := range c.Checks {
-			dc.Checks = append(dc.Checks, diagnosis.L0Check{
-				ID: ck.ID, Name: ck.Name, Level: ck.Level, Message: ck.Message,
-			})
-		}
-		out = append(out, dc)
-	}
-	return out
+	return l0ToDiagnosis(fr)
 }
 
 // latestDeviations 取每个指标最近一个点的十四档 z。
@@ -153,4 +149,19 @@ func sustainedZ(pts []server.Point) []float64 {
 		}
 	}
 	return z
+}
+
+// l0ToDiagnosis 把 L0 判定结果转成 diagnosis 包的输入类型。
+func l0ToDiagnosis(fr check.FullResult) []diagnosis.L0Category {
+	out := make([]diagnosis.L0Category, 0, len(fr.Categories))
+	for _, c := range fr.Categories {
+		dc := diagnosis.L0Category{Name: c.Name, Level: c.Level}
+		for _, ck := range c.Checks {
+			dc.Checks = append(dc.Checks, diagnosis.L0Check{
+				ID: ck.ID, Name: ck.Name, Level: ck.Level, Message: ck.Message,
+			})
+		}
+		out = append(out, dc)
+	}
+	return out
 }
