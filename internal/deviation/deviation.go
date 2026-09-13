@@ -42,8 +42,15 @@ const (
 	// 样本太少时任何尺度估计都是编的，宁可画斜纹说"还没攒够"，
 	// 也不要拿 1~2 个点算出来的 σ 去支撑一个 ±6。
 	MinDiffsForZ = 8
-	// HighConfN 是"高置信"门槛，仅用于标记，不影响判定。
+	// HighConfN 是"高置信"门槛：样本少于它的档位不参与 L4 下结论（L3 照常显示）。
 	HighConfN = 20
+	// MinBaselineSpan 是基线必须覆盖的最短墙钟跨度。
+	//
+	// 只要求"跨度 ≥ 该档时长"是不够的：L1=300s，等于装上 5 分钟就开始出 z，
+	// 而那时基线只见过几分钟的安静时段，之后任何正常波动都顶格——
+	// 实测一台刚装上的桌面机，十几个指标齐刷刷 ±6.00、广度 2（只有 L1/L2 就绪）。
+	// 要求至少覆盖一小时，等于"装上一小时后才开始判定"，这个代价可接受。
+	MinBaselineSpan = time.Hour
 	// shrinkK 让样本量不足时 z 向 0 收缩：z *= N/(N+shrinkK)。
 	// N=8 时 ×0.5，N=20 时 ×0.71，N=200 时 ×0.96。
 	shrinkK = 8.0
@@ -128,7 +135,8 @@ func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Ti
 	tol := LagTolerance(H)
 	histStart := hist[0].TS
 	end := hist[len(hist)-1].TS
-	spanOK := end.Sub(histStart) >= H
+	span := end.Sub(histStart)
+	spanOK := span >= H && span >= MinBaselineSpan
 	cutoff := end.Add(-28 * 24 * time.Hour)
 
 	var diffs [24][]float64

@@ -288,8 +288,17 @@ func domainOf(id string) string {
 }
 
 // unitOf 由 metricID 推断单位。/proc 里的内存类指标采集时已换算成字节。
+// unitOf 决定某指标的显示单位。
+//
+// 顺序要紧：百分比规则必须排在 mem./swap. 前缀之前，否则 mem.used_pct（一个百分数）
+// 会命中"mem. 开头 = 字节"，14.49% 被显示成 "14.49 B"。
+// 落到 default 的后果同样具体：fs.avail 会走通用格式化，67 GiB 显示成 "67046.88M"。
 func unitOf(id string) string {
 	switch {
+	case strings.HasSuffix(id, "_pct"), strings.Contains(id, "util"),
+		strings.HasPrefix(id, "cpu."), strings.HasPrefix(id, "proc.cpu."),
+		strings.HasPrefix(id, "psi"):
+		return "percent"
 	case strings.HasSuffix(id, "_ms"), strings.Contains(id, "await"):
 		return "ms"
 	case strings.HasSuffix(id, "_s"), strings.HasSuffix(id, "_sec"):
@@ -299,18 +308,18 @@ func unitOf(id string) string {
 		id == "net.rx", id == "net.tx", strings.HasPrefix(id, "net.rx@"), strings.HasPrefix(id, "net.tx@"),
 		strings.HasPrefix(id, "proc.io."):
 		return "bytes/s"
-	case strings.Contains(id, "_drop"), strings.Contains(id, "_errs"), id == "tcp.retrans", id == "pgfault":
+	case strings.Contains(id, "_drop"), strings.Contains(id, "_errs"), strings.Contains(id, "_errors"),
+		id == "tcp.retrans", id == "tcp.passive_opens", id == "tcp.attempt_fails",
+		id == "udp.no_ports", id == "pgfault", id == "pgmajfault":
 		return "/s"
+	// 字节量：注意 fs.avail 与 proc.rss.<名字> 都不含 "bytes" 字样，必须显式列出
 	case strings.Contains(id, "bytes"), strings.HasPrefix(id, "mem."),
-		strings.HasPrefix(id, "swap."), id == "slab":
+		strings.HasPrefix(id, "swap."), strings.HasPrefix(id, "proc.rss."),
+		id == "slab", id == "fs.avail":
 		return "bytes"
 	case strings.Contains(id, "iops"), strings.Contains(id, "pps"),
 		strings.HasSuffix(id, "_per_s"):
 		return "ops/s"
-	case strings.Contains(id, "util"), strings.HasPrefix(id, "cpu."),
-		strings.HasPrefix(id, "proc.cpu."),
-		strings.HasPrefix(id, "psi"):
-		return "percent"
 	case strings.HasPrefix(id, "loadavg"):
 		return "load"
 	default:
@@ -327,4 +336,19 @@ func primaryOf(id string) int {
 	default:
 		return 0
 	}
+}
+
+// LowConfLags 返回某指标各档位此刻是否"低置信"（同时段样本数 < HighConfN）。
+//
+// 一档只要攒够 MinDiffsForZ=8 个差分就算就绪，而 8 个样本估出的稳健尺度很不稳：
+// 刚过门槛那阵子，稍有变动 z 就顶格，页面上是一整屏 ±6。
+// L3 热力图照常显示（那是摆事实），但 L4 不该拿 8 个样本估出来的 σ 去下结论。
+func (b *HeatmapBuilder) LowConfLags(id string, at time.Time) [deviation.NLag]bool {
+	var out [deviation.NLag]bool
+	hour := at.UTC().Hour()
+	for i := 0; i < deviation.NLag; i++ {
+		ls := b.sigma.Get(id, i, hour)
+		out[i] = ls.Low
+	}
+	return out
 }

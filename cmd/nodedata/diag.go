@@ -82,6 +82,13 @@ func (d *Diagnoser) latestDeviationsAt(now time.Time) []diagnosis.Deviation {
 		}
 		p := m.Points[len(m.Points)-1]
 		z := sustainedZ(m.Points)
+		// 低置信档位（同时段样本 < 20）不参与下结论：见 HeatmapBuilder.LowConfLags
+		low := d.builder.LowConfLags(m.MetricID, now)
+		for i := range z {
+			if i < len(low) && low[i] {
+				z[i] = math.NaN()
+			}
+		}
 		onset := ""
 		if p.OnsetLag != nil {
 			onset = *p.OnsetLag
