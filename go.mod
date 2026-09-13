@@ -1,3 +1,3 @@
 module github.com/githubflyideas/nodedata
 
-go 1.22
+go 1.23.4

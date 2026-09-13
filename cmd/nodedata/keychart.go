@@ -10,6 +10,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 )
 
@@ -71,7 +72,10 @@ func (b *HeatmapBuilder) KeySeries(win string, d time.Duration, now time.Time) *
 			if !def.core {
 				continue // 曲线只画关键项；全部采集项在 OS 指标页
 			}
-			s := chartSeries{Label: def.label, Unit: def.unit, Bad: def.bad, ID: def.ids[0]}
+			// 合成指标要给全部来源：CPU 忙碌 % = user+sys+softirq，
+			// 只写 def.ids[0] 会让放大图标题显示成 "cpu.user"，看的人以为只统计了用户态。
+			s := chartSeries{Label: def.label, Unit: def.unit, Bad: def.bad,
+				ID: strings.Join(def.ids, " + ")}
 			any := false
 			for ts := from; !ts.After(now); ts = ts.Add(step) {
 				v := b.valueAtTol(def, ts, tol)
