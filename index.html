@@ -113,6 +113,12 @@ table[data-sid] thead th.sorted .ar{opacity:1}
 #cmstats div{font-size:12px;color:var(--dim);white-space:nowrap}
 #cmstats div b{display:block;font-size:14px;color:var(--ink);font-weight:650;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:1px}
+.cmtools{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.cmbtn{appearance:none;border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer;
+  font:inherit;font-size:12px;padding:3px 10px;color:var(--ink)}
+.cmbtn:hover{border-color:#1d4ed8;color:#1d4ed8}
+.cmbtn.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+#cmnote{font-size:11.5px;color:var(--dim)}
 #cmtable{max-height:240px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:6px}
 #cmtable table{width:100%;border-collapse:collapse;font-size:12px}
 #cmtable th{position:sticky;top:0;background:#f7f8fa;text-align:left;padding:5px 10px;
@@ -302,6 +308,12 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     <svg id="cmsvg"></svg>
     <div class="chartcap" id="cmcap">把鼠标移到图上读某一时刻的值</div>
     <div id="cmstats"></div>
+    <div class="cmtools">
+      <button id="cmall" class="cmbtn">显示全部点</button>
+      <button id="cmcsv" class="cmbtn">下载 CSV</button>
+      <button id="cmcopy" class="cmbtn">复制到剪贴板</button>
+      <span id="cmnote"></span>
+    </div>
     <div id="cmtable"></div>
   </div>
 </div>
@@ -309,7 +321,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </div>
 <script>
 "use strict";
-var state={pane:"key",kwin:"6h",l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
+var state={pane:"key",kwin:"6h",cmAll:false,l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9];                 // L5..L10 : 5400s .. 7d
 var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
@@ -772,6 +784,10 @@ function openChartModal(s,d){
   document.getElementById("cmsubval").textContent=s.id+(s.unit?"\uff08"+s.unit+"\uff09":"");
   [].forEach.call(document.querySelectorAll("#cmwins button"),function(x){
     x.classList.toggle("on",x.getAttribute("data-kwin")===state.kwin);});
+  state.cmAll=false;
+  var ab=document.getElementById("cmall");
+  ab.classList.remove("on"); ab.textContent="显示全部点";
+  document.getElementById("cmnote").textContent="共 "+s.v.length+" 个采样点";
   renderModal();
   document.getElementById("cmask").hidden=false;
 }
@@ -818,7 +834,7 @@ function statsHTML(s){
 function valuesHTML(s){
   var idx=[];
   for(var i=0;i<s.v.length;i++) idx.push(i);
-  var MAXROWS=40;
+  var MAXROWS=state.cmAll?Infinity:40;
   if(idx.length>MAXROWS){
     var step=(idx.length-1)/(MAXROWS-1), picked=[];
     for(var k=0;k<MAXROWS;k++) picked.push(Math.round(k*step));
@@ -837,8 +853,15 @@ function valuesHTML(s){
   for(var k=0;k<idx.length;k++){
     var i=idx[k], v=s.v[i];
     if(v===null||!isFinite(v)){
-      if(gapFrom===null) gapFrom=s.ts[i];
-      gapN++;
+      // 抽样模式下折叠空档（刚装上时 40 行里 38 行是空的，没法看）；
+      // "显示全部点"就该逐点列出，否则按钮名不副实。
+      if(!state.cmAll){
+        if(gapFrom===null) gapFrom=s.ts[i];
+        gapN++;
+        continue;
+      }
+      rows+='<tr class="gap"><td class="t">'+esc(new Date(s.ts[i]*1000).toLocaleString())+
+        '</td><td colspan="2">无数据</td></tr>';
       continue;
     }
     flushGap(s.ts[i]);
@@ -897,6 +920,44 @@ document.getElementById("cmwins").addEventListener("click",async function(e){
         if(d.groups[gi].series[si].id===_mS.id){ _mS=d.groups[gi].series[si]; _mD=d; renderModal(); return; }
     document.getElementById("cmcap").textContent="这个窗口里没有该指标的数据";
   }catch(err){ document.getElementById("cmcap").textContent="切换窗口失败："+err.message; }
+});
+
+// 原始数据：CSV 用原始时间戳与未格式化的数值，方便直接进 Excel / awk，
+// 不做 "2.40 KiB/s" 这种人读格式——那种字符串再解析回数字是自找麻烦。
+function seriesCSV(s){
+  var out="time_iso,unix_ts,value,unit,metric\n";
+  var q=function(x){return /[",]/.test(x)?'"'+String(x).replace(/"/g,'""')+'"':x;};
+  for(var i=0;i<s.v.length;i++){
+    var v=s.v[i];
+    out+=new Date(s.ts[i]*1000).toISOString()+","+s.ts[i]+","+
+      (v===null||!isFinite(v)?"":v)+","+q(s.unit||"")+","+q(s.id)+"\n";
+  }
+  return out;
+}
+function csvName(s){
+  return (s.id.replace(/[^A-Za-z0-9._@+-]+/g,"_")+"_"+state.kwin+".csv").replace(/^_+/,"");
+}
+document.getElementById("cmall").addEventListener("click",function(){
+  state.cmAll=!state.cmAll;
+  this.classList.toggle("on",state.cmAll);
+  this.textContent=state.cmAll?"只看 40 行":"显示全部点";
+  document.getElementById("cmtable").innerHTML=valuesHTML(_mS);
+});
+document.getElementById("cmcsv").addEventListener("click",function(){
+  var blob=new Blob([seriesCSV(_mS)],{type:"text/csv;charset=utf-8"});
+  var a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=csvName(_mS);
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href); a.remove();},0);
+  document.getElementById("cmnote").textContent="已导出 "+_mS.v.length+" 个点";
+});
+document.getElementById("cmcopy").addEventListener("click",function(){
+  var txt=seriesCSV(_mS), note=document.getElementById("cmnote");
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){
+      note.textContent="已复制 "+_mS.v.length+" 行";
+    }).catch(function(){ note.textContent="复制失败，请用下载 CSV"; });
+  }else note.textContent="这个浏览器不支持剪贴板，请用下载 CSV";
 });
 
 function closeChartModal(){document.getElementById("cmask").hidden=true;}
