@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -565,12 +566,18 @@ var kmsgPatterns = []string{
 func collectKmsg(cfg Config) []Fact {
 	var out []Fact
 
-	f, err := os.OpenFile("/dev/kmsg", os.O_RDONLY|os.O_NONBLOCK, 0)
+	f, err := os.OpenFile("/dev/kmsg", os.O_RDONLY, 0)
 	if err != nil {
 		out = append(out, missingFact("kmsg.events", "/dev/kmsg", errReason(err)))
 		return out
 	}
 	defer f.Close()
+	// Set O_NONBLOCK via fcntl so we can do non-blocking reads without
+	// importing a platform-specific constant from the os package.
+	if fd := f.Fd(); fd != ^uintptr(0) {
+		flags, _, _ := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
+		syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags|syscall.O_NONBLOCK)
+	}
 
 	buf := make([]byte, 8192)
 	var matches []string
