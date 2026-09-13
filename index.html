@@ -105,7 +105,24 @@ table[data-sid] thead th.sorted .ar{opacity:1}
 #cmodal{background:#fff;border-radius:10px;padding:20px 22px 16px;width:min(860px,96vw);max-height:90vh;overflow:auto;position:relative;box-shadow:0 8px 32px rgba(0,0,0,.28)}
 #cmodal h3{font-size:16px;font-weight:650;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center}
 #cmodal h3 b{font-size:22px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:var(--ink)}
-#cmodal svg{display:block;width:100%;height:260px;margin:8px 0 4px}
+/* 不要 preserveAspectRatio="none"：viewBox 被拉成别的比例时，坐标轴数字会跟着纵向拉伸变形 */
+#cmodal svg{display:block;width:100%;height:auto;margin:8px 0 4px}
+#cmodal #cmwins{margin:2px 0 0}
+#cmstats{display:flex;flex-wrap:wrap;gap:0 22px;margin:8px 0 2px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:6px;background:#fafbfc}
+#cmstats div{font-size:12px;color:var(--dim);white-space:nowrap}
+#cmstats div b{display:block;font-size:14px;color:var(--ink);font-weight:650;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:1px}
+#cmtable{max-height:240px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:6px}
+#cmtable table{width:100%;border-collapse:collapse;font-size:12px}
+#cmtable th{position:sticky;top:0;background:#f7f8fa;text-align:left;padding:5px 10px;
+  border-bottom:1px solid var(--line);font-weight:600}
+#cmtable td{padding:4px 10px;border-bottom:1px solid #f0f2f5;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#cmtable td.t{font-family:inherit;color:var(--dim)}
+#cmtable tr.gap td{color:var(--dim);font-style:italic}
+#cmsvg .cross{stroke:#94a3b8;stroke-width:1;stroke-dasharray:3 3}
+#cmsvg .dot{fill:#1d4ed8}
 #cmodal .chartcap{font-size:12px;min-height:18px}
 #cmodal .mclose{position:absolute;top:12px;right:14px;font-size:20px;color:var(--dim);background:none;border:none;cursor:pointer;line-height:1;padding:2px 6px}
 #cmodal .mclose:hover{color:var(--ink)}
@@ -277,9 +294,15 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   <div id="cmodal">
     <button class="mclose" id="cclose" aria-label="关闭">✕</button>
     <h3 id="cmtitle">—<b id="cmval">—</b></h3>
-    <div id="cmsubval" style="font-size:13px;color:var(--dim);margin-bottom:4px"></div>
-    <svg id="cmsvg" viewBox="0 0 600 120" preserveAspectRatio="none" style="display:block;width:100%;height:260px"></svg>
-    <div class="chartcap" id="cmcap"></div>
+    <div id="cmsubval" style="font-size:13px;color:var(--dim);margin-bottom:6px"></div>
+    <div class="grp" id="cmwins">
+      <button data-kwin="1h">1h</button><button data-kwin="6h">6h</button>
+      <button data-kwin="24h">24h</button><button data-kwin="7d">7d</button><button data-kwin="14d">14d</button>
+    </div>
+    <svg id="cmsvg"></svg>
+    <div class="chartcap" id="cmcap">把鼠标移到图上读某一时刻的值</div>
+    <div id="cmstats"></div>
+    <div id="cmtable"></div>
   </div>
 </div>
 <footer>nodedata <span id="ver">—</span> · 单静态二进制 · L0 巡检 / L1 采集 / L2 转储 / L3 偏离 / L4 诊断</footer>
@@ -738,32 +761,144 @@ function bindHover(d){
   });
 }
 /* ---- chart modal ---- */
-var _modalSeries=null, _modalData=null;
+var _mS=null, _mD=null;
+var MCH={w:800,h:260,l:62,r:14,t:14,b:26};
+
 function openChartModal(s,d){
-  _modalSeries=s; _modalData=d;
+  _mS=s; _mD=d;
+  document.getElementById("cmtitle").firstChild.nodeValue=s.label+"\u3000";
   var lv=lastVal(s);
-  document.getElementById("cmtitle").firstChild.nodeValue=s.label+"　";
-  document.getElementById("cmval").textContent=lv===null?"—":fmt(lv,s.unit);
-  document.getElementById("cmsubval").textContent=s.id+(s.unit?" ("+s.unit+")":"");
-  // Build big SVG
-  var svg=document.getElementById("cmsvg");
-  var bigCH={w:800,h:200,l:52,r:10,t:12,b:20};
-  svg.setAttribute("viewBox","0 0 "+bigCH.w+" "+bigCH.h);
-  svg.innerHTML=buildSVG(s,d.from,d.at,bigCH);
-  // Bind hover on modal SVG
+  document.getElementById("cmval").textContent=lv===null?"\u2014":fmt(lv,s.unit);
+  document.getElementById("cmsubval").textContent=s.id+(s.unit?"\uff08"+s.unit+"\uff09":"");
+  [].forEach.call(document.querySelectorAll("#cmwins button"),function(x){
+    x.classList.toggle("on",x.getAttribute("data-kwin")===state.kwin);});
+  renderModal();
+  document.getElementById("cmask").hidden=false;
+}
+
+function renderModal(){
+  var s=_mS,d=_mD,svg=document.getElementById("cmsvg");
+  svg.setAttribute("viewBox","0 0 "+MCH.w+" "+MCH.h);
+  svg.innerHTML=buildSVG(s,d.from,d.at,MCH);
+  document.getElementById("cmstats").innerHTML=statsHTML(s);
+  document.getElementById("cmtable").innerHTML=valuesHTML(s);
+  bindCross(svg,s);
+}
+
+// 图下的统计摘要：一眼看出这段时间的范围与中心，不用把鼠标划一遍
+function statsHTML(s){
+  var vals=[],first=null,last=null,firstT=null,lastT=null;
+  for(var i=0;i<s.v.length;i++){
+    var v=s.v[i];
+    if(v===null||!isFinite(v)) continue;
+    vals.push(v);
+    if(first===null){first=v;firstT=s.ts[i];}
+    last=v; lastT=s.ts[i];
+  }
+  if(!vals.length) return '<div>这段时间没有数据</div>';
+  var sorted=vals.slice().sort(function(a,b){return a-b;});
+  var sum=0; vals.forEach(function(v){sum+=v;});
+  var q=function(p){return sorted[Math.min(sorted.length-1,Math.round((sorted.length-1)*p))];};
+  var chg="\u2014";
+  if(first!==null&&first!==0){
+    var pc=(last-first)/Math.abs(first)*100;
+    chg=(pc>=0?"+":"")+(Math.abs(pc)>=1000?(pc/1000).toFixed(1)+"k":pc.toFixed(1))+"%";
+  }else if(first===0&&last!==0){ chg="从 0 起"; }
+  var cell=function(k,v){return '<div>'+esc(k)+'<b>'+esc(v)+'</b></div>';};
+  return cell("最新",fmt(last,s.unit))+cell("最小",fmt(sorted[0],s.unit))+
+    cell("最大",fmt(sorted[sorted.length-1],s.unit))+cell("平均",fmt(sum/vals.length,s.unit))+
+    cell("中位数",fmt(q(0.5),s.unit))+cell("P95",fmt(q(0.95),s.unit))+
+    cell("区间首\u2192末",chg)+cell("有效点 / 总点",vals.length+" / "+s.v.length)+
+    cell("起",new Date(firstT*1000).toLocaleString())+
+    cell("止",new Date(lastT*1000).toLocaleString());
+}
+
+// 图下的数值表：曲线看形状，表读具体数字。最多 40 行等间隔抽样，
+// 但最后一个点必须在表里——那是“现在是多少”。
+function valuesHTML(s){
+  var idx=[];
+  for(var i=0;i<s.v.length;i++) idx.push(i);
+  var MAXROWS=40;
+  if(idx.length>MAXROWS){
+    var step=(idx.length-1)/(MAXROWS-1), picked=[];
+    for(var k=0;k<MAXROWS;k++) picked.push(Math.round(k*step));
+    picked[picked.length-1]=idx.length-1;
+    idx=picked;
+  }
+  // 连续的空档折叠成一行：实例刚装上时 40 行里 38 行"无数据"，那张表没法看
+  var rows="",prev=null,gapFrom=null,gapN=0;
+  var flushGap=function(toTS){
+    if(!gapN) return;
+    var mins=Math.round((toTS-gapFrom)/60);
+    rows+='<tr class="gap"><td class="t">'+esc(new Date(gapFrom*1000).toLocaleString())+'</td>'+
+      '<td colspan="2">无数据（'+(mins>=120?Math.round(mins/60)+" 小时":mins+" 分钟")+'，共 '+gapN+' 个采样点）</td></tr>';
+    gapN=0; gapFrom=null;
+  };
+  for(var k=0;k<idx.length;k++){
+    var i=idx[k], v=s.v[i];
+    if(v===null||!isFinite(v)){
+      if(gapFrom===null) gapFrom=s.ts[i];
+      gapN++;
+      continue;
+    }
+    flushGap(s.ts[i]);
+    var delta="\u2014";
+    if(prev!==null&&prev!==0){
+      var pc=(v-prev)/Math.abs(prev)*100;
+      if(Math.abs(pc)>=0.5) delta=(pc>0?"\u25b2 ":"\u25bc ")+Math.abs(pc).toFixed(0)+"%";
+    }
+    prev=v;
+    rows+='<tr><td class="t">'+esc(new Date(s.ts[i]*1000).toLocaleString())+'</td>'+
+      '<td>'+esc(fmt(v,s.unit))+'</td><td>'+esc(delta)+'</td></tr>';
+  }
+  flushGap(s.ts[idx[idx.length-1]]);
+  if(!rows) rows='<tr class="gap"><td colspan="3">这段时间没有数据</td></tr>';
+  return '<table><thead><tr><th>时刻</th><th>值</th><th>较上一行</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+// 悬停：十字线 + 圆点 + 读数
+function bindCross(svg,s){
   var cap=document.getElementById("cmcap");
   svg.addEventListener("mousemove",function(ev){
     var rc=svg.getBoundingClientRect();
     var frac=(ev.clientX-rc.left)/rc.width;
-    var inner=(bigCH.w-bigCH.l-bigCH.r)/bigCH.w, off=bigCH.l/bigCH.w;
+    var inner=(MCH.w-MCH.l-MCH.r)/MCH.w, off=MCH.l/MCH.w;
     var i=Math.round((frac-off)/inner*(s.v.length-1));
-    if(i<0)i=0; if(i>=s.v.length)i=s.v.length-1;
+    i=Math.max(0,Math.min(s.v.length-1,i));
     var v=s.v[i];
-    cap.textContent=new Date(s.ts[i]*1000).toLocaleString()+"　"+(v===null||!isFinite(v)?"无数据":fmt(v,s.unit));
+    cap.textContent=new Date(s.ts[i]*1000).toLocaleString()+"\u3000"+
+      (v===null||!isFinite(v)?"无数据":fmt(v,s.unit));
+    var old=svg.querySelector(".crossg"); if(old) old.remove();
+    if(v===null||!isFinite(v)) return;
+    var px=MCH.l+(MCH.w-MCH.l-MCH.r)*(s.v.length<2?0:i/(s.v.length-1));
+    var py=svg._yOf?svg._yOf(v):null;
+    var g=document.createElementNS("http://www.w3.org/2000/svg","g");
+    g.setAttribute("class","crossg");
+    g.innerHTML='<line class="cross" x1="'+px.toFixed(1)+'" y1="'+MCH.t+'" x2="'+px.toFixed(1)+
+      '" y2="'+(MCH.h-MCH.b)+'"/>'+
+      (py===null?"":'<circle class="dot" cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="3.5"/>');
+    svg.appendChild(g);
   });
-  svg.addEventListener("mouseleave",function(){cap.textContent="";});
-  document.getElementById("cmask").hidden=false;
+  svg.addEventListener("mouseleave",function(){
+    cap.textContent="把鼠标移到图上读某一时刻的值";
+    var old=svg.querySelector(".crossg"); if(old) old.remove();
+  });
 }
+
+// 放大图里直接换时间窗口，不用关掉再回去改
+document.getElementById("cmwins").addEventListener("click",async function(e){
+  var b=e.target.closest("button[data-kwin]"); if(!b) return;
+  [].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});
+  var win=b.getAttribute("data-kwin");
+  try{
+    var d=(await getJSON("/api/keyseries?win="+encodeURIComponent(win))).json;
+    for(var gi=0;gi<d.groups.length;gi++)
+      for(var si=0;si<d.groups[gi].series.length;si++)
+        if(d.groups[gi].series[si].id===_mS.id){ _mS=d.groups[gi].series[si]; _mD=d; renderModal(); return; }
+    document.getElementById("cmcap").textContent="这个窗口里没有该指标的数据";
+  }catch(err){ document.getElementById("cmcap").textContent="切换窗口失败："+err.message; }
+});
+
 function closeChartModal(){document.getElementById("cmask").hidden=true;}
 document.getElementById("cclose").addEventListener("click",closeChartModal);
 document.getElementById("cmask").addEventListener("click",function(e){
@@ -799,9 +934,24 @@ function buildSVG(s,from,to,ch){
     gl+='<line class="gl" x1="'+ch.l+'" y1="'+yy+'" x2="'+(ch.w-ch.r)+'" y2="'+yy+'"/>'+
         '<text class="ax" x="'+(ch.l-4)+'" y="'+(+yy+3)+'" text-anchor="end">'+esc(fmt(g0,s.unit))+'</text>';
   }
-  var t0=new Date(from*1000),t1=new Date(to*1000),hm=function(d){return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);};
-  var xl='<text class="ax" x="'+ch.l+'" y="'+(ch.h-4)+'">'+hm(t0)+'</text>'+
-         '<text class="ax" x="'+(ch.w-ch.r)+'" y="'+(ch.h-4)+'" text-anchor="end">'+hm(t1)+'</text>';
+  // 时间轴：小图两端各一个标签就够；放大图给 5 个刻度，否则中间任何位置都读不出时刻
+  var hm=function(d){
+    var t=("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);
+    return (to-from)>36*3600 ? (d.getMonth()+1)+"/"+d.getDate()+" "+t : t;
+  };
+  var ticks=(ch.w>=700)?5:2, xl="";
+  for(var ti=0;ti<ticks;ti++){
+    var f=ticks<2?0:ti/(ticks-1);
+    var tx=ch.l+(ch.w-ch.l-ch.r)*f;
+    var anchor=ti===0?"start":(ti===ticks-1?"end":"middle");
+    xl+='<text class="ax" x="'+tx.toFixed(1)+'" y="'+(ch.h-6)+'" text-anchor="'+anchor+'">'+
+        esc(hm(new Date((from+(to-from)*f)*1000)))+'</text>';
+    if(ti>0&&ti<ticks-1)
+      xl+='<line class="gl" x1="'+tx.toFixed(1)+'" y1="'+ch.t+'" x2="'+tx.toFixed(1)+'" y2="'+(ch.h-ch.b)+'"/>';
+  }
+  // 把 y 映射挂到 svg 上，悬停时的圆点才能落在线上
+  var sv=document.getElementById("cmsvg");
+  if(sv&&ch===MCH) sv._yOf=y;
   return gl+area+line+xl;
 }
 document.getElementById("kwins").addEventListener("click",function(e){
