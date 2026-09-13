@@ -47,7 +47,7 @@ section>h2 .layer{color:var(--dim);font-weight:500;font-size:12px;margin-left:7p
 .bar{height:5px;background:#e7eaee;border-radius:3px;margin:8px 0 9px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--ok);border-radius:3px}
 .bar>i.warn{background:var(--warn)} .bar>i.bad{background:var(--bad)}
-.checks{max-height:170px;overflow-y:auto;font-size:12px}
+.checks{font-size:12px}
 .chk{display:flex;gap:7px;align-items:flex-start;padding:3px 0;border-top:1px dotted #e7eaee}
 .chk:first-child{border-top:0}
 .chk .m{flex:1;min-width:0}
@@ -99,6 +99,16 @@ table[data-sid] thead th.sorted .ar{opacity:1}
 .chartbox .hv{stroke:#94a3b8;stroke-width:1;stroke-dasharray:2 2}
 .chartbox .flat{font-size:10px;fill:var(--dim)}
 .chartcap{font-size:10.5px;color:var(--dim);margin-top:2px;min-height:14px}
+.chartbox{cursor:zoom-in}
+/* ---- chart modal ---- */
+#cmask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;display:flex;align-items:center;justify-content:center}
+#cmodal{background:#fff;border-radius:10px;padding:20px 22px 16px;width:min(860px,96vw);max-height:90vh;overflow:auto;position:relative;box-shadow:0 8px 32px rgba(0,0,0,.28)}
+#cmodal h3{font-size:16px;font-weight:650;margin:0 0 4px;display:flex;justify-content:space-between;align-items:center}
+#cmodal h3 b{font-size:22px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:var(--ink)}
+#cmodal svg{display:block;width:100%;height:260px;margin:8px 0 4px}
+#cmodal .chartcap{font-size:12px;min-height:18px}
+#cmodal .mclose{position:absolute;top:12px;right:14px;font-size:20px;color:var(--dim);background:none;border:none;cursor:pointer;line-height:1;padding:2px 6px}
+#cmodal .mclose:hover{color:var(--ink)}
 .panetabs{display:flex;gap:2px;margin:18px 0 4px;border-bottom:1px solid var(--line)}
 .panetabs button{appearance:none;border:0;background:none;cursor:pointer;font:inherit;font-size:13.5px;
   padding:8px 14px;color:var(--dim);border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -263,6 +273,15 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 
 </div>
 
+<div id="cmask" hidden>
+  <div id="cmodal">
+    <button class="mclose" id="cclose" aria-label="关闭">✕</button>
+    <h3 id="cmtitle">—<b id="cmval">—</b></h3>
+    <div id="cmsubval" style="font-size:13px;color:var(--dim);margin-bottom:4px"></div>
+    <svg id="cmsvg" viewBox="0 0 600 120" preserveAspectRatio="none" style="display:block;width:100%;height:260px"></svg>
+    <div class="chartcap" id="cmcap"></div>
+  </div>
+</div>
 <footer>nodedata <span id="ver">—</span> · 单静态二进制 · L0 巡检 / L1 采集 / L2 转储 / L3 偏离 / L4 诊断</footer>
 </div>
 <script>
@@ -675,37 +694,7 @@ function niceStep(span){                    // 取 1/2/5×10^n 里最接近 span
   return 10*p;
 }
 function chartSVG(s,from,to){
-  var n=s.v.length, vals=s.v.filter(function(v){return v!==null&&isFinite(v);});
-  if(!vals.length) return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'"><text class="flat" x="'+CH.l+'" y="'+(CH.h/2)+'">这段时间没有数据</text></svg>';
-  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
-  if(mx===mn){ mx=mn+(Math.abs(mn)||1)*0.05; mn=mn-(Math.abs(mn)||1)*0.05; }
-  else { var pad=(mx-mn)*0.12; mx+=pad; mn-=pad; }
-  if(mn>0&&mn<(mx-mn)) mn=0;                // 接近 0 就从 0 起，避免夸大波动
-  var x=function(i){return CH.l+(CH.w-CH.l-CH.r)*(n<2?0:i/(n-1));},
-      y=function(v){return CH.t+(CH.h-CH.t-CH.b)*(1-(v-mn)/(mx-mn));};
-  // 折线：null 处断开
-  var segs=[],cur=[];
-  for(var i=0;i<n;i++){
-    var v=s.v[i];
-    if(v===null||!isFinite(v)){ if(cur.length)segs.push(cur); cur=[]; continue; }
-    cur.push(x(i).toFixed(1)+","+y(v).toFixed(1));
-  }
-  if(cur.length)segs.push(cur);
-  var line=segs.map(function(g){return '<path class="ln" d="M'+g.join("L")+'"/>';}).join("");
-  var area=segs.filter(function(g){return g.length>1;}).map(function(g){
-    var a=g[0].split(",")[0], b=g[g.length-1].split(",")[0], base=y(Math.max(mn,0)).toFixed(1);
-    return '<path class="ar" d="M'+a+','+base+'L'+g.join("L")+'L'+b+','+base+'Z"/>';}).join("");
-  // y 轴两三条刻度
-  var st=niceStep(mx-mn), gl="";
-  for(var g0=Math.ceil(mn/st)*st; g0<=mx; g0+=st){
-    var yy=y(g0).toFixed(1);
-    gl+='<line class="gl" x1="'+CH.l+'" y1="'+yy+'" x2="'+(CH.w-CH.r)+'" y2="'+yy+'"/>'+
-        '<text class="ax" x="'+(CH.l-4)+'" y="'+(+yy+3)+'" text-anchor="end">'+esc(fmt(g0,s.unit))+'</text>';
-  }
-  var t0=new Date(from*1000),t1=new Date(to*1000),hm=function(d){return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);};
-  var xl='<text class="ax" x="'+CH.l+'" y="'+(CH.h-4)+'">'+hm(t0)+'</text>'+
-         '<text class="ax" x="'+(CH.w-CH.r)+'" y="'+(CH.h-4)+'" text-anchor="end">'+hm(t1)+'</text>';
-  return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'" preserveAspectRatio="none">'+gl+area+line+xl+'</svg>';
+  return '<svg viewBox="0 0 '+CH.w+' '+CH.h+'" preserveAspectRatio="none">'+buildSVG(s,from,to,CH)+'</svg>';
 }
 function lastVal(s){
   for(var i=s.v.length-1;i>=0;i--) if(s.v[i]!==null&&isFinite(s.v[i])) return s.v[i];
@@ -744,7 +733,76 @@ function bindHover(d){
       cap.textContent=new Date(s.ts[i]*1000).toLocaleString()+"　"+(v===null||!isFinite(v)?"无数据":fmt(v,s.unit));
     });
     svg.addEventListener("mouseleave",function(){cap.textContent="";});
+    // Click to open modal
+    box.addEventListener("click",function(){openChartModal(s,d);});
   });
+}
+/* ---- chart modal ---- */
+var _modalSeries=null, _modalData=null;
+function openChartModal(s,d){
+  _modalSeries=s; _modalData=d;
+  var lv=lastVal(s);
+  document.getElementById("cmtitle").firstChild.nodeValue=s.label+"　";
+  document.getElementById("cmval").textContent=lv===null?"—":fmt(lv,s.unit);
+  document.getElementById("cmsubval").textContent=s.id+(s.unit?" ("+s.unit+")":"");
+  // Build big SVG
+  var svg=document.getElementById("cmsvg");
+  var bigCH={w:800,h:200,l:52,r:10,t:12,b:20};
+  svg.setAttribute("viewBox","0 0 "+bigCH.w+" "+bigCH.h);
+  svg.innerHTML=buildSVG(s,d.from,d.at,bigCH);
+  // Bind hover on modal SVG
+  var cap=document.getElementById("cmcap");
+  svg.addEventListener("mousemove",function(ev){
+    var rc=svg.getBoundingClientRect();
+    var frac=(ev.clientX-rc.left)/rc.width;
+    var inner=(bigCH.w-bigCH.l-bigCH.r)/bigCH.w, off=bigCH.l/bigCH.w;
+    var i=Math.round((frac-off)/inner*(s.v.length-1));
+    if(i<0)i=0; if(i>=s.v.length)i=s.v.length-1;
+    var v=s.v[i];
+    cap.textContent=new Date(s.ts[i]*1000).toLocaleString()+"　"+(v===null||!isFinite(v)?"无数据":fmt(v,s.unit));
+  });
+  svg.addEventListener("mouseleave",function(){cap.textContent="";});
+  document.getElementById("cmask").hidden=false;
+}
+function closeChartModal(){document.getElementById("cmask").hidden=true;}
+document.getElementById("cclose").addEventListener("click",closeChartModal);
+document.getElementById("cmask").addEventListener("click",function(e){
+  if(e.target===this) closeChartModal();
+});
+document.addEventListener("keydown",function(e){if(e.key==="Escape") closeChartModal();});
+
+// Refactor chartSVG to accept CH param (keep backward compat)
+function buildSVG(s,from,to,ch){
+  if(!ch) ch=CH;
+  var n=s.v.length, vals=s.v.filter(function(v){return v!==null&&isFinite(v);});
+  if(!vals.length) return '<text class="flat" x="'+ch.l+'" y="'+(ch.h/2)+'">这段时间没有数据</text>';
+  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
+  if(mx===mn){ mx=mn+(Math.abs(mn)||1)*0.05; mn=mn-(Math.abs(mn)||1)*0.05; }
+  else { var pad=(mx-mn)*0.12; mx+=pad; mn-=pad; }
+  if(mn>0&&mn<(mx-mn)) mn=0;
+  var x=function(i){return ch.l+(ch.w-ch.l-ch.r)*(n<2?0:i/(n-1));},
+      y=function(v){return ch.t+(ch.h-ch.t-ch.b)*(1-(v-mn)/(mx-mn));};
+  var segs=[],cur=[];
+  for(var i=0;i<n;i++){
+    var v=s.v[i];
+    if(v===null||!isFinite(v)){ if(cur.length)segs.push(cur); cur=[]; continue; }
+    cur.push(x(i).toFixed(1)+","+y(v).toFixed(1));
+  }
+  if(cur.length)segs.push(cur);
+  var line=segs.map(function(g){return '<path class="ln" d="M'+g.join("L")+'"/>';}).join("");
+  var area=segs.filter(function(g){return g.length>1;}).map(function(g){
+    var a=g[0].split(",")[0], b=g[g.length-1].split(",")[0], base=y(Math.max(mn,0)).toFixed(1);
+    return '<path class="ar" d="M'+a+','+base+'L'+g.join("L")+'L'+b+','+base+'Z"/>';}).join("");
+  var st=niceStep(mx-mn), gl="";
+  for(var g0=Math.ceil(mn/st)*st; g0<=mx; g0+=st){
+    var yy=y(g0).toFixed(1);
+    gl+='<line class="gl" x1="'+ch.l+'" y1="'+yy+'" x2="'+(ch.w-ch.r)+'" y2="'+yy+'"/>'+
+        '<text class="ax" x="'+(ch.l-4)+'" y="'+(+yy+3)+'" text-anchor="end">'+esc(fmt(g0,s.unit))+'</text>';
+  }
+  var t0=new Date(from*1000),t1=new Date(to*1000),hm=function(d){return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);};
+  var xl='<text class="ax" x="'+ch.l+'" y="'+(ch.h-4)+'">'+hm(t0)+'</text>'+
+         '<text class="ax" x="'+(ch.w-ch.r)+'" y="'+(ch.h-4)+'" text-anchor="end">'+hm(t1)+'</text>';
+  return gl+area+line+xl;
 }
 document.getElementById("kwins").addEventListener("click",function(e){
   var b=e.target.closest("button[data-kwin]"); if(!b) return;
