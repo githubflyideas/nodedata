@@ -642,8 +642,31 @@ func checkNetworkCategory(ctx context.Context) Category {
 		cs = append(cs, ok("N01", "网卡状态", "up: "+strings.Join(up, " ")))
 	}
 
-	// N02/N03 收发错误与丢包占比（累计值，看的是比例而不是绝对值）
-	var rxP, rxE, rxD, txP, txE, txD float64
+	// N02 softnet 丢包：/proc/net/softnet_stat col[1]（十六进制）累加各 CPU。
+	// 纯粹的 ring-buffer 溢出丢包，不含"无协议处理器"背景噪音，> 0 即告警。
+	{
+		var softDrop uint64
+		if b, err := os.ReadFile(procRoot + "/net/softnet_stat"); err == nil {
+			for _, ln := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+				f := strings.Fields(ln)
+				if len(f) >= 2 {
+					v, _ := strconv.ParseUint(f[1], 16, 64)
+					softDrop += v
+				}
+			}
+			if softDrop == 0 {
+				cs = append(cs, ok("N02", "收包 ring-buffer 丢包", "softnet_stat.drop = 0，无环形缓冲区溢出"))
+			} else {
+				cs = append(cs, Check{ID: "N02", Name: "收包 ring-buffer 丢包", Level: 2,
+					Message: fmt.Sprintf("softnet_stat.drop 累计 %d，NIC ring-buffer 已溢出；考虑加大 ethtool -G rx", softDrop)})
+			}
+		} else {
+			cs = append(cs, skip("N02", "收包 ring-buffer 丢包", "读不到 /proc/net/softnet_stat"))
+		}
+	}
+
+	// N03 发包错误/丢包占比（/proc/net/dev tx，无背景噪音，用比率判定）
+	var txP, txE, txD float64
 	if b, err := os.ReadFile(procRoot + "/net/dev"); err == nil {
 		for _, ln := range strings.Split(string(b), "\n") {
 			i := strings.IndexByte(ln, ':')
@@ -655,19 +678,8 @@ func checkNetworkCategory(ctx context.Context) Category {
 				continue
 			}
 			g := func(k int) float64 { v, _ := strconv.ParseFloat(f[k], 64); return v }
-			rxP, rxE, rxD = rxP+g(1), rxE+g(2), rxD+g(3)
 			txP, txE, txD = txP+g(9), txE+g(10), txD+g(11)
 		}
-	}
-	// 比率要有意义，分母必须够大。实测一台刚起的机器"6 丢 / 77 收 = 7.79%"就被判 fail，
-	// health.txt 恒为 DOWN —— 而 6 个丢包在任何机器上都不值一提。
-	if rxP >= minPktsForRatio {
-		r := pct(rxE+rxD, rxP)
-		cs = append(cs, judge("N02", "收包错误/丢包", r, 0.01, 0.1,
-			fmt.Sprintf("%.0f 错 + %.0f 丢 / %.0f 收 = %.4f%%", rxE, rxD, rxP, r)))
-	} else {
-		cs = append(cs, skip("N02", "收包错误/丢包",
-			fmt.Sprintf("收包数 %.0f 不足 %d，比率没有意义", rxP, minPktsForRatio)))
 	}
 	if txP >= minPktsForRatio {
 		r := pct(txE+txD, txP)
