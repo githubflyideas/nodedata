@@ -76,6 +76,7 @@ type Collector struct {
 	cachedPsiCPU     string
 	cachedPsiMem     string
 	cachedPsiIO      string
+	cachedSoftnet    string
 
 	// null-terminated 路径缓存，用于直接 RawSyscall，避免 ByteSliceFromString 分配
 	ntStat      []byte
@@ -90,6 +91,7 @@ type Collector struct {
 	ntPsiCPU    []byte
 	ntPsiMem    []byte
 	ntPsiIO     []byte
+	ntSoftnet    []byte
 
 	openedMu    sync.Mutex
 	openedPaths map[string]struct{} // 去重后的路径集合（PID 段归一成 <pid>）
@@ -341,6 +343,11 @@ func (c *Collector) CollectGlobal(procRoot string, now time.Time) ([]Sample, err
 		} else if procRoot == c.cfg.ProcRoot {
 			atomic.StoreInt32(&c.psiAvailable, 0)
 		}
+	}
+
+	// /proc/net/softnet_stat — real ring-buffer overflow drops + NAPI squeeze
+	if data, ok := c.readFileNT(c.ntSoftnet); ok {
+		c.parseSoftnetStat(data, now, dt, hasPrev, &out)
 	}
 
 	c.prevTS = now
@@ -850,4 +857,69 @@ func (c *Collector) conntrackMax() int64 {
 	}
 	c.ctMax = int64(v)
 	return c.ctMax
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parseSoftnetStat — /proc/net/softnet_stat
+//
+// Each line = one CPU, fields are hex.
+//   col[1] = dropped  — backlog-overflow drops (ring buffer full, real loss)
+//   col[2] = time_squeeze — NAPI budget exhausted (CPU backpressure)
+//
+// net.softnet_drop   : actual "can't keep up" drops/s, distinct from the
+//                      mixed rx_dropped counter in /proc/net/dev which also
+//                      counts frames with no protocol handler (IPv6 RA, LLDP…)
+// net.softnet_squeeze: NAPI squeeze events/s, early warning before drops start
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (c *Collector) parseSoftnetStat(data []byte, now time.Time, dt float64, hasPrev bool, out *[]Sample) {
+var totalDrop, totalSqueeze uint64
+lines := data
+for len(lines) > 0 {
+var line []byte
+if i := bytes.IndexByte(lines, '\n'); i >= 0 {
+line, lines = lines[:i], lines[i+1:]
+} else {
+line, lines = lines, nil
+}
+fields := c.splitFieldsBuf(line)
+if len(fields) < 3 {
+continue
+}
+d, e1 := parseHexUint64(fields[1])
+s, e2 := parseHexUint64(fields[2])
+if e1 != nil || e2 != nil {
+continue
+}
+totalDrop += d
+totalSqueeze += s
+}
+if hasPrev {
+if prev := c.prevGlobal["softnet.drop"]; totalDrop >= prev {
+*out = append(*out, Sample{MetricID: "net.softnet_drop", TS: now, Value: float64(totalDrop-prev) / dt})
+}
+if prev := c.prevGlobal["softnet.squeeze"]; totalSqueeze >= prev {
+*out = append(*out, Sample{MetricID: "net.softnet_squeeze", TS: now, Value: float64(totalSqueeze-prev) / dt})
+}
+}
+c.prevGlobal["softnet.drop"] = totalDrop
+c.prevGlobal["softnet.squeeze"] = totalSqueeze
+}
+
+func parseHexUint64(b []byte) (uint64, error) {
+var n uint64
+for _, ch := range b {
+n <<= 4
+switch {
+case ch >= '0' && ch <= '9':
+n |= uint64(ch - '0')
+case ch >= 'a' && ch <= 'f':
+n |= uint64(ch-'a') + 10
+case ch >= 'A' && ch <= 'F':
+n |= uint64(ch-'A') + 10
+default:
+return 0, strconv.ErrSyntax
+}
+}
+return n, nil
 }
