@@ -1,11 +1,13 @@
 # nodedata — 单机偏离度监控
 
-一个静态二进制，读 `/proc`，无外部依赖（不需要 ClickHouse / Caddy / 数据库）。
-页面已内置在二进制里；只需要分发 `nodedata` 这一个文件。
+一个静态二进制.
+## 运行：一行命令、发现问题
 
-## 运行：一行命令
+```bash
+GOMAXPROCS=1 ./nodedata serve --listen 0.0.0.0 --data-dir ./data
+```
 
-临时跑（带资源硬上限，停掉或重启机器即消失）：
+（带资源硬上限，停掉或重启机器即消失）：
 
 ```bash
 sudo systemd-run --unit=nodedata -p CPUQuota=20% -p MemoryMax=300M -p Nice=10 -p IOSchedulingClass=idle -p Restart=always --setenv=GOMAXPROCS=1 --setenv=GOMEMLIMIT=200MiB /usr/local/bin/nodedata serve --port 8888 --data-dir /var/lib/nodedata
@@ -41,11 +43,7 @@ Environment=GOMEMLIMIT=200MiB
 WantedBy=multi-user.target
 ```
 
-不要 systemd、只在前台看一眼：
 
-```bash
-GOMAXPROCS=1 ./nodedata serve --data-dir ./data
-```
 
 ### 为什么是这些限制
 
