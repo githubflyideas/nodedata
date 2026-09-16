@@ -53,6 +53,13 @@ func (b *HeatmapBuilder) KeySeries(win string, d time.Duration, now time.Time) *
 	if tol < 30*time.Second {
 		tol = 30 * time.Second
 	}
+	// 落到长期层的那段要用长期层的容差：长期层是 5 分钟一格，拿 30 秒的容差去配必然全空。
+	// 重启后原始层清零，1h 窗口的曲线会整片空白——而那段时间的数据其实在磁盘上躺着。
+	coarseTol := coarseStep / 2
+	if coarseTol < tol {
+		coarseTol = tol
+	}
+	rawStart := b.rawStartOf(compareDefs)
 	out := &KeySeriesJSON{At: now.Unix(), Window: win, From: from.Unix()}
 	// 进程组是动态的（取占用最高的几个），和对比表用同一份定义。
 	// 内存泄漏在曲线上是一条持续爬坡的线，这是数字列最看不出来的形状。
@@ -78,7 +85,11 @@ func (b *HeatmapBuilder) KeySeries(win string, d time.Duration, now time.Time) *
 				ID: strings.Join(def.ids, " + ")}
 			any := false
 			for ts := from; !ts.After(now); ts = ts.Add(step) {
-				v := b.valueAtTol(def, ts, tol)
+				t := tol
+				if rawStart.IsZero() || ts.Before(rawStart) {
+					t = coarseTol // 这个时刻原始层还没有，只能靠长期层
+				}
+				v := b.valueAtTol(def, ts, t)
 				s.TS = append(s.TS, ts.Unix())
 				s.Values = append(s.Values, v)
 				any = any || v != nil
@@ -109,4 +120,27 @@ func (b *HeatmapBuilder) valueAtTol(d cmpDef, at time.Time, tol time.Duration) *
 		x = d.f(vals)
 	}
 	return &x
+}
+
+// rawStartOf 返回原始层最早的一个点的时刻（取几个常见指标的最小值）。
+// 早于它的时刻只能从长期层取，容差必须按长期层的粒度放宽。
+func (b *HeatmapBuilder) rawStartOf(groups []struct {
+	name string
+	rows []cmpDef
+}) time.Time {
+	var earliest time.Time
+	for _, g := range groups {
+		for _, d := range g.rows {
+			for _, id := range d.ids {
+				pts := b.series.RawRange(id, time.Time{}, farFuture)
+				if len(pts) == 0 {
+					continue
+				}
+				if earliest.IsZero() || pts[0].TS.Before(earliest) {
+					earliest = pts[0].TS
+				}
+			}
+		}
+	}
+	return earliest
 }

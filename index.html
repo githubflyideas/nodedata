@@ -326,7 +326,7 @@ var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9];                 // L5..L10 : 5400s .. 7d
 var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
           degrade:"只看 L5–L10（1.5 小时 ~ 7 天），缓慢劣化在这里才显形。L9 起需要 ≥2 天历史、L10 需要 ≥14 天；历史落盘，重启不丢。",
-          absolute:"不做任何归一化，直接给当前原始读数。"};
+          absolute:"不做任何归一化，直接给当前原始读数；窗口内变化 = 这个窗口里第一个点到现在的变化。"};
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
@@ -506,7 +506,7 @@ function renderL3(){
   if(!h){el.innerHTML="<tbody><tr><td class=\"empty\">无数据</td></tr></tbody>";return;}
   var ms=(h.metrics||[]).map(function(m){
     var last=(m.points&&m.points.length)?m.points[m.points.length-1]:null;
-    return {id:m.metric_id,dom:m.domain,unit:m.unit,pri:m.is_primary,pt:last,n:(m.points||[]).length};
+    return {id:m.metric_id,dom:m.domain,unit:m.unit,pt:last,pts:m.points||[],n:(m.points||[]).length};
   });
   if(!ms.length){el.innerHTML="<tbody><tr><td class=\"empty\">这个窗口里没有指标。</td></tr></tbody>";return;}
   var lags=h.lags||[],ready=h.lag_ready||[];
@@ -538,13 +538,26 @@ function renderL3(){
   el.innerHTML="<thead>"+head+"</thead><tbody>"+rows+"</tbody>";
 }
 function renderAbs(el,ms){
-  var st=sortRows(ms,["id","dom","unit","v","n","pri"],"pri");
-  var head='<tr>'+th("id","指标","",st)+th("dom","域","",st)+th("unit","单位","",st)+th("v","当前值","num",st)+
-           th("n","窗口内样本","num",st)+th("pri","主视图","mid",st)+'</tr>';
+  // 原来这里有一列"主视图"，它只是内部的"属不属于核心域"标记，对看的人没有任何意义。
+  // 换成"最近变化"——绝对值页缺的恰恰是"这个数是刚变的还是一直如此"。
+  var st=sortRows(ms,["id","dom","unit","v","n"],"id");
+  var head='<tr>'+th("id","指标","",st)+th("dom","域","",st)+th("unit","单位","",st)+
+           th("v","当前值","num",st)+th("chg","窗口内变化","num",st)+th("n","窗口内样本","num",st)+'</tr>';
   el.innerHTML="<thead>"+head+"</thead><tbody>"+ms.map(function(m){
+    var pts=m.pts||[], first=null, last=m.pt?m.pt.v:null, chg='<span class="na-dash">—</span>';
+    for(var i=0;i<pts.length;i++){ if(pts[i].v!=null&&isFinite(pts[i].v)){first=pts[i].v;break;} }
+    if(first!==null&&last!==null&&isFinite(last)){
+      if(first===0&&last===0) chg='<span class="chg">—</span>';
+      else if(first===0) chg='<span class="chg">从 0 起</span>';
+      else{
+        var pc=(last-first)/Math.abs(first)*100;
+        chg=Math.abs(pc)<0.5?'<span class="chg">—</span>'
+          :'<span class="chg'+(Math.abs(pc)>=20?" bad":"")+'">'+(pc>0?"▲ ":"▼ ")+Math.abs(pc).toFixed(0)+'%</span>';
+      }
+    }
     return '<tr><td class="mid-id">'+esc(m.id)+pidsFor(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
-      '<td>'+esc(m.unit)+'</td><td class="num">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td>'+
-      '<td class="num">'+m.n+'</td><td class="mid">'+(m.pri?"●":"")+'</td></tr>';
+      '<td>'+esc(m.unit)+'</td><td class="num" data-sort="'+(m.pt?m.pt.v:"")+'">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td>'+
+      '<td class="num">'+chg+'</td><td class="num" data-sort="'+m.n+'">'+m.n+'</td></tr>';
   }).join("")+"</tbody>";
 }
 
