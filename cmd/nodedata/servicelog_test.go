@@ -33,9 +33,9 @@ func TestServiceLogLifecycle(t *testing.T) {
 		t.Fatalf("基线应有 2 个服务")
 	}
 
-	// 第 2 天：Nginx 新装
+	// 第 2 天：Nginx 新装（启动时刻取 minServiceAge 之前，否则会被"短命命令"规则挡掉）
 	d2 := day0.Add(48 * time.Hour)
-	nginx := svc("Nginx", 890, d2.Unix(), 80, 443)
+	nginx := svc("Nginx", 890, d2.Add(-30*time.Minute).Unix(), 80, 443)
 	ev := l.Update([]collector.Service{mysql, redis, nginx}, d2)
 	if len(ev) != 1 || ev[0].Kind != evAppear || ev[0].Name != "Nginx" {
 		t.Fatalf("应报 Nginx 出现: %+v", ev)
@@ -55,7 +55,7 @@ func TestServiceLogLifecycle(t *testing.T) {
 
 	// 第 4 天：Redis 重启（名字在、starttime 变）
 	d4 := day0.Add(96 * time.Hour)
-	redis2 := svc("Redis", 9999, d4.Unix(), 6379)
+	redis2 := svc("Redis", 9999, d4.Add(-30*time.Minute).Unix(), 6379)
 	ev = l.Update([]collector.Service{redis2, nginx}, d4)
 	if len(ev) != 1 || ev[0].Kind != evRestart {
 		t.Fatalf("应报 Redis 重启: %+v", ev)
@@ -156,4 +156,40 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// 服务表被短命命令占满：apt-get 更新软件包时 CPU 过 5% 就被收进来，
+// 几秒后结束变成"已消失"，然后躺满整个保留期。实测一台桌面机 11 行全是这种。
+func TestTransientCommandsNotLedgered(t *testing.T) {
+	l := NewServiceLog(t.TempDir()+"/s.jsonl", 7*24*time.Hour)
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	l.Load(now)
+	l.startAt = now.Add(-time.Hour) // 跳过学习期
+
+	mysql := collector.Service{Name: "MySQL", Exe: "mysqld", PID: 1, Ports: []int{3306},
+		StartTS: now.Add(-24 * time.Hour).Unix()}
+	aptGet := collector.Service{Name: "apt-get", Exe: "apt-get", PID: 2, // 无端口、无 unit
+		StartTS: now.Add(-3 * time.Second).Unix()}
+	youngUnit := collector.Service{Name: "fwupd", Exe: "fwupd", PID: 3, Unit: "fwupd.service",
+		StartTS: now.Add(-5 * time.Second).Unix()} // 有 unit 但刚起来
+
+	l.Update([]collector.Service{mysql, aptGet, youngUnit}, now)
+	cur := l.Current()
+	if len(cur) != 1 || cur[0].Name != "MySQL" {
+		t.Fatalf("只有真正的服务该进表，实际：%+v", cur)
+	}
+	// 短命命令消失后也不该留下"已消失"的行
+	l.Update([]collector.Service{mysql}, now.Add(time.Minute))
+	l.Update([]collector.Service{mysql}, now.Add(2*time.Minute))
+	l.Update([]collector.Service{mysql}, now.Add(3*time.Minute))
+	if v := l.Vanished(); len(v) != 0 {
+		t.Fatalf("短命命令不该留下消失记录：%+v", v)
+	}
+	// 活够久的 systemd 服务照常进表
+	oldUnit := youngUnit
+	oldUnit.StartTS = now.Add(-2 * time.Hour).Unix()
+	l.Update([]collector.Service{mysql, oldUnit}, now.Add(4*time.Minute))
+	if len(l.Current()) != 2 {
+		t.Fatalf("活够久的 systemd 服务应进表：%+v", l.Current())
+	}
 }

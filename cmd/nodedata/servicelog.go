@@ -49,6 +49,26 @@ type svcEvent struct {
 // vanishConfirm：连续这么多轮没看见才算消失。一轮抖动（读 /proc 撞上进程重启）不算。
 const vanishConfirm = 3
 
+// minServiceAge：活得比这短的不进事件流。
+//
+// "进视野"的条件里有"CPU ≥5% 或 RSS ≥128MB"，于是 apt-get 更新软件包、dash 执行一条命令
+// 都会被收进来，几秒后结束变成"已消失"，然后在表里躺满整个保留期。
+// 实测一台桌面机的服务表里 11 行有 11 行是这种：anacron、apt-get、dash、fwupd、tracker-*。
+// 表被垃圾占满，真正的服务消失时反而不显眼。
+const minServiceAge = 10 * time.Minute
+
+// isRealService：只有"在提供服务"的才进事件流——有监听端口，或由 systemd 拉起。
+// 纯靠资源占用进来的是重负载进程，在进程表里看就够了，不该占服务表的行。
+func isRealService(s collector.Service, now time.Time) bool {
+	if len(s.Ports) == 0 && s.Unit == "" {
+		return false
+	}
+	if s.StartTS > 0 && now.Unix()-s.StartTS < int64(minServiceAge.Seconds()) {
+		return false // 跑几秒就结束的命令天然被挡掉
+	}
+	return true
+}
+
 // ServiceLog 维护当前服务集合、事件流与落盘。
 type ServiceLog struct {
 	path   string
@@ -112,6 +132,9 @@ func (l *ServiceLog) Update(svcs []collector.Service, now time.Time) []svcEvent 
 	var out []svcEvent
 
 	for _, s := range svcs {
+		if !isRealService(s, now) {
+			continue
+		}
 		id := s.ID()
 		seen[id] = true
 		delete(l.missing, id)

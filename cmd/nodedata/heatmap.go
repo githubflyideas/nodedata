@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -377,4 +378,89 @@ func (b *HeatmapBuilder) LowConfLags(id string, at time.Time) [deviation.NLag]bo
 // sigmaAt 取某指标某档位在当前小时桶的 σ 统计，供测试与自检使用。
 func (b *HeatmapBuilder) sigmaAt(id string, lagIdx int, at time.Time) deviation.LagSigma {
 	return b.sigma.Get(id, lagIdx, at.UTC().Hour())
+}
+
+// LagDiag 是单个档位的自检结果，用来回答"L1–L5 为什么没数"这类问题。
+//
+// z 为空只有两个原因：σ 没就绪，或者配不到 t−H 那个点。
+// 这两件事的修法完全不同（前者等历史、后者等原始层攒够 H），
+// 但页面上都显示成同一个斜纹格，看的人无从分辨。
+type LagDiag struct {
+	Lag          string `json:"lag"`
+	Seconds      int    `json:"seconds"`
+	Tier         string `json:"tier"`        // raw | coarse
+	HistSpanS    int64  `json:"hist_span_s"` // 该层历史覆盖的跨度
+	HistPoints   int    `json:"hist_points"` // 该层点数
+	SigmaReady   int    `json:"sigma_ready"` // σ 就绪的指标数
+	SigmaTotal   int    `json:"sigma_total"` // 参与统计的指标数
+	SigmaN       int    `json:"sigma_n"`     // 样例指标当前小时桶的样本数
+	LookupOK     int    `json:"lookup_ok"`   // 能配到 t−H 的指标数
+	ZAvailable   int    `json:"z_available"` // 最终能出 z 的指标数
+	SampleMetric string `json:"sample_metric"`
+	Reason       string `json:"reason"`
+}
+
+// DiagnoseLags 逐档位说明"现在能不能出 z，不能的话卡在哪一步"。
+func (b *HeatmapBuilder) DiagnoseLags(now time.Time) []LagDiag {
+	ids := b.series.MetricIDs()
+	sample := ""
+	for _, id := range ids {
+		if id == "cpu.user" || (sample == "" && strings.HasPrefix(id, "cpu.")) {
+			sample = id
+		}
+	}
+	if sample == "" && len(ids) > 0 {
+		sample = ids[0]
+	}
+	rawSpan := int64(0)
+	if pts := b.series.RawRange(sample, time.Time{}, farFuture); len(pts) > 1 {
+		rawSpan = int64(pts[len(pts)-1].TS.Sub(pts[0].TS).Seconds())
+	}
+	out := make([]LagDiag, 0, deviation.NLag)
+	for i, sec := range deviation.LagSeconds {
+		d := LagDiag{Lag: deviation.LagID(i), Seconds: sec, SampleMetric: sample, Tier: "raw"}
+		if lagUsesCoarse(sec) || rawSpan < int64(deviation.MinBaselineSpan.Seconds()) {
+			d.Tier = "coarse"
+		}
+		pts := b.series.RawRange(sample, time.Time{}, farFuture)
+		if d.Tier == "coarse" {
+			pts = b.series.CoarseRange(sample, time.Time{}, farFuture)
+		}
+		d.HistPoints = len(pts)
+		if len(pts) > 1 {
+			d.HistSpanS = int64(pts[len(pts)-1].TS.Sub(pts[0].TS).Seconds())
+		}
+		tol := deviation.LagTolerance(time.Duration(sec) * time.Second)
+		for _, id := range ids {
+			d.SigmaTotal++
+			if ls := b.sigmaAt(id, i, now); ls.Ready {
+				d.SigmaReady++
+				if id == sample {
+					d.SigmaN = ls.N
+				}
+			}
+			if _, ok := b.series.Lookup(id, now.Add(-time.Duration(sec)*time.Second), tol); ok {
+				d.LookupOK++
+			}
+		}
+		for _, m := range b.Latest(now).Metrics {
+			if p := m.Points[len(m.Points)-1]; p.Z[i] != nil {
+				d.ZAvailable++
+			}
+		}
+		switch {
+		case d.ZAvailable > 0:
+			d.Reason = "正常"
+		case d.SigmaReady == 0:
+			d.Reason = fmt.Sprintf("σ 未就绪：%s 层历史只覆盖 %ds，需要 ≥%.0fs 且该小时桶 ≥%d 个同时段样本",
+				d.Tier, d.HistSpanS, deviation.MinBaselineSpan.Seconds(), deviation.MinDiffsForZ)
+		case d.LookupOK == 0:
+			d.Reason = fmt.Sprintf("配不到 %ds 前的点（容差 %v）：原始层还没攒够这么长，长期层是 %v 一格、对不上短档",
+				sec, tol, coarseStep)
+		default:
+			d.Reason = "部分指标可出 z"
+		}
+		out = append(out, d)
+	}
+	return out
 }

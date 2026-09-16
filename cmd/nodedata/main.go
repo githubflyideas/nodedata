@@ -160,7 +160,8 @@ func runServe() {
 	// ── L4：诊断链（读 L0 结果 + L3 偏离度）
 	// 服务识别与事件流（14 天保留，跟长期层一致）。放在 diagnoser 之前：
 	// L4 的责任方要带服务名。
-	svcLog := NewServiceLog(filepath.Join(dataDir, "services.jsonl"), coarseRetention)
+	// 消失的服务保留 7 天：14 天前挂掉的服务基本没人还在查，而它们一直占着表
+	svcLog := NewServiceLog(filepath.Join(dataDir, "services.jsonl"), 7*24*time.Hour)
 	if n, err := svcLog.Load(time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: 服务事件流读取失败: %v\n", err)
 	} else {
@@ -257,6 +258,11 @@ func runServe() {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		fmt.Fprint(w, healthLine(hostname, l0, diagnoser.Run(3.0), builder.healthValues(now), now))
+	})
+
+	// 一条 curl 回答"L1–L5 为什么没数"：卡在 σ 还是卡在配对
+	mux.HandleFunc("/api/lagdiag", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, builder.DiagnoseLags(time.Now()))
 	})
 
 	mux.HandleFunc("/api/keyseries", func(w http.ResponseWriter, r *http.Request) {
