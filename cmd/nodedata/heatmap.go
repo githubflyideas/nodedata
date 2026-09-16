@@ -120,10 +120,23 @@ func (b *HeatmapBuilder) RefreshSigma() {
 		// 两层各自已按点数/保留期封顶，这里整层取出，不再按墙钟截。
 		raw := toSamples(b.series.RawRange(id, time.Time{}, farFuture))
 		coarse := toSamples(b.series.CoarseRange(id, time.Time{}, farFuture))
+		rawSpan := spanOf(raw)
 		for lagIdx, lagSec := range deviation.LagSeconds {
 			hist := raw
 			if lagUsesCoarse(lagSec) {
 				hist = coarse
+			} else if rawSpan < deviation.MinBaselineSpan {
+				// 原始层只在内存里，重启即清空：L1–L5 全靠它，于是每次重启后
+				// 短档位要瞎一个小时——而"突发抖动最先出现在 L1–L4"正是它们的用处，
+				// 重启后的第一个小时恰恰最需要看。
+				//
+				// 长期层是落盘的、5 分钟一点，而 L1 的滞后正好是 300 秒：
+				// 相邻两个长期层点恰好配成一对，容差 30 秒也盖得住采样抖动。
+				// 所以原始层还没攒够跨度时，先用长期层顶上；
+				// 攒够之后自动切回原始层（更密，尺度估得更准）。
+				if spanOf(coarse) >= deviation.MinBaselineSpan {
+					hist = coarse
+				}
 			}
 			if len(hist) < 2 {
 				continue
@@ -137,6 +150,14 @@ func (b *HeatmapBuilder) RefreshSigma() {
 }
 
 var farFuture = time.Unix(1<<62, 0)
+
+// spanOf 返回一层历史覆盖的墙钟跨度。
+func spanOf(hist []deviation.Sample) time.Duration {
+	if len(hist) < 2 {
+		return 0
+	}
+	return hist[len(hist)-1].TS.Sub(hist[0].TS)
+}
 
 // lagUsesCoarse 判断某档位的 σ 是否取长期层。
 func lagUsesCoarse(lagSec int) bool {
@@ -351,4 +372,9 @@ func (b *HeatmapBuilder) LowConfLags(id string, at time.Time) [deviation.NLag]bo
 		out[i] = ls.Low
 	}
 	return out
+}
+
+// sigmaAt 取某指标某档位在当前小时桶的 σ 统计，供测试与自检使用。
+func (b *HeatmapBuilder) sigmaAt(id string, lagIdx int, at time.Time) deviation.LagSigma {
+	return b.sigma.Get(id, lagIdx, at.UTC().Hour())
 }

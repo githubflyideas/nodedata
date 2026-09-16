@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/githubflyideas/nodedata"
@@ -107,13 +110,14 @@ func runServe() {
 	if histDir == "" {
 		histDir = filepath.Join(dataDir, "history")
 	}
+	var cleanups []func()
+	var shutdownOnce sync.Once
 	hist, err := NewHistory(histDir, coarseRetention)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warn: history dir %s 不可用（%v），长期层只在内存里，重启即丢\n", histDir, err)
 		hist = nil
 	} else {
-		defer hist.Close()
-		defer func() { flushHistory(hist) }()
+		cleanups = append(cleanups, func() { flushHistory(hist); hist.Close() })
 		t0 := time.Now()
 		lines, pts, err := hist.Load(series, t0)
 		if err != nil {
@@ -122,7 +126,22 @@ func runServe() {
 		fmt.Printf("  history       %s（%d 行 / %d 点，%v）\n", histDir, lines, pts, time.Since(t0).Round(time.Millisecond))
 	}
 	stop := make(chan struct{})
-	defer close(stop)
+	// 清理动作集中登记，由 shutdown() 执行。
+	// 不能只靠 defer：systemctl stop 发的是 SIGTERM，Go 的默认行为是直接退出，
+	// defer 一个都不会跑。实测那样会丢两样东西：
+	//   1. services.jsonl 里的 down 事件——没有它，重启后回看这段停机时间，
+	//      状态机以为"我们一直在看"，把服务显示成"确实不在"而不是"不知道"。
+	//      等于告诉运维"你的服务那天挂了"，而其实只是我们自己被停了。
+	//   2. 攒着还没落盘的长期层点（最多一个 5 分钟周期）。
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			close(stop)
+			for i := len(cleanups) - 1; i >= 0; i-- { // 与 defer 同序：后登记的先执行
+				cleanups[i]()
+			}
+		})
+	}
+	defer shutdown()
 	go collectLoop(col, series, hist, *procRoot, iv, stop)
 
 	// ── L3：偏离度
@@ -147,7 +166,7 @@ func runServe() {
 	} else {
 		fmt.Printf("  services      %d 条历史事件\n", n)
 	}
-	defer func() { svcLog.Close(time.Now()) }()
+	cleanups = append(cleanups, func() { svcLog.Close(time.Now()) })
 	go serviceLoop(col, svcLog, stop)
 
 	diagnoser := NewDiagnoser(dataDir, series, builder)
@@ -317,9 +336,28 @@ func runServe() {
 	fmt.Printf("  metrics       %d series, %d points buffered\n",
 		len(series.MetricIDs()), series.Count())
 
-	if err := server.ListenAndServe(*listen+":"+*port, mux); err != nil {
+	srv := &http.Server{Addr: *listen + ":" + *port, Handler: mux}
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		shutdown()
 		os.Exit(1)
+	case sg := <-sig:
+		fmt.Printf("\n收到 %v，正在收尾（写 down 事件、落盘未写的历史点）…\n", sg)
+		shutdown()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		fmt.Println("已退出")
 	}
 }
 
