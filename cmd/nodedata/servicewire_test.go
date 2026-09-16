@@ -12,10 +12,17 @@ func TestProcsCarryServiceName(t *testing.T) {
 	l := NewServiceLog(t.TempDir()+"/s.jsonl", 14*24*time.Hour)
 	now := time.Now()
 	l.Load(now)
-	l.Update([]collector.Service{
+	// 连续看见 minSeenRounds 轮才进表（短命命令挡在门外）
+	for i := 0; i < minSeenRounds; i++ {
+		l.Update([]collector.Service{
+			{Name: "MySQL", Exe: "mysqld", PID: 1200, Ports: []int{3306}, StartTS: now.Unix() - 3600},
+			{Name: "Nginx", Exe: "nginx", PID: 890, Ports: []int{80, 443}, StartTS: now.Unix() - 7200},
+		}, now.Add(time.Duration(i)*time.Minute))
+	}
+	_ = []collector.Service{
 		{Name: "MySQL", Exe: "mysqld", PID: 1200, Ports: []int{3306}, StartTS: now.Unix() - 3600},
 		{Name: "Nginx", Exe: "nginx", PID: 890, Ports: []int{80, 443}, StartTS: now.Unix() - 7200},
-	}, now)
+	}
 
 	// 按 PID 命中
 	if name, ports := l.ServiceOf(1200); name != "MySQL" || len(ports) != 1 || ports[0] != 3306 {

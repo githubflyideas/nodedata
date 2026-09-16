@@ -25,9 +25,11 @@ func TestServiceLogLifecycle(t *testing.T) {
 	}
 	mysql := svc("MySQL", 1200, day0.Add(-72*time.Hour).Unix(), 3306)
 	redis := svc("Redis", 4021, day0.Add(-48*time.Hour).Unix(), 6379)
-	// 学习期内：建立基线，不报"出现"
-	if ev := l.Update([]collector.Service{mysql, redis}, day0); len(ev) != 0 {
-		t.Fatalf("学习期内不该产生事件: %+v", ev)
+	// 学习期内：建立基线，不报"出现"。连续看见 minSeenRounds 轮才进表。
+	for i := 0; i < minSeenRounds; i++ {
+		if ev := l.Update([]collector.Service{mysql, redis}, day0.Add(time.Duration(i)*time.Minute)); len(ev) != 0 {
+			t.Fatalf("学习期内不该产生事件: %+v", ev)
+		}
 	}
 	if len(l.Current()) != 2 {
 		t.Fatalf("基线应有 2 个服务")
@@ -36,7 +38,10 @@ func TestServiceLogLifecycle(t *testing.T) {
 	// 第 2 天：Nginx 新装（启动时刻取 minServiceAge 之前，否则会被"短命命令"规则挡掉）
 	d2 := day0.Add(48 * time.Hour)
 	nginx := svc("Nginx", 890, d2.Add(-30*time.Minute).Unix(), 80, 443)
-	ev := l.Update([]collector.Service{mysql, redis, nginx}, d2)
+	var ev []svcEvent
+	for i := 0; i < minSeenRounds; i++ {
+		ev = l.Update([]collector.Service{mysql, redis, nginx}, d2.Add(time.Duration(i)*time.Minute))
+	}
 	if len(ev) != 1 || ev[0].Kind != evAppear || ev[0].Name != "Nginx" {
 		t.Fatalf("应报 Nginx 出现: %+v", ev)
 	}
@@ -158,38 +163,66 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// 服务表被短命命令占满：apt-get 更新软件包时 CPU 过 5% 就被收进来，
-// 几秒后结束变成"已消失"，然后躺满整个保留期。实测一台桌面机 11 行全是这种。
-func TestTransientCommandsNotLedgered(t *testing.T) {
+// 判据是"我们连续看见它多久"，不是"它自己活了多久"。这个测试锁住三件事：
+// 短命命令挡掉、崩溃循环的服务必须进表、无端口的常驻进程不能漏。
+func TestLedgerAdmission(t *testing.T) {
 	l := NewServiceLog(t.TempDir()+"/s.jsonl", 7*24*time.Hour)
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	l.Load(now)
 	l.startAt = now.Add(-time.Hour) // 跳过学习期
 
+	tick := func(i int, svcs ...collector.Service) []svcEvent {
+		return l.Update(svcs, now.Add(time.Duration(i)*time.Minute))
+	}
 	mysql := collector.Service{Name: "MySQL", Exe: "mysqld", PID: 1, Ports: []int{3306},
 		StartTS: now.Add(-24 * time.Hour).Unix()}
-	aptGet := collector.Service{Name: "apt-get", Exe: "apt-get", PID: 2, // 无端口、无 unit
-		StartTS: now.Add(-3 * time.Second).Unix()}
-	youngUnit := collector.Service{Name: "fwupd", Exe: "fwupd", PID: 3, Unit: "fwupd.service",
-		StartTS: now.Add(-5 * time.Second).Unix()} // 有 unit 但刚起来
+	// 无端口、非 systemd 的常驻工作进程：真实生产负载，不能漏
+	worker := collector.Service{Name: "etl-worker", Exe: "etl-worker", PID: 7,
+		StartTS: now.Add(-6 * time.Hour).Unix()}
+	// 跑三秒的命令：只会被看见一轮
+	aptGet := collector.Service{Name: "apt-get", Exe: "apt-get", PID: 2, StartTS: now.Unix()}
 
-	l.Update([]collector.Service{mysql, aptGet, youngUnit}, now)
-	cur := l.Current()
-	if len(cur) != 1 || cur[0].Name != "MySQL" {
-		t.Fatalf("只有真正的服务该进表，实际：%+v", cur)
+	tick(0, mysql, worker, aptGet)
+	tick(1, mysql, worker)
+	if len(l.Current()) != 0 {
+		t.Fatalf("不足 %d 轮时不该进表：%+v", minSeenRounds, l.Current())
 	}
-	// 短命命令消失后也不该留下"已消失"的行
-	l.Update([]collector.Service{mysql}, now.Add(time.Minute))
-	l.Update([]collector.Service{mysql}, now.Add(2*time.Minute))
-	l.Update([]collector.Service{mysql}, now.Add(3*time.Minute))
-	if v := l.Vanished(); len(v) != 0 {
-		t.Fatalf("短命命令不该留下消失记录：%+v", v)
+	tick(2, mysql, worker)
+	names := map[string]bool{}
+	for _, s := range l.Current() {
+		names[s.Name] = true
 	}
-	// 活够久的 systemd 服务照常进表
-	oldUnit := youngUnit
-	oldUnit.StartTS = now.Add(-2 * time.Hour).Unix()
-	l.Update([]collector.Service{mysql, oldUnit}, now.Add(4*time.Minute))
-	if len(l.Current()) != 2 {
-		t.Fatalf("活够久的 systemd 服务应进表：%+v", l.Current())
+	if !names["MySQL"] || !names["etl-worker"] {
+		t.Fatalf("连续看见 %d 轮后应进表：%+v", minSeenRounds, l.Current())
+	}
+	if names["apt-get"] {
+		t.Fatalf("只被看见一轮的短命命令不该进表")
+	}
+
+	// 崩溃循环：每 2 分钟重启一次，自身 uptime 永远很短，但身份不变、每轮都看得见。
+	// 用"它自己活了多久"做判据会把这类永远挡在表外——而这恰恰最该被看见。
+	crashy := collector.Service{Name: "flaky", Exe: "flaky", PID: 100, Ports: []int{9000},
+		StartTS: now.Add(3 * time.Minute).Unix()}
+	for i := 3; i <= 5; i++ {
+		crashy.PID += 1
+		crashy.StartTS = now.Add(time.Duration(i) * time.Minute).Unix() // 每轮都是新进程
+		tick(i, mysql, worker, crashy)
+	}
+	found := false
+	for _, s := range l.Current() {
+		found = found || s.Name == "flaky"
+	}
+	if !found {
+		t.Fatalf("崩溃循环的服务必须进表：%+v", l.Current())
+	}
+	// 而且重启要被记为事件
+	ev := tick(6, mysql, worker, collector.Service{Name: "flaky", Exe: "flaky", PID: 999,
+		Ports: []int{9000}, StartTS: now.Add(6 * time.Minute).Unix()})
+	restart := false
+	for _, e := range ev {
+		restart = restart || (e.Kind == evRestart && e.Name == "flaky")
+	}
+	if !restart {
+		t.Fatalf("崩溃循环应持续产生重启事件：%+v", ev)
 	}
 }
