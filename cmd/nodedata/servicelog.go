@@ -44,6 +44,12 @@ type svcEvent struct {
 	PID     int    `json:"pid,omitempty"`
 	StartTS int64  `json:"start,omitempty"`
 	Ports   []int  `json:"ports,omitempty"`
+	// 消失事件带上"最后一眼"：进程没了之后，CPU 与内存占用就再也查不到了。
+	// 有人问"你为什么把我的进程杀了"，这几个数就是回答。
+	LastCPU float64 `json:"last_cpu,omitempty"`
+	LastRSS uint64  `json:"last_rss,omitempty"`
+	PeakRSS uint64  `json:"peak_rss,omitempty"`
+	SeenAt  int64   `json:"seen_at,omitempty"` // 最后一次看见它的时刻
 }
 
 // vanishConfirm：连续这么多轮没看见才算消失。一轮抖动（读 /proc 撞上进程重启）不算。
@@ -70,6 +76,8 @@ type ServiceLog struct {
 	cur        map[string]collector.Service // ID → 服务
 	missing    map[string]int               // ID → 连续未见轮数
 	seenRounds map[string]int               // ID → 连续被看见的轮数（未进表前）
+	peakRSS    map[string]uint64            // ID → 历史最高 RSS（消失后仍要能回答"它曾经占多少"）
+	lastSeen   map[string]int64             // ID → 最后一次看见的时刻
 	events     []svcEvent
 	learned    bool      // 学习期是否已结束
 	startAt    time.Time // 本次开始观察的时刻
@@ -82,7 +90,7 @@ const learnPeriod = 15 * time.Minute
 func NewServiceLog(path string, retain time.Duration) *ServiceLog {
 	return &ServiceLog{path: path, retain: retain,
 		cur: map[string]collector.Service{}, missing: map[string]int{},
-		seenRounds: map[string]int{}}
+		seenRounds: map[string]int{}, peakRSS: map[string]uint64{}, lastSeen: map[string]int64{}}
 }
 
 // Load 读回历史事件（截断行跳过），并写一条 up 事件表示"从此刻起我们在看"。
@@ -139,6 +147,10 @@ func (l *ServiceLog) Update(svcs []collector.Service, now time.Time) []svcEvent 
 		delete(l.missing, id)
 		prev, had := l.cur[id]
 		l.cur[id] = s
+		if s.RSS > l.peakRSS[id] {
+			l.peakRSS[id] = s.RSS
+		}
+		l.lastSeen[id] = now.Unix()
 		switch {
 		case !had:
 			// 学习期内只建基线：新装一台机器时所有服务都是"刚出现"，那是噪声不是事件。
@@ -171,8 +183,13 @@ func (l *ServiceLog) Update(svcs []collector.Service, now time.Time) []svcEvent 
 		delete(l.cur, id)
 		delete(l.missing, id)
 		delete(l.seenRounds, id)
+		// 先把"遗照"读出来再清 map——反了就会写出峰值 0（实测踩过）
+		peak, seen := l.peakRSS[id], l.lastSeen[id]
+		delete(l.peakRSS, id)
+		delete(l.lastSeen, id)
 		out = append(out, l.appendLocked(svcEvent{TS: now.Unix(), Kind: evVanish,
-			ID: id, Name: s.Name, Exe: s.Exe, Ports: s.Ports}))
+			ID: id, Name: s.Name, Exe: s.Exe, Ports: s.Ports,
+			LastCPU: s.CPU, LastRSS: s.RSS, PeakRSS: peak, SeenAt: seen}))
 	}
 	if len(out) > 0 {
 		l.expireLocked(now)

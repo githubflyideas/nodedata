@@ -17,20 +17,25 @@ var svcCols = []struct {
 }
 
 type svcRow struct {
-	Name      string   `json:"name"`
-	Exe       string   `json:"exe"`
-	Kind      string   `json:"kind"`
-	PID       int      `json:"pid"`
-	Instances int      `json:"instances"`
-	StartTS   int64    `json:"start_ts"`
-	UptimeS   int64    `json:"uptime_s"`
-	Ports     []int    `json:"ports"`
-	Unit      string   `json:"unit"`
-	CPU       float64  `json:"cpu"`
-	RSS       uint64   `json:"rss"`
-	Alive     bool     `json:"alive"`
-	Self      bool     `json:"self,omitempty"`
-	Past      []string `json:"past"` // 与 svcCols 对齐：yes/no/unknown/restart
+	Name      string  `json:"name"`
+	Exe       string  `json:"exe"`
+	Kind      string  `json:"kind"`
+	PID       int     `json:"pid"`
+	Instances int     `json:"instances"`
+	StartTS   int64   `json:"start_ts"`
+	UptimeS   int64   `json:"uptime_s"`
+	Ports     []int   `json:"ports"`
+	Unit      string  `json:"unit"`
+	CPU       float64 `json:"cpu"`
+	RSS       uint64  `json:"rss"`
+	Alive     bool    `json:"alive"`
+	// 消失的服务：最后一眼看到的占用，以及历史峰值
+	LastCPU float64  `json:"last_cpu,omitempty"`
+	LastRSS uint64   `json:"last_rss,omitempty"`
+	PeakRSS uint64   `json:"peak_rss,omitempty"`
+	SeenAt  int64    `json:"seen_at,omitempty"`
+	Self    bool     `json:"self,omitempty"`
+	Past    []string `json:"past"` // 与 svcCols 对齐：yes/no/unknown/restart
 }
 
 type ServicesJSON struct {
@@ -69,6 +74,7 @@ func servicesJSON(l *ServiceLog, now time.Time) *ServicesJSON {
 	for _, e := range l.Vanished() {
 		out.Rows = append(out.Rows, svcRow{
 			Name: e.Name, Exe: e.Exe, Ports: e.Ports, Alive: false, Past: past(e.ID),
+			LastCPU: e.LastCPU, LastRSS: e.LastRSS, PeakRSS: e.PeakRSS, SeenAt: e.SeenAt,
 		})
 	}
 	sort.Slice(out.Rows, func(i, j int) bool {

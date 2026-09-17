@@ -118,6 +118,14 @@ func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Ti
 		return out
 	}
 	// 先看排除的量是否在上限之内；超了就当作新常态，不再排除。
+	//
+	// 还有一种更隐蔽的情况必须一并挡住：**按小时分桶之后，某个桶可能被剔空**。
+	// 机器运行不满一天时，"当前小时"只有今天这一份样本，而异常起点通常就在最近一小时内，
+	// 于是这个桶的样本被全部排除、N=0、该档位直接变成"未就绪"。
+	// 表现就是：L1–L5（用原始层）全是斜纹，L6–L10（用跨天的长期层）正常——
+	// 实测一台运行 10 小时的机器，某指标一进 L4 结论，L1 的 N 从 361 掉到 0。
+	// 宁可这一轮基线被故障污染，也不能让短档位整片失明：失明是彻底看不见，
+	// 污染只是尺度偏大，而且下一轮就有机会恢复。
 	if !excludeFrom.IsZero() {
 		n := 0
 		for _, sm := range hist {
@@ -126,6 +134,8 @@ func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Ti
 			}
 		}
 		if float64(n) > MaxExcludedFrac*float64(len(hist)) {
+			excludeFrom = time.Time{}
+		} else if !enoughAfterExclusion(hist, excludeFrom) {
 			excludeFrom = time.Time{}
 		}
 	}
@@ -170,6 +180,26 @@ func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Ti
 		out[h] = summarizeDiffs(diffs[h], spanOK)
 	}
 	return out
+}
+
+// enoughAfterExclusion 判断排除之后，"当前时刻所在的小时桶"是否还剩够用的样本。
+// 只看这一个桶：它是 z 实际会用到的那个，别的桶剩多少都不影响当下能不能出 z。
+func enoughAfterExclusion(hist []Sample, excludeFrom time.Time) bool {
+	if len(hist) == 0 {
+		return false
+	}
+	hour := hist[len(hist)-1].TS.UTC().Hour()
+	kept := 0
+	for _, sm := range hist {
+		if sm.TS.UTC().Hour() != hour || !sm.TS.Before(excludeFrom) {
+			continue
+		}
+		kept++
+		if kept >= MinDiffsForZ*2 { // 差分数略少于样本数，留一倍余量
+			return true
+		}
+	}
+	return false
 }
 
 // summarizeDiffs 把一个小时桶的 Δ 样本归纳成 LagSigma。

@@ -68,6 +68,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.mid,th.mid{text-align:center}
 tr:hover td{background:#fafbfc}
 .mid-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+/* 指标不是同等重要：故障时最先看的那几个给出视觉层级，
+   而不是让人在四十行等宽字体里逐行找。 */
+td.m-crit{color:#b02a37;font-weight:650}      /* 出现即异常：丢包、重传、D 状态、OOM */
+td.m-key{color:#1d4ed8;font-weight:600}       /* 首屏必看：饱和度与延迟 */
+td.m-dev{color:var(--dim)}                    /* 逐设备/逐接口的细分项，默认让位 */
+table.cmp td:first-child,#l3tbl td.mid-id{white-space:nowrap}
+table.cmp td.num,#l3tbl td.num{font-variant-numeric:tabular-nums}
 th[data-k]{cursor:pointer;user-select:none;white-space:nowrap}
 th[data-k]:hover{color:var(--fg,#1f2937)}
 th[data-k] .ar{display:inline-block;width:10px;margin-left:2px;opacity:.35}
@@ -264,9 +271,9 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   <div class="sub">Δ = 当前值 − 一档之前的值；z = (Δ − 同时段 Δ 的历史中位数) / 稳健尺度（MAD、四分位差、十分位差取大者），按小时分桶，样本少时向 0 收缩，截断到 ±6。减中位数这一步把"平时就在涨"排除在外，所以累计计数器、page cache 这类指标不会恒定顶格。斜纹格 = 该 lag 的历史还没攒够（少于 8 个同时段样本）。</div>
   <div class="toolbar">
     <div class="grp" id="tabs">
-      <button class="on" data-tab="acute">急性</button>
-      <button data-tab="degrade">劣化</button>
-      <button data-tab="absolute">绝对值</button>
+      <button class="on" data-tab="acute">刚刚发生（5 分钟 ~ 40 分钟）</button>
+      <button data-tab="degrade">慢慢变坏（1.5 小时 ~ 7 天）</button>
+      <button data-tab="absolute">原始读数</button>
     </div>
     <div class="grp" id="wins">
       <button data-win="1h" class="on">1h</button>
@@ -290,7 +297,8 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
   <h2>服务对比<span class="layer">这台机器上跑着什么，各自什么时候起来的，以前在不在</span></h2>
   <div class="sub">只读 /proc 识别：可执行文件名、监听端口、systemd unit 三路交叉，不连服务、不读配置、不执行任何命令。
     <b>✓</b> = 那时在；<b>—</b> = 那时确实不在；<b>?</b> = nodedata 当时没在跑（不知道，不等于不在）；
-    <b>重启</b> = 那时在，之后换过一次。消失的服务留在表里标灰，不会凭空不见。</div>
+    <b>重启</b> = 那时在，之后换过一次。消失的服务留在表里标灰，并保留"最后一眼"：最后见于何时、当时占多少 CPU/内存、历史峰值内存——
+    有人问"为什么把我的进程杀了"，这几个数就是回答。</div>
   <div class="tbl-wrap" id="svctbl"><p class="empty">加载中…</p></div>
 </section>
 
@@ -317,15 +325,19 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     <div id="cmtable"></div>
   </div>
 </div>
-<footer>nodedata <span id="ver">—</span> · 单静态二进制 · L0 巡检 / L1 采集 / L2 转储 / L3 偏离 / L4 诊断</footer>
+<footer>nodedata <span id="ver">—</span> · 单静态二进制、零依赖 ·
+  <span title="不依赖历史的硬阈值判定，装上就能用">现在正常吗</span> →
+  <span title="当前值与 1h/6h/1d/7d/14d 前同一时刻对比">和以前比变了吗</span> →
+  <span title="变化是否超出这个时段平时的波动">这个变化算异常吗</span> →
+  <span title="哪个进程/设备造成的，下一步敲什么命令">是谁造成的</span></footer>
 </div>
 <script>
 "use strict";
 var state={pane:"key",kwin:"6h",cmAll:false,l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9];                 // L5..L10 : 5400s .. 7d
-var HINT={acute:"只看 L1–L4（5 分钟 ~ 40 分钟），突发抖动在这里最先出现。",
-          degrade:"只看 L5–L10（1.5 小时 ~ 7 天），缓慢劣化在这里才显形。L9 起需要 ≥2 天历史、L10 需要 ≥14 天；历史落盘，重启不丢。",
+var HINT={acute:"只看最近 5 分钟到 40 分钟内发生的变化——突发抖动在这里最先出现。",
+          degrade:"只看 1.5 小时到 7 天尺度上的变化——内存泄漏、连接数爬升这类慢性问题在这里才显形。L9 起需要 ≥2 天历史、L10 需要 ≥14 天；历史落盘，重启不丢。",
           absolute:"不做任何归一化，直接给当前原始读数；窗口内变化 = 这个窗口里第一个点到现在的变化。"};
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -490,6 +502,16 @@ document.getElementById("l3tbl").addEventListener("click",function(e){
 });
 
 // proc.cpu.<key> 行 → 快照里同名的 PID
+// 指标重要性分级：故障时最先看的给颜色，逐设备细分项让位。
+// 只按语义分，不按域——同一个 disk 域里 util 和 read_ahead 的重要性差着量级。
+var M_CRIT=/^(net\.(rx_drop|tx_drop|rx_errs|tx_errs)|udp\.(rcvbuf_errors|in_errors)|tcp\.retrans|procs_blocked|swap\.used|conntrack\.used_pct)/;
+var M_KEY=/^(cpu\.(user|sys|iowait|steal)|loadavg|mem\.(available|used_pct)|disk\.(util|await_w|await_r)|psi\.|fs\.used_pct|tcp\.estab|proc\.(cpu|rss)\.)/;
+function mclass(id){
+  if(M_CRIT.test(id)) return " m-crit";
+  if(id.indexOf("@")>=0) return " m-dev";   // 逐块盘、逐网卡的细分
+  if(M_KEY.test(id))  return " m-key";
+  return "";
+}
 function pidsFor(id){
   var h=state.heat; if(!h||!h.procs||id.indexOf("proc.cpu.")!==0) return "";
   var key=id.slice(9); if(key==="__others__") return "";
@@ -525,11 +547,11 @@ function renderL3(){
     idx.map(function(i){
       var s=h.lag_seconds?h.lag_seconds[i]:0;
       return th("z"+i,lags[i],"mid",st,s+"s，按 |z| 排序");}).join("")+
-    th("onset","起始 lag","mid",st)+th("breadth","广度","num",st)+'</tr>';
+    th("onset","从多久前开始","mid",st)+th("breadth","几个时间尺度上都异常","num",st)+'</tr>';
   var rows=ms.map(function(m){
     var pk=m.peak==null?'<span class="z na">—</span>':
       '<span class="z '+zclass(m.peak)+'">'+(m.peak>0?"+":"")+m.peak.toFixed(2)+'</span>';
-    return '<tr><td class="mid-id">'+esc(m.id)+pidsFor(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
+    return '<tr><td class="mid-id'+mclass(m.id)+'">'+esc(m.id)+pidsFor(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
       '<td class="num">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td><td class="num">'+pk+'</td>'+
       idx.map(function(i){return '<td class="mid">'+zcell(zval(m.pt,i),ready[i])+'</td>';}).join("")+
       '<td class="mid">'+esc((m.pt&&m.pt.onset_lag)||"—")+'</td>'+
@@ -713,7 +735,7 @@ function cmpTable(sid,cols,rows){
   return '<div class="tbl-wrap"><table class="cmp" data-sid="'+esc(sid)+'"><thead><tr><th>指标</th><th class="num">当前</th>'+
     cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
     rows.map(function(r){
-      return '<tr title="'+esc(r.id)+'"><td data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
+      return '<tr title="'+esc(r.id)+'"><td class="'+mclass(r.id).trim()+'" data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
         '<td class="num cmp-now" data-sort="'+r.now+'">'+esc(fmt(r.now,r.unit))+'</td>'+
         r.past.map(function(p){return '<td class="num" data-sort="'+(p===null?"":p)+'">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
     }).join("")+'</tbody></table></div>';
@@ -1061,8 +1083,20 @@ async function loadServices(){
       var ports=r.ports&&r.ports.length?' <span class="svc-port">:'+r.ports.join(",")+'</span>':"";
       var name=esc(r.name)+ports+(r.self?'<span class="self-tag">nodedata 自身</span>':"");
       var st=function(p){return '<td class="mid" data-sort="'+p+'">'+stCell(p)+'</td>';};
-      if(!r.alive) return '<tr class="gone"><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
-        '<td colspan="7">已消失（保留在表里备查）</td>'+r.past.map(st).join("")+'</tr>';
+      if(!r.alive){
+        // 遗照：进程没了之后 CPU/内存就再也查不到。有人问"为什么把我的进程杀了"，
+        // 这几个数就是回答。
+        var when=r.seen_at?new Date(r.seen_at*1000).toLocaleString():"—";
+        var peak=r.peak_rss?fmt(r.peak_rss,"bytes"):"—";
+        var last=r.last_rss?fmt(r.last_rss,"bytes"):"—";
+        return '<tr class="gone"><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
+          '<td class="mid-id">'+esc(r.exe||"")+'</td><td colspan="2">已消失</td>'+
+          '<td>最后见于 '+esc(when)+'</td><td class="num">—</td>'+
+          '<td class="num" data-sort="'+(r.last_cpu||0)+'">'+(r.last_cpu?r.last_cpu.toFixed(1)+" %":"—")+'</td>'+
+          '<td class="num" data-sort="'+(r.peak_rss||0)+'">'+esc(last)+
+          '<span class="pids">峰值 '+esc(peak)+'</span></td>'+
+          r.past.map(st).join("")+'</tr>';
+      }
       var start=new Date(r.start_ts*1000);
       return '<tr><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
         '<td class="mid-id">'+esc(r.exe)+'<span class="svc-kind">'+esc(r.kind)+'</span></td>'+
