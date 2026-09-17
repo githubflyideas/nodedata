@@ -31,15 +31,15 @@ func freshHost(span time.Duration, now time.Time) *Series {
 func TestYoungBaselineNotReady(t *testing.T) {
 	now := time.Date(2026, 9, 12, 10, 55, 0, 0, time.UTC)
 
-	// 装上 15 分钟：L1 的跨度早已 ≥ 300s，但基线太年轻，不该出 z
-	b := NewHeatmapBuilder(freshHost(15*time.Minute, now))
+	// 装上 8 分钟：L1 的跨度早已 ≥ 300s，但基线太年轻，不该出 z
+	b := NewHeatmapBuilder(freshHost(8*time.Minute, now))
 	b.RefreshSigma()
 	if z := firstZ(b, now); z != nil {
-		t.Errorf("装上 15 分钟就出 z=%.2f —— 基线只覆盖了几分钟安静时段", *z)
+		t.Errorf("装上 8 分钟就出 z=%.2f —— 基线只覆盖了几分钟安静时段", *z)
 	}
 
-	// 装满一小时之后才开始判定
-	b2 := NewHeatmapBuilder(freshHost(70*time.Minute, now))
+	// 装满 MinBaselineSpan 之后才开始判定
+	b2 := NewHeatmapBuilder(freshHost(20*time.Minute, now))
 	b2.RefreshSigma()
 	if firstZ(b2, now) == nil {
 		t.Errorf("基线覆盖满 %v 后应开始出 z", deviation.MinBaselineSpan)

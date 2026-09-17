@@ -418,8 +418,15 @@ func (b *HeatmapBuilder) DiagnoseLags(now time.Time) []LagDiag {
 	}
 	out := make([]LagDiag, 0, deviation.NLag)
 	for i, sec := range deviation.LagSeconds {
+		// 必须和 RefreshSigma 的判断完全一致，否则自检本身会误导：
+		// 原始层不够时只有在长期层够的前提下才回退，否则仍然用原始层。
 		d := LagDiag{Lag: deviation.LagID(i), Seconds: sec, SampleMetric: sample, Tier: "raw"}
-		if lagUsesCoarse(sec) || rawSpan < int64(deviation.MinBaselineSpan.Seconds()) {
+		coarseSpan := int64(0)
+		if pts := b.series.CoarseRange(sample, time.Time{}, farFuture); len(pts) > 1 {
+			coarseSpan = int64(pts[len(pts)-1].TS.Sub(pts[0].TS).Seconds())
+		}
+		minSpan := int64(deviation.MinBaselineSpan.Seconds())
+		if lagUsesCoarse(sec) || (rawSpan < minSpan && coarseSpan >= minSpan) {
 			d.Tier = "coarse"
 		}
 		pts := b.series.RawRange(sample, time.Time{}, farFuture)
@@ -452,8 +459,9 @@ func (b *HeatmapBuilder) DiagnoseLags(now time.Time) []LagDiag {
 		case d.ZAvailable > 0:
 			d.Reason = "正常"
 		case d.SigmaReady == 0:
-			d.Reason = fmt.Sprintf("σ 未就绪：%s 层历史只覆盖 %ds，需要 ≥%.0fs 且该小时桶 ≥%d 个同时段样本",
-				d.Tier, d.HistSpanS, deviation.MinBaselineSpan.Seconds(), deviation.MinDiffsForZ)
+			d.Reason = fmt.Sprintf("σ 未就绪：%s 层历史只覆盖 %ds，需要 ≥%.0fs 且该小时桶 ≥%d 个同时段样本（还需约 %.0f 分钟；若 history/ 里有历史则重启后立即可用）",
+				d.Tier, d.HistSpanS, deviation.MinBaselineSpan.Seconds(), deviation.MinDiffsForZ,
+				(deviation.MinBaselineSpan.Seconds()-float64(d.HistSpanS))/60)
 		case d.LookupOK == 0:
 			d.Reason = fmt.Sprintf("配不到 %ds 前的点（容差 %v）：原始层还没攒够这么长，长期层是 %v 一格、对不上短档",
 				sec, tol, coarseStep)
