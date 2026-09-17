@@ -199,6 +199,10 @@ func fromDeviations(devs []Deviation, opt Options) ([]Item, []string) {
 	var out []Item
 	var notes []string
 	notReady := 0
+	byID := make(map[string]Deviation, len(devs))
+	for _, d := range devs {
+		byID[d.MetricID] = d
+	}
 
 	for _, d := range devs {
 		peak, peakLag, ready := peakZ(d.Z)
@@ -207,6 +211,19 @@ func fromDeviations(devs []Deviation, opt Options) ([]Item, []string) {
 			continue
 		}
 		if math.Abs(peak) < opt.ZThreshold {
+			continue
+		}
+		// 方向：往好的方向变不是问题。可用内存"上升 6.0σ"被报成 Critical，
+		// 是实测截图里最刺眼的一条——内存变多了反而告警。
+		if peak*badDirection(d.MetricID) <= 0 {
+			continue
+		}
+		// 绝对水位还好就不报：变了不等于坏了
+		if !absGate(d.MetricID, byID) {
+			continue
+		}
+		// 本身不代表坏事的指标（页缓存、吞吐、连接数…）只作证据
+		if isEvidenceOnly(d.MetricID) {
 			continue
 		}
 		lvl := Warning

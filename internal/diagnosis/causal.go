@@ -87,12 +87,52 @@ func classOf(id string) string {
 }
 
 // badDirection：该指标往哪个方向偏才算劣化。+1 往上坏，-1 往下坏。
+// badDirection 返回该指标"变坏"的方向：+1 表示上升是坏事，-1 表示下降是坏事。
 func badDirection(id string) float64 {
 	switch strings.SplitN(id, "@", 2)[0] {
-	case "mem.available", "mem.free", "mem.cached":
+	case "mem.available", "mem.free", "mem.cached", "fs.avail":
 		return -1
 	}
 	return 1
+}
+
+// absGate 是"绝对值闸门"：指标变了不等于出问题，还得确实变坏了。
+//
+// z 只回答"和平时比变了没有"，不回答"变得好不好"。一台还剩 15GB 内存的机器，
+// 可用内存掉 6σ 也只是缓存在动；一块 util 3% 的盘，延迟涨 6σ 仍然是空闲的。
+// 实测截图里满屏的 Critical 大多是这种：现象为真，问题不存在。
+//
+// 返回 false 表示"绝对水位还好，不出结论"。查不到配套指标时返回 true（宁可报，不漏）。
+func absGate(id string, byID map[string]Deviation) bool {
+	v := func(k string) (float64, bool) {
+		d, ok := byID[k]
+		return d.Value, ok
+	}
+	switch strings.SplitN(id, "@", 2)[0] {
+	case "mem.available", "mem.free", "swap.used":
+		if used, ok := v("mem.used_pct"); ok {
+			return used >= 80 // 还剩两成以上内存，涨跌都不值一提
+		}
+	case "disk.await_w", "disk.await_r", "disk.riops", "disk.wiops":
+		if u, ok := v("disk.util"); ok {
+			return u >= 30 // 盘本身不忙时，延迟的相对变化没有意义
+		}
+	case "fs.avail":
+		if used, ok := v("fs.used_pct"); ok {
+			return used >= 75
+		}
+	case "cpu.user", "cpu.sys", "cpu.iowait":
+		busy := 0.0
+		for _, k := range []string{"cpu.user", "cpu.sys", "cpu.iowait", "cpu.softirq"} {
+			if x, ok := v(k); ok {
+				busy += x
+			}
+		}
+		if busy > 0 {
+			return busy >= 50
+		}
+	}
+	return true
 }
 
 type trig struct {
@@ -133,6 +173,12 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		for _, t := range ts {
 			if strings.HasPrefix(t.d.MetricID, "proc.") || strings.Contains(t.d.MetricID, "@") ||
 				isEvidenceOnly(t.d.MetricID) {
+				continue
+			}
+			// 绝对水位还好就不领头。但有一个例外必须放行：进程正被 cgroup 配额限流。
+			// 被限流的进程 CPU 天然上不去（配额就那么点），整机忙碌度也不高，
+			// 闸门会把它一起挡掉——而"为什么这个服务慢"恰恰就是配额造成的。
+			if !absGate(t.d.MetricID, byID) && !anyThrottled(opt.Procs) {
 				continue
 			}
 			head, found = t, true
@@ -646,4 +692,14 @@ func isEvidenceOnly(id string) bool {
 		id = id[:i]
 	}
 	return evidenceOnly[id]
+}
+
+// anyThrottled 判断快照里是否有进程正被 cgroup 配额明显限流。
+func anyThrottled(procs []Proc) bool {
+	for _, p := range procs {
+		if p.ThrottledFrac >= 0.2 {
+			return true
+		}
+	}
+	return false
 }

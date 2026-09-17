@@ -17,6 +17,7 @@ func TestThrottledProcessIsVictim(t *testing.T) {
 		}
 		return a
 	}
+	// 被限流时整机 CPU 天然上不去（配额就那么点），绝对值闸门必须为限流放行
 	devs := []Deviation{{MetricID: "cpu.user", Value: 20, Unit: "percent", Z: z(6), Breadth: 6, OnsetLag: "L1"}}
 	throttled := Proc{PID: 300, Comm: "worker", Key: "worker", CPU: 19,
 		ThrottledFrac: 1.0, ThrottledPerS: 10, ThrottledRatio: 0.8, CGroup: "/app.slice"}
@@ -39,11 +40,16 @@ func TestThrottledProcessIsVictim(t *testing.T) {
 		t.Errorf("下一步该看 cpu.stat 与配额，而不是 top/kill：%v", it.Commands)
 	}
 
-	// 没被限流时维持原行为：正常指认进程
+	// 没被限流时维持原行为：正常指认进程。
+	// 这里 cpu.user 要给真实的高值——绝对值闸门在机器不忙时本就不出结论。
 	normal := throttled
 	normal.ThrottledFrac, normal.ThrottledRatio, normal.ThrottledPerS = 0, 0, 0
 	normal.CPU = 300
-	c2 := Diagnose(nil, devs, Options{ZThreshold: 3, Procs: []Proc{normal}, Now: time.Now()})
+	busyDevs := []Deviation{{MetricID: "cpu.user", Value: 290, Unit: "percent", Z: z(6), Breadth: 6, OnsetLag: "L1"}}
+	c2 := Diagnose(nil, busyDevs, Options{ZThreshold: 3, Procs: []Proc{normal}, Now: time.Now()})
+	if len(c2.Items) == 0 {
+		t.Fatal("机器确实很忙时应有结论")
+	}
 	if strings.Contains(c2.Items[0].Title, "受害者") {
 		t.Errorf("未被限流时不该说受害者：%q", c2.Items[0].Title)
 	}
