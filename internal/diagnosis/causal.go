@@ -128,13 +128,25 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		for _, t := range ts {
 			used[t.d.MetricID] = true
 		}
-		// 进程序列与单设备序列只作证据，不单独领头（整机序列在就用整机的）。
-		head := ts[0]
+		// 进程序列、单设备序列、以及"变化本身不代表坏事"的指标都只作证据，不领头。
+		head, found := trig{}, false
 		for _, t := range ts {
-			if !strings.HasPrefix(t.d.MetricID, "proc.") && !strings.Contains(t.d.MetricID, "@") {
-				head = t
-				break
+			if strings.HasPrefix(t.d.MetricID, "proc.") || strings.Contains(t.d.MetricID, "@") ||
+				isEvidenceOnly(t.d.MetricID) {
+				continue
 			}
+			head, found = t, true
+			break
+		}
+		if !found {
+			// 整类都只是"吞吐变了""缓存被回收了"这种——不出结论，避免把正常行为说成故障
+			continue
+		}
+		// 同一族的指标说的是同一件事，领头要固定一个代表，否则标题会在它们之间来回跳。
+		// 实机注入时就是这样：内存那次的领头在 mem.available → mem.free → mem.used_pct
+		// 之间轮换，看起来像三件事，其实是一件。
+		if canon, ok := familyHead(ts, head); ok {
+			head = canon
 		}
 		it := Item{Level: Warning, Category: cls, Class: cls, Timestamp: opt.Now}
 		for _, t := range ts {
@@ -154,10 +166,19 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		it.Title = fmt.Sprintf("%s 劣化：%s %s %.1fσ", cls, head.d.MetricID, dir, math.Abs(head.peak))
 		it.Evidence = append(it.Evidence, fmt.Sprintf("领头指标最短显著档位 %s", onset))
 		var also []string
+		seenFam := map[string]bool{familyOf(head.d.MetricID): true}
 		for _, t := range ts {
-			if t.d.MetricID != head.d.MetricID && len(also) < 6 {
-				also = append(also, fmt.Sprintf("%s %+.1fσ", t.d.MetricID, t.peak))
+			if t.d.MetricID == head.d.MetricID || len(also) >= 6 {
+				continue
 			}
+			// 同族的其余成员不再罗列：它们是同一件事的不同说法
+			if f := familyOf(t.d.MetricID); f != "" {
+				if seenFam[f] {
+					continue
+				}
+				seenFam[f] = true
+			}
+			also = append(also, fmt.Sprintf("%s %+.1fσ", t.d.MetricID, t.peak))
 		}
 		it.Description = fmt.Sprintf("当前 %s = %s；十四档中 %d 档超过 |z|≥%.1f。", head.d.MetricID,
 			fmtVal(head.d.Value, head.d.Unit), head.d.Breadth, opt.ZThreshold)
@@ -561,4 +582,68 @@ func fmtVal(v float64, unit string) string {
 		return fmt.Sprintf("%.1f/s", v)
 	}
 	return fmt.Sprintf("%.3g", v)
+}
+
+// 指标族：说的是同一件事的多个指标。族内只用一个固定代表领头，
+// 否则谁的 |z| 大谁上台，标题会在它们之间来回跳——实机注入时
+// 内存那次的领头就在 mem.available / mem.free / mem.used_pct 之间轮换过。
+//
+// 代表选"最贴近人的说法"：讲内存余量用 mem.available（它已扣掉可回收的页缓存），
+// 讲盘慢用写延迟（读延迟常年很低，写才是瓶颈信号）。
+var metricFamilies = map[string]string{
+	"mem.available": "内存余量", "mem.free": "内存余量", "mem.used_pct": "内存余量",
+	"disk.await_w": "盘延迟", "disk.await_r": "盘延迟",
+	"net.rx": "网卡吞吐", "net.tx": "网卡吞吐", "net.rx_pps": "网卡吞吐", "net.tx_pps": "网卡吞吐",
+	"net.rx_drop": "丢包", "net.tx_drop": "丢包", "net.rx_errs": "丢包", "net.tx_errs": "丢包",
+	"fs.used_pct": "根分区", "fs.avail": "根分区",
+	"psi.cpu.some10": "CPU 压力", "loadavg.1m": "CPU 压力", "procs_running": "CPU 压力",
+}
+
+// familyCanon 是每个族的固定代表。
+var familyCanon = map[string]string{
+	"内存余量": "mem.available", "盘延迟": "disk.await_w", "网卡吞吐": "net.rx",
+	"丢包": "net.rx_drop", "根分区": "fs.used_pct", "CPU 压力": "psi.cpu.some10",
+}
+
+func familyOf(id string) string {
+	if i := strings.IndexByte(id, '@'); i > 0 {
+		id = id[:i] // 逐设备的成员归入同族
+	}
+	return metricFamilies[id]
+}
+
+// familyHead：若领头指标属于某个族，且该族的代表也在偏离列表里，就改用代表领头。
+func familyHead(ts []trig, head trig) (trig, bool) {
+	fam := familyOf(head.d.MetricID)
+	if fam == "" {
+		return head, false
+	}
+	canon := familyCanon[fam]
+	for _, t := range ts {
+		if t.d.MetricID == canon {
+			return t, true
+		}
+	}
+	return head, false
+}
+
+// evidenceOnly：这些指标的变化本身不代表出问题，只能当证据，不能领头下结论。
+//
+// 页缓存被回收（mem.cached 下降）是内核在正常干活——内存要用了就回收缓存。
+// 把它当成故障，就会得出"firefox 导致 mem.cached 下降"这种结论：
+// 现象是真的，因果是错的。实机注入时它还会跟真故障抢领头位置。
+// 这些指标留在证据里，帮人理解现场；但结论要由"确实变坏了"的指标来领。
+var evidenceOnly = map[string]bool{
+	"mem.cached": true, "mem.buffers": true, "slab": true,
+	"tcp.estab": true, "sock.tcp_inuse": true, "sock.udp_inuse": true, "sock.used": true,
+	"net.rx": true, "net.tx": true, "net.rx_pps": true, "net.tx_pps": true,
+	"disk.rbytes": true, "disk.wbytes": true, "disk.riops": true, "disk.wiops": true,
+	"ctxt": true, "intr": true, "pgfault": true,
+}
+
+func isEvidenceOnly(id string) bool {
+	if i := strings.IndexByte(id, '@'); i > 0 {
+		id = id[:i]
+	}
+	return evidenceOnly[id]
 }

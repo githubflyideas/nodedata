@@ -24,9 +24,13 @@ import (
 )
 
 const (
-	incidentKeep       = 100
-	incidentSigCool    = 30 * time.Minute // 同一类 + 同一责任方
-	incidentMinGap     = time.Minute      // 同一类别任意两次之间（不同类别互不阻挡）
+	incidentKeep    = 100
+	incidentSigCool = 30 * time.Minute // 同一类 + 同一责任方
+	incidentMinGap  = 5 * time.Minute  // 同一类别任意两次之间（不同类别互不阻挡）
+	// incidentMaxPerHour 是总量上限。前面两条都是"同类/同责任方"的限流，
+	// 挡不住"四个类别轮流报"——实机注入时四分钟里留了 3 份、四类轮着来。
+	// 证据一多，真正的那份就被淹掉，而且同一责任方的冷却期可能正好把它挡在门外。
+	incidentMaxPerHour = 6
 	incidentThreadTop  = 10
 	incidentStackDepth = 24
 	incidentKmsgLines  = 100
@@ -43,6 +47,7 @@ type Recorder struct {
 	devs     func() []diagnosis.Deviation
 
 	mu        sync.Mutex
+	recent    []time.Time // 最近一小时留证的时刻，用于总量限流
 	lastSig   map[string]time.Time
 	lastClass map[string]time.Time
 }
@@ -70,11 +75,15 @@ func (r *Recorder) Loop(every time.Duration, stop <-chan struct{}) {
 	}
 }
 
+// signature 用于"同一类 + 同一责任方"的去重。
+//
+// 不带 PID：崩溃重启循环的服务每次都是新 PID，带上 PID 就等于没有去重，
+// 每分钟留一份、把保留额度占满。名字相同就算同一个责任方。
 func signature(it diagnosis.Item) string {
 	sig := it.Class
 	if len(it.Culprits) > 0 {
 		c := it.Culprits[0]
-		sig += "|" + c.Kind + "|" + c.Name + "|" + strconv.Itoa(c.PID)
+		sig += "|" + c.Kind + "|" + c.Name
 	}
 	return sig
 }
@@ -94,9 +103,20 @@ func (r *Recorder) Tick(now time.Time) []string {
 		r.mu.Lock()
 		// 按类别限流：实测里 IO 故障先触发一份 CPU 证据（写入本身吃 CPU），
 		// 若用全局间隔，紧随其后的 IO 结论会被挡掉，真正的 IO 现场就丢了。
-		cool := now.Sub(r.lastSig[sig]) < incidentSigCool || now.Sub(r.lastClass[it.Class]) < incidentMinGap
+		// 滑动一小时窗口内的总量
+		kept := r.recent[:0]
+		for _, t := range r.recent {
+			if now.Sub(t) < time.Hour {
+				kept = append(kept, t)
+			}
+		}
+		r.recent = kept
+		cool := now.Sub(r.lastSig[sig]) < incidentSigCool ||
+			now.Sub(r.lastClass[it.Class]) < incidentMinGap ||
+			len(r.recent) >= incidentMaxPerHour
 		if !cool {
 			r.lastSig[sig], r.lastClass[it.Class] = now, now
+			r.recent = append(r.recent, now)
 		}
 		r.mu.Unlock()
 		if cool {
