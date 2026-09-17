@@ -69,6 +69,12 @@ type ProcTop struct {
 	RSSGrowth  int64   `json:"rss_growth"` // RSS 相对 GrowthSpan 秒前的变化，字节
 	GrowthSpan int     `json:"growth_span"`
 	State      string  `json:"state"` // R/S/D/Z…
+
+	// cgroup CPU 配额限流：被限流的进程是受害者，不是元凶
+	CGroup         string  `json:"cgroup,omitempty"`
+	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"` // 每秒被限流多少次
+	ThrottledFrac  float64 `json:"throttled_frac,omitempty"`  // 被限流的调度周期占比
+	ThrottledRatio float64 `json:"throttled_ratio,omitempty"` // 被限流掉的时间占墙钟比例
 }
 
 type procPrev struct {
@@ -315,6 +321,8 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		emitTracked(p.trackedIO, byKeyIO, procTrackMinIO, "proc.io.", now, &out)
 		emitTracked(p.trackedRSS, topByValue(byKeyRSS, procRSSTop), 0, "proc.rss.", now, &out)
 	}
+
+	c.enrichThrottle(top, now, dt)
 
 	p.topMu.Lock()
 	p.top, p.topTS = top, now

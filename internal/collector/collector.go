@@ -53,11 +53,12 @@ type Collector struct {
 	overBudgetCount  int
 	consecutiveEmpty int32
 	rngState         uint64
-	readBuf          [65536]byte       // 零分配文件读缓冲，复用于每次 readFileAbs
-	fieldBuf         [64][]byte        // 复用字段切片，避免 splitFields 重复分配
-	bootTS           int64             // 开机时刻，unix 秒（缓存）
-	ctMax            int64             // conntrack 上限，负数表示读过但不可用
-	devNames         map[string]string // 设备/接口名驻留，避免每轮分配
+	readBuf          [65536]byte             // 零分配文件读缓冲，复用于每次 readFileAbs
+	fieldBuf         [64][]byte              // 复用字段切片，避免 splitFields 重复分配
+	throttlePrev     map[string]throttleStat // cgroup 路径 → 上一轮限流计数
+	bootTS           int64                   // 开机时刻，unix 秒（缓存）
+	ctMax            int64                   // conntrack 上限，负数表示读过但不可用
+	devNames         map[string]string       // 设备/接口名驻留，避免每轮分配
 	diskIDMap        map[string]*diskIDs
 	netIDMap         map[string]*netIDs
 	ifaceClass       map[string]bool
@@ -91,7 +92,7 @@ type Collector struct {
 	ntPsiCPU    []byte
 	ntPsiMem    []byte
 	ntPsiIO     []byte
-	ntSoftnet    []byte
+	ntSoftnet   []byte
 
 	openedMu    sync.Mutex
 	openedPaths map[string]struct{} // 去重后的路径集合（PID 段归一成 <pid>）
@@ -873,53 +874,53 @@ func (c *Collector) conntrackMax() int64 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (c *Collector) parseSoftnetStat(data []byte, now time.Time, dt float64, hasPrev bool, out *[]Sample) {
-var totalDrop, totalSqueeze uint64
-lines := data
-for len(lines) > 0 {
-var line []byte
-if i := bytes.IndexByte(lines, '\n'); i >= 0 {
-line, lines = lines[:i], lines[i+1:]
-} else {
-line, lines = lines, nil
-}
-fields := c.splitFieldsBuf(line)
-if len(fields) < 3 {
-continue
-}
-d, e1 := parseHexUint64(fields[1])
-s, e2 := parseHexUint64(fields[2])
-if e1 != nil || e2 != nil {
-continue
-}
-totalDrop += d
-totalSqueeze += s
-}
-if hasPrev {
-if prev := c.prevGlobal["softnet.drop"]; totalDrop >= prev {
-*out = append(*out, Sample{MetricID: "net.softnet_drop", TS: now, Value: float64(totalDrop-prev) / dt})
-}
-if prev := c.prevGlobal["softnet.squeeze"]; totalSqueeze >= prev {
-*out = append(*out, Sample{MetricID: "net.softnet_squeeze", TS: now, Value: float64(totalSqueeze-prev) / dt})
-}
-}
-c.prevGlobal["softnet.drop"] = totalDrop
-c.prevGlobal["softnet.squeeze"] = totalSqueeze
+	var totalDrop, totalSqueeze uint64
+	lines := data
+	for len(lines) > 0 {
+		var line []byte
+		if i := bytes.IndexByte(lines, '\n'); i >= 0 {
+			line, lines = lines[:i], lines[i+1:]
+		} else {
+			line, lines = lines, nil
+		}
+		fields := c.splitFieldsBuf(line)
+		if len(fields) < 3 {
+			continue
+		}
+		d, e1 := parseHexUint64(fields[1])
+		s, e2 := parseHexUint64(fields[2])
+		if e1 != nil || e2 != nil {
+			continue
+		}
+		totalDrop += d
+		totalSqueeze += s
+	}
+	if hasPrev {
+		if prev := c.prevGlobal["softnet.drop"]; totalDrop >= prev {
+			*out = append(*out, Sample{MetricID: "net.softnet_drop", TS: now, Value: float64(totalDrop-prev) / dt})
+		}
+		if prev := c.prevGlobal["softnet.squeeze"]; totalSqueeze >= prev {
+			*out = append(*out, Sample{MetricID: "net.softnet_squeeze", TS: now, Value: float64(totalSqueeze-prev) / dt})
+		}
+	}
+	c.prevGlobal["softnet.drop"] = totalDrop
+	c.prevGlobal["softnet.squeeze"] = totalSqueeze
 }
 
 func parseHexUint64(b []byte) (uint64, error) {
-var n uint64
-for _, ch := range b {
-n <<= 4
-switch {
-case ch >= '0' && ch <= '9':
-n |= uint64(ch - '0')
-case ch >= 'a' && ch <= 'f':
-n |= uint64(ch-'a') + 10
-case ch >= 'A' && ch <= 'F':
-n |= uint64(ch-'A') + 10
-default:
-return 0, strconv.ErrSyntax
-}
-}
-return n, nil
+	var n uint64
+	for _, ch := range b {
+		n <<= 4
+		switch {
+		case ch >= '0' && ch <= '9':
+			n |= uint64(ch - '0')
+		case ch >= 'a' && ch <= 'f':
+			n |= uint64(ch-'a') + 10
+		case ch >= 'A' && ch <= 'F':
+			n |= uint64(ch-'A') + 10
+		default:
+			return 0, strconv.ErrSyntax
+		}
+	}
+	return n, nil
 }

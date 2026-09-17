@@ -39,6 +39,11 @@ type Proc struct {
 	// 值班的人问的是"MySQL 是不是又卡了"，不是"pid 1200 怎么了"。
 	Service string
 	Ports   []int
+	// cgroup CPU 配额限流：被限流的进程是受害者，不是元凶
+	ThrottledFrac  float64
+	ThrottledRatio float64
+	ThrottledPerS  float64
+	CGroup         string
 }
 
 // Culprit 是一条结论的责任方。
@@ -188,6 +193,8 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		case procC != nil && procC.Self:
 			it.Title += fmt.Sprintf(" — 责任方 nodedata 自身（PID %d）", procC.PID)
 			it.Description += "这是监控程序自身的开销，请把本条连同事故留证反馈给 nodedata 维护方。"
+		case procC != nil && procC.Kind == "cgroup":
+			it.Title += fmt.Sprintf(" — %s（PID %d）正被 cgroup 配额限流，是受害者", procC.Name, procC.PID)
 		case procC != nil && procC.Service != "" && procC.Service != procC.Name:
 			// 服务名优先：值班的人认的是 MySQL，不是 mysqld
 			it.Title += fmt.Sprintf(" — 责任方 %s（%s，PID %d）", procC.Service, procC.Name, procC.PID)
@@ -322,6 +329,25 @@ func attributeCPU(it *Item, ts []trig, byID map[string]Deviation, procs []Proc, 
 			Detail: fmt.Sprintf("steal %.1f%%（%+.1fσ）：CPU 时间被宿主机拿走，本机进程不是原因；找云厂商或宿主机管理员核实同宿主机负载",
 				st.d.Value, st.peak)})
 		it.Commands = []string{"vmstat 1 5", "mpstat -P ALL 1 3", "cat /proc/pressure/cpu"}
+		return
+	}
+	// 先看有没有进程正被 cgroup 配额限流。被限流的进程 CPU 看着高，但它是受害者：
+	// 真正的原因是配额。实机验证过——把进程关进 0.2 核的 cgroup，旧逻辑报"责任方 该进程"，
+	// 照这条去 kill 进程，方向完全反了。
+	for _, p := range procs {
+		if p.ThrottledFrac < 0.2 || p.CPU < 5 {
+			continue
+		}
+		it.Culprits = append(it.Culprits, Culprit{Kind: "cgroup", PID: p.PID, Name: p.Comm, Service: p.Service,
+			Detail: fmt.Sprintf("正被 cgroup 配额限流：%.0f%% 的调度周期被掐断（每秒 %.0f 次），"+
+				"被限流掉的时间占 %.0f%%。它是受害者不是元凶——CPU 高是配额造成的，"+
+				"杀进程解决不了问题，要改配额 %s",
+				p.ThrottledFrac*100, p.ThrottledPerS, p.ThrottledRatio*100, p.CGroup)})
+		it.Commands = []string{
+			fmt.Sprintf("cat /sys/fs/cgroup/cpu%s/cpu.stat", p.CGroup),
+			fmt.Sprintf("cat /sys/fs/cgroup/cpu%s/cpu.cfs_quota_us", p.CGroup),
+			fmt.Sprintf("systemctl show -p CPUQuota $(systemctl status %d | head -1 | awk '{print $2}')", p.PID),
+		}
 		return
 	}
 	busy := byID["cpu.user"].Value + byID["cpu.sys"].Value

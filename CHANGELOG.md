@@ -1,5 +1,40 @@
 # nodedata Changelog
 
+## [v5.7.0] — 识别 cgroup 配额限流：被限流的进程是受害者，不是元凶
+
+实机故障注入（stress-ng / fio / cgroup）暴露的问题。四类注入里三类归因正确、45 秒内检出，
+唯独 cgroup 限流那次**结论是错的**：把进程关进 0.2 核的 cgroup，nodedata 报
+"CPU 劣化 — 责任方 stress-ng（PID 402）"。而 `cpu.stat` 显示它一分钟内被限流 1607 次、
+累计 128 秒——**它是受害者，真正的原因是配额**。照那条线索去 kill 进程，方向完全反了。
+
+现在：读 `/proc/PID/cgroup` 找到 cpu 子系统路径，再读 `cpu.stat`（兼容 cgroup v1 的
+`throttled_time` 与 v2 的 `throttled_usec`），算出本轮被限流的周期占比、次数与时间比例。
+只对快照里的那几十个进程读，不对全部 PID 读。
+
+被限流时结论改口（实测输出）：
+
+```
+CPU 劣化：cpu.user 上升 6.0σ — stress-ng-cpu（PID 300）正被 cgroup 配额限流，是受害者
+  正被 cgroup 配额限流：100% 的调度周期被掐断（每秒 10 次），被限流掉的时间占 80%。
+  它是受害者不是元凶——CPU 高是配额造成的，杀进程解决不了问题，要改配额 /ndtest2
+  下一步：cat /sys/fs/cgroup/cpu/ndtest2/cpu.stat · cat .../cpu.cfs_quota_us
+```
+
+### 定位表述
+README 首段与页面标记统一口径：**nodedata 首先是性能展示工具**。
+"线索"区块标为**测试中 · 供参考不作结论**——给出错的推理不如不给推理。
+
+### 实机注入结果（本轮）
+| 故障 | 手段 | 检出 | 归因 |
+|---|---|---|---|
+| CPU | `stress-ng --cpu 1` | ≤45s | ✅ PID 正确 |
+| 磁盘 IO | `fio` 持续写 | ≤45s | ✅ PID + 设备 vda |
+| 内存 | `stress-ng --vm 1600M` | ≤45s | ✅ PID 正确 |
+| cgroup 限流 | 0.2 核配额 | 50s | ❌→✅ 本版修正 |
+| 网络 | `tc netem` | — | 沙箱无 sch_netem 模块，未能有效注入 |
+
+全程 nodedata 自身 `self.cpu_pct=0.00`、RSS 19MB、进程扫描 0.9ms。
+
 ## [v5.6.0] — 重启后不再盲一小时；"诊断链"降级为"线索"
 
 ### L1–L5 长期无数据：第二个原因

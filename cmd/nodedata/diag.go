@@ -110,7 +110,9 @@ func procsFromCollector(col *collector.Collector, svc *ServiceLog) func() []diag
 		for i, p := range ps {
 			out[i] = diagnosis.Proc{PID: p.PID, Comm: p.Comm, Key: p.Key, State: p.State, CPU: p.CPU,
 				ReadBps: p.ReadBps, WriteBps: p.WriteBps, MajFlt: p.MajFlt, RSS: p.RSS,
-				RSSGrowth: p.RSSGrowth, GrowthSpan: p.GrowthSpan, Self: p.Self}
+				RSSGrowth: p.RSSGrowth, GrowthSpan: p.GrowthSpan, Self: p.Self,
+				ThrottledFrac: p.ThrottledFrac, ThrottledRatio: p.ThrottledRatio,
+				ThrottledPerS: p.ThrottledPerS, CGroup: p.CGroup}
 			if svc != nil {
 				name, ports := svc.ServiceOf(p.PID)
 				if name == "" {

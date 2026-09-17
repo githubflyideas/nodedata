@@ -45,6 +45,11 @@ type ProcTop struct {
 	RSSGrowth  int64   `json:"rss_growth"`
 	GrowthSpan int     `json:"growth_span"`
 	State      string  `json:"state"`
+
+	CGroup         string  `json:"cgroup,omitempty"`
+	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"`
+	ThrottledFrac  float64 `json:"throttled_frac,omitempty"`
+	ThrottledRatio float64 `json:"throttled_ratio,omitempty"`
 }
 
 type PSIAlert struct {
