@@ -139,12 +139,22 @@ table[data-sid] thead th.sorted .ar{opacity:1}
 #cmodal .chartcap{font-size:12px;min-height:18px}
 #cmodal .mclose{position:absolute;top:12px;right:14px;font-size:20px;color:var(--dim);background:none;border:none;cursor:pointer;line-height:1;padding:2px 6px}
 #cmodal .mclose:hover{color:var(--ink)}
+.lnk{color:#1d4ed8;text-decoration:none;border-bottom:1px dotted #1d4ed8;cursor:pointer}
+#lagstatus{margin-top:4px}
+#lagstatus b{color:#b02a37}
+.ok-note{color:#1e8449}
 .panetabs{display:flex;gap:2px;margin:18px 0 4px;border-bottom:1px solid var(--line)}
 .panetabs button{appearance:none;border:0;background:none;cursor:pointer;font:inherit;font-size:13.5px;
   padding:8px 14px;color:var(--dim);border-bottom:2px solid transparent;margin-bottom:-1px}
 .panetabs button:hover{color:var(--fg,#1f2937)}
 .panetabs button.on{color:#1d4ed8;border-bottom-color:#1d4ed8;font-weight:600}
 table.cmp td:first-child{white-space:nowrap}
+/* 对齐：过去各列是"数值 + 变化%"，当前列只有数值，自动布局下宽度不同，表头和数字对不上 */
+table.cmp{table-layout:fixed;width:100%}
+table.cmp th:first-child,table.cmp td:first-child{width:22%}
+table.cmp td.num,table.cmp th.num{text-align:right;padding-right:10px}
+table.cmp td.num .val{display:inline-block;min-width:76px;text-align:right}
+table.cmp td.num .chg{display:inline-block;min-width:54px;text-align:right}
 .cmp-now{font-weight:600}
 .chg{font-size:11px;margin-left:4px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .chg.bad{color:#c0392b}.chg.good{color:#1e8449}
@@ -274,8 +284,15 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 
 <div class="pane" data-pane="dev" hidden>
 <section>
-  <h2>整体偏离度和占用<span class="layer">L3 · 10 个 lag 的 z-score，以及此刻谁在用资源</span></h2>
-  <div class="sub">Δ = 当前值 − 一档之前的值；z = (Δ − 同时段 Δ 的历史中位数) / 稳健尺度（MAD、四分位差、十分位差取大者），按小时分桶，样本少时向 0 收缩，截断到 ±6。减中位数这一步把"平时就在涨"排除在外，所以累计计数器、page cache 这类指标不会恒定顶格。斜纹格 = 该 lag 的历史还没攒够（少于 8 个同时段样本）。</div>
+  <h2>变化幅度<span class="layer">每个指标和"多久之前"比，变了多少</span></h2>
+  <div class="sub">数字越大 = 变化越超出这个指标平时的波动。<b>红 = 变坏，蓝 = 变好，空白 = 没变。</b>
+    <a href="#" id="zhelp" class="lnk">这个数字怎么算的？</a></div>
+  <div class="sub" id="zhelpbox" hidden>
+    Δ = 当前值 − 一档之前的值；z = (Δ − 同时段 Δ 的历史中位数) / 稳健尺度（MAD、四分位差、十分位差取大者）。
+    按小时分桶，样本少时向 0 收缩，截断到 ±6。减中位数这一步把"平时就在涨"排除在外，
+    所以累计计数器、page cache 这类指标不会恒定顶格。
+  </div>
+  <div class="sub" id="lagstatus"></div>
   <div class="toolbar">
     <div class="grp" id="tabs">
       <button class="on" data-tab="acute">刚刚发生（5 分钟 ~ 40 分钟）</button>
@@ -453,6 +470,20 @@ function renderL0Cards(cats){
   }).join("");
 }
 /* ================= L3 ================= */
+// 斜纹格到底是"σ 没就绪"还是"配不到 t−H 的点"，页面上看不出来——
+// 这两件事的修法完全相反。直接把 /api/lagdiag 的结论写在表头上，
+// 省得每次都要 curl 一遍再猜。
+async function loadLagStatus(){
+  var el=document.getElementById("lagstatus"); if(!el) return;
+  var d;
+  try{ d=(await getJSON("/api/lagdiag")).json; }catch(e){ el.textContent=""; return; }
+  var blind=d.filter(function(x){return x.z_available===0;});
+  if(!blind.length){ el.innerHTML='<span class="ok-note">十个时间尺度都有数据。</span>'; return; }
+  var names=blind.map(function(x){return x.lag;}).join("、");
+  var why=blind[0].reason||"";
+  el.innerHTML='<b>'+esc(names)+' 现在没有数据</b>（表里显示为斜纹格）：'+esc(why);
+}
+
 async function loadL3(){
   var r;
   try{ r=await getJSON("/data/"+state.win+".json"); clearErr("l3err"); }
@@ -649,7 +680,7 @@ document.addEventListener("click",function(e){
 /* ================= 关键指标对比 ================= */
 function cmpCell(r,p){
   if(p==null) return '<span class="na-dash">—</span>';
-  var v=esc(fmt(p,r.unit)), now=r.now, ch;
+  var v='<span class="val">'+esc(fmt(p,r.unit))+'</span>', now=r.now, ch;
   if(p===0&&now===0) ch='<span class="chg">—</span>';
   else if(p===0) ch='<span class="chg'+(r.bad>0?" bad":"")+'">▲ 新增</span>';
   else{
@@ -723,7 +754,7 @@ function toggleL0(){
 /* ================= 关键指标 / OS 指标 ================= */
 function cmpCell(r,p){
   if(p==null) return '<span class="na-dash">—</span>';
-  var v=esc(fmt(p,r.unit)), now=r.now, ch;
+  var v='<span class="val">'+esc(fmt(p,r.unit))+'</span>', now=r.now, ch;
   if(p===0&&now===0) ch='<span class="chg">—</span>';
   else if(p===0) ch='<span class="chg'+(r.bad>0?" bad":"")+'">▲ 新增</span>';
   else{
@@ -743,7 +774,8 @@ function cmpTable(sid,cols,rows){
     cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
     rows.map(function(r){
       return '<tr title="'+esc(r.id)+'"><td class="'+mclass(r.id).trim()+'" data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
-        '<td class="num cmp-now" data-sort="'+r.now+'">'+esc(fmt(r.now,r.unit))+'</td>'+
+        '<td class="num cmp-now" data-sort="'+r.now+'"><span class="val">'+esc(fmt(r.now,r.unit))+
+        '</span><span class="chg"></span></td>'+
         r.past.map(function(p){return '<td class="num" data-sort="'+(p===null?"":p)+'">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
     }).join("")+'</tbody></table></div>';
 }
@@ -1058,6 +1090,14 @@ function buildSVG(s,from,to,ch){
   if(sv&&ch===MCH) sv._yOf=y;
   return gl+area+line+xl;
 }
+(function(){
+  var a=document.getElementById("zhelp"); if(!a) return;
+  a.addEventListener("click",function(e){
+    e.preventDefault();
+    var b=document.getElementById("zhelpbox");
+    b.hidden=!b.hidden; a.textContent=b.hidden?"这个数字怎么算的？":"收起说明";
+  });
+})();
 document.getElementById("kwins").addEventListener("click",function(e){
   var b=e.target.closest("button[data-kwin]"); if(!b) return;
   [].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});
@@ -1235,7 +1275,7 @@ async function clearBaseline(){
   await loadBaseline(); await loadL0();
 }
 async function refreshAll(){
-  await Promise.all([loadKeyCharts(),loadCompare(),loadServices(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";
