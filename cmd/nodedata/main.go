@@ -170,6 +170,25 @@ func runServe() {
 	cleanups = append(cleanups, func() { svcLog.Close(time.Now()) })
 	go serviceLoop(col, svcLog, stop)
 
+	// 事故时间线的 BEFORE 段：从内存时序切出异常前 5 分钟。
+	// 事后再抓是抓不到已经过去的时刻的——这是我们相对"出事才开始采"的工具的优势。
+	beforeSeries := func(class string, from, to time.Time) []beforePoint {
+		ids := classBeforeMetrics(class)
+		out := []beforePoint{}
+		for ts := from; !ts.After(to); ts = ts.Add(30 * time.Second) {
+			v := map[string]float64{}
+			for _, id := range ids {
+				if x, ok := series.Lookup(id, ts, 20*time.Second); ok {
+					v[id] = x
+				}
+			}
+			if len(v) > 0 {
+				out = append(out, beforePoint{TS: ts.Unix(), V: v})
+			}
+		}
+		return out
+	}
+
 	diagnoser := NewDiagnoser(dataDir, series, builder)
 	diagnoser.procs = procsFromCollector(col, svcLog)
 	diagnoser.l0Fn = l0.GetLatest
@@ -181,6 +200,9 @@ func runServe() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warn: 事故留证目录不可用: %v\n", err)
 		recorder = nil
+	} else {
+		recorder.sysRoot = *sysRoot
+		recorder.before = beforeSeries
 	}
 
 	// ── L2：静态转储 → data/{1h,6h,24h,7d,14d}.json + health.json

@@ -40,6 +40,9 @@ const (
 type Recorder struct {
 	dir      string
 	procRoot string
+	sysRoot  string
+	// before 从内存时序切出异常前的一段——事后再抓是抓不到已经过去的时刻的
+	before   func(class string, from, to time.Time) []beforePoint
 	kmsgPath string
 	host     string
 	run      func() *diagnosis.Chain
@@ -47,9 +50,22 @@ type Recorder struct {
 	devs     func() []diagnosis.Deviation
 
 	mu        sync.Mutex
-	recent    []time.Time // 最近一小时留证的时刻，用于总量限流
+	sessions  map[string]*snapSession // 进行中的时间线采样，键是事故 id
+	recent    []time.Time             // 最近一小时留证的时刻，用于总量限流
 	lastSig   map[string]time.Time
 	lastClass map[string]time.Time
+}
+
+// snapSession 是一次事故的时间线采样会话。
+type snapSession struct {
+	id      string
+	class   string
+	t0      time.Time
+	path    string
+	nextIdx int // 下一个待抓的偏移量下标
+	goneFor int // 结论连续消失的轮数
+	samples []phaseSample
+	done    bool
 }
 
 func NewRecorder(dir, procRoot string, run func() *diagnosis.Chain, procs func() []diagnosis.Proc, devs func() []diagnosis.Deviation) (*Recorder, error) {
@@ -57,8 +73,9 @@ func NewRecorder(dir, procRoot string, run func() *diagnosis.Chain, procs func()
 		return nil, err
 	}
 	host, _ := os.Hostname()
-	return &Recorder{dir: dir, procRoot: procRoot, kmsgPath: "/dev/kmsg", host: host,
-		run: run, procs: procs, devs: devs, lastSig: map[string]time.Time{}, lastClass: map[string]time.Time{}}, nil
+	return &Recorder{dir: dir, procRoot: procRoot, sysRoot: "/sys", kmsgPath: "/dev/kmsg", host: host,
+		run: run, procs: procs, devs: devs, sessions: map[string]*snapSession{},
+		lastSig: map[string]time.Time{}, lastClass: map[string]time.Time{}}, nil
 }
 
 // Loop 周期性执行 L4；与页面是否打开无关。
@@ -91,6 +108,7 @@ func signature(it diagnosis.Item) string {
 // Tick 跑一次 L4，对需要的结论留证，返回写出的证据 ID。
 func (r *Recorder) Tick(now time.Time) []string {
 	chain := r.run()
+	defer r.advanceSessions(chain, now)
 	if chain == nil {
 		return nil
 	}
@@ -123,6 +141,12 @@ func (r *Recorder) Tick(now time.Time) []string {
 			continue
 		}
 		if id, err := r.Capture(it, chain, now); err == nil {
+			// 开一条时间线：T0 已由 Capture 抓下，后续几格由 advanceSessions 补
+			var before []beforePoint
+			if r.before != nil {
+				before = r.before(it.Class, now.Add(-5*time.Minute), now)
+			}
+			r.startSession(id, it.Class, filepath.Join(r.dir, id+".json"), now, before)
 			ids = append(ids, id)
 		} else {
 			fmt.Fprintf(os.Stderr, "warn: 事故留证失败: %v\n", err)
