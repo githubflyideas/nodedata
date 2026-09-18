@@ -226,7 +226,7 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 			}
 			also = append(also, fmt.Sprintf("%s %+.1fσ", t.d.MetricID, t.peak))
 		}
-		it.Description = fmt.Sprintf("当前 %s = %s；十四档中 %d 档超过 |z|≥%.1f。", head.d.MetricID,
+		it.Description = fmt.Sprintf("当前 %s = %s；十个尺度中有 %d 个超过 |z|≥%.1f。", head.d.MetricID,
 			fmtVal(head.d.Value, head.d.Unit), head.d.Breadth, opt.ZThreshold)
 		if len(also) > 0 {
 			it.Description += "同时偏离：" + strings.Join(also, "、") + "。"

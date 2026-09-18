@@ -603,11 +603,13 @@ function renderProcs(){
     var g=p.rss_growth, s=(g>=0?"+":"-")+fmt(Math.abs(g),"bytes");
     return s+' <span class="pids">/'+Math.round(p.growth_span/60)+'分</span>';
   };
-  el.innerHTML='<thead><tr><th class="num">PID</th><th>进程</th><th class="mid">状态</th><th class="num">CPU</th>'+
+  el.innerHTML='<thead><tr><th class="num">PID</th><th>进程</th><th>父进程</th><th class="mid">状态</th><th class="num">CPU</th>'+
     '<th class="num">读</th><th class="num">写</th><th class="num">RSS</th><th class="num">RSS 增长</th><th class="num">主缺页</th><th>下一步</th></tr></thead><tbody>'+
     ps.map(function(p){
+      var par=p.parent?esc(p.parent)+' <span class="pids">'+p.ppid+'</span>':'<span class="na-dash">—</span>';
       return '<tr><td class="num" data-sort="'+p.pid+'">'+p.pid+'</td><td class="mid-id">'+esc(p.comm)+
         (p.self?'<span class="self-tag">nodedata 自身</span>':"")+'</td>'+
+        '<td class="mid-id" data-sort="'+esc(p.parent||"")+'">'+par+'</td>'+
         '<td class="mid">'+esc(p.state||"")+'</td>'+
         '<td class="num" data-sort="'+p.cpu+'">'+p.cpu.toFixed(1)+' %</td>'+
         '<td class="num" data-sort="'+(p.read_bps||"")+'">'+(p.read_bps?fmt(p.read_bps,"bytes/s"):"—")+'</td>'+
@@ -627,6 +629,7 @@ function groupRows(){
   return gs.map(function(g){
     return '<tr class="grp-row"><td class="num">—</td>'+
       '<td class="mid-id">'+esc(g.name)+' <span class="pids">进程组合计 · '+g.count+' 个进程</span></td>'+
+      '<td class="mid-id">—</td>'+
       '<td class="mid">—</td>'+
       '<td class="num" data-sort="'+g.cpu+'">'+g.cpu.toFixed(1)+' %</td>'+
       '<td class="num">'+(g.read_bps?esc(fmt(g.read_bps,"bytes/s")):"—")+'</td>'+

@@ -425,8 +425,20 @@ func interdecile(vals []float64) float64 { return quantileSpread(vals, 0.10, 10)
 
 // LagTolerance 是配 v(t-H) 时允许的时间误差：H 的 2%，夹在 30 秒到 30 分钟之间。
 // ComputeSigma 与 Z 必须用同一个值。
+// LagTolerance 是配 v(t−H) 时允许的时间误差。
+//
+// 原来是 H/50、下限 30 秒。问题出在重启之后：原始层清空，只剩磁盘上的长期层，
+// 而长期层是 5 分钟一格——L3（20 分钟档）的容差只有 30 秒，永远配不上，
+// 于是短档整片斜纹，一直要等原始层自己攒够 20 分钟。
+// 页面上那行自检就是这么说的："配不到 1200s 前的点（容差 30s）：长期层是 5m0s 一格、对不上短档"。
+//
+// 改成 H/8（12.5%）：L3 的容差变成 150 秒，正好够上 5 分钟的长期层格子，
+// 重启后 L3 及以上立刻可用。误差被限制在该档时长的 12.5% 以内——
+// 拿"20 分钟前 ±2.5 分钟"和"20 分钟前"比，对判断变化幅度没有实质影响，
+// 而且 σ 的历史 Δ 用的是同一个容差，口径自洽。
+// L1/L2 仍然配不上（37 秒 / 75 秒 < 150 秒），只能等原始层攒够 5~10 分钟——那是物理下限。
 func LagTolerance(H time.Duration) time.Duration {
-	tol := H / 50
+	tol := H / 8
 	if tol < 30*time.Second {
 		tol = 30 * time.Second
 	}
@@ -506,7 +518,7 @@ func New(sigma *SigmaTable) *Deviation {
 	return &Deviation{sigma: sigma}
 }
 
-// Z 返回十四档 z 值，未就绪/未找到历史值时返回 NaN。
+// Z 返回十档 z 值，未就绪/未找到历史值时返回 NaN。
 //
 // z = (Δ - Center) / Sigma，其中 Δ = v(t) - v(t-H)。
 // 减 Center 这一步是关键：它把"这个指标平时就在涨"从异常里剔除出去，

@@ -71,6 +71,10 @@ type ProcTop struct {
 	State      string  `json:"state"` // R/S/D/Z…
 
 	// cgroup CPU 配额限流：被限流的进程是受害者，不是元凶
+	// PPID / Parent：看到 "Isolated Web Co" 这种名字时，第一个问题是"它是谁的子进程"
+	PPID   int    `json:"ppid,omitempty"`
+	Parent string `json:"parent,omitempty"`
+
 	CGroup         string  `json:"cgroup,omitempty"`
 	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"` // 每秒被限流多少次
 	ThrottledFrac  float64 `json:"throttled_frac,omitempty"`  // 被限流的调度周期占比
@@ -332,6 +336,11 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 
 	c.enrichThrottle(top, now, dt)
 	groups := buildGroups(all, ppidOf, commOf)
+	for i := range top { // 补上父进程名：光看 PID 认不出是谁的孩子
+		if pp, ok := ppidOf[top[i].PID]; ok && pp > 1 {
+			top[i].PPID, top[i].Parent = pp, commOf[pp]
+		}
+	}
 
 	p.topMu.Lock()
 	p.top, p.topTS, p.groups = top, now, groups

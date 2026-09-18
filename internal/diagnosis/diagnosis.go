@@ -52,7 +52,7 @@ type Deviation struct {
 	Domain   string
 	Unit     string
 	Value    float64
-	// Z 十四档 z 值；NaN 表示该档未就绪。
+	// Z 十档 z 值；NaN 表示该档未就绪。
 	Z        []float64
 	OnsetLag string
 	Breadth  int

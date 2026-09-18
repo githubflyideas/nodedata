@@ -158,13 +158,19 @@ func TestSmallSampleShrinksZ(t *testing.T) {
 // σ 的配对容差必须和 Z 的一致。早期版本 ComputeSigma 传的是 H 本身，
 // 也就是"28 天内任何点都算 28 天前的值"，σ 完全失真。
 func TestLagToleranceIsBounded(t *testing.T) {
-	if got := LagTolerance(300 * time.Second); got != 30*time.Second {
-		t.Fatalf("L1 容差应为 30s，实得 %v", got)
+	// 容差 = H/8，下限 30 秒、上限 30 分钟。
+	// H/8 这个比例是为了让 L3（20 分钟档）的容差够上 5 分钟一格的长期层——
+	// 否则重启后短档永远配不上点，整片斜纹。
+	if got := LagTolerance(300 * time.Second); got != 37500*time.Millisecond {
+		t.Fatalf("L1 容差应为 H/8=37.5s，实得 %v", got)
 	}
-	if got := LagTolerance(28 * 24 * time.Hour); got != 30*time.Minute {
-		t.Fatalf("L14 容差应封顶 30min，实得 %v", got)
+	if got := LagTolerance(60 * time.Second); got != 30*time.Second {
+		t.Fatalf("很短的档位应落到下限 30s，实得 %v", got)
 	}
-	if got := LagTolerance(24 * time.Hour); got != 28*time.Minute+48*time.Second {
-		t.Fatalf("L9 容差应为 H/50，实得 %v", got)
+	if got := LagTolerance(1200 * time.Second); got != 150*time.Second {
+		t.Fatalf("L3 容差应为 150s（正好够上长期层的 5 分钟格），实得 %v", got)
+	}
+	if got := LagTolerance(7 * 24 * time.Hour); got != 30*time.Minute {
+		t.Fatalf("最长档容差应封顶 30min，实得 %v", got)
 	}
 }

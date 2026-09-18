@@ -47,6 +47,9 @@ type ProcTop struct {
 	GrowthSpan int     `json:"growth_span"`
 	State      string  `json:"state"`
 
+	PPID   int    `json:"ppid,omitempty"`
+	Parent string `json:"parent,omitempty"`
+
 	CGroup         string  `json:"cgroup,omitempty"`
 	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"`
 	ThrottledFrac  float64 `json:"throttled_frac,omitempty"`
