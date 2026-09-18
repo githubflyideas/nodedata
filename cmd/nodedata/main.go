@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -124,6 +125,11 @@ func runServe() {
 			fmt.Fprintf(os.Stderr, "warn: 读取历史失败: %v\n", err)
 		}
 		fmt.Printf("  history       %s（%d 行 / %d 点，%v）\n", histDir, lines, pts, time.Since(t0).Round(time.Millisecond))
+		// 读回 14 天历史要解析十几 MB JSON，产生的临时堆 Go 默认不急着还给系统，
+		// RSS 会在启动后停在一个虚高的水位上。这一次性的归还让"启动后内存高一截"消失——
+		// 别人的监控看到的是"重启后内存 +34%"，那不是泄漏，是没还的解析垃圾。
+		// 只在启动时做一次，稳态不受影响。
+		debug.FreeOSMemory()
 	}
 	stop := make(chan struct{})
 	// 清理动作集中登记，由 shutdown() 执行。

@@ -101,6 +101,8 @@ func NewHeatmapBuilder(s *Series) *HeatmapBuilder {
 	host, _ := os.Hostname()
 	sigma := deviation.NewSigmaTable()
 	dev := deviation.New(sigma)
+	// 变化太小就不算异常：z 是尺度无关的，安静机器上 202 字节/秒也能是 6σ
+	dev.MinDelta = minDeltaFor
 	dev.LookupFn = s.Lookup
 	return &HeatmapBuilder{series: s, sigma: sigma, dev: dev, host: host}
 }

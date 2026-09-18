@@ -511,6 +511,12 @@ type Deviation struct {
 	sigma *SigmaTable
 	// lookupFn 用于查找 v(t-H)，由外部注入（通常是 ClickHouse 点查）。
 	LookupFn func(metricID string, at time.Time, tolerance time.Duration) (float64, bool)
+	// MinDelta 返回该指标"值得一提的最小变化量"。返回 0 表示不设门槛。
+	//
+	// z 是尺度无关的：一台安静的机器 σ 趋近于 0，于是 202 字节/秒的流量、
+	// 每秒 2.8 个包、0.1 次重传也都是 6σ，整屏红。统计上显著 ≠ 实际上要紧。
+	// 这个门槛就是"效应量"：变化本身太小的时候，不管它偏离平时多少都按 0 处理。
+	MinDelta func(metricID string) float64
 }
 
 // New 创建 Deviation。
@@ -548,7 +554,14 @@ func (d *Deviation) Z(metricID string, v float64, at time.Time) [NLag]float64 {
 		if sigma <= 0 {
 			sigma = 1e-9
 		}
-		z := (v - prevVal - ls.Center) / sigma
+		effect := v - prevVal - ls.Center
+		if d.MinDelta != nil {
+			if floor := d.MinDelta(metricID); floor > 0 && math.Abs(effect) < floor {
+				result[i] = 0 // 变化太小，不值一提——不是"没数据"，所以给 0 不给 NaN
+				continue
+			}
+		}
+		z := effect / sigma
 		z *= float64(ls.N) / (float64(ls.N) + shrinkK) // 小样本收缩
 		if z > ClampZ {
 			z = ClampZ

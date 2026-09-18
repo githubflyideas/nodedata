@@ -42,7 +42,11 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 		if id == "cpu.user" {
 			return base
 		}
-		// mem.used：一直平稳，最近 3 天每天涨 5%
+		// mem.used：一直平稳，最近 3 天每天涨 5%。
+		// 取真实的字节量级（GB），不是几百的裸数——内存类指标有 128MB 的最小变化量门槛，
+		// 用合成的小数值会被门槛当成噪声挡掉，那是夹具不真实，不是判定有问题。
+		const gb = 1 << 30
+		base *= gb / 200 // 把 ~200 的基数映射到 ~1GB
 		if d := ts.Sub(end.Add(-72*time.Hour)).Hours() / 24; d > 0 {
 			return base * math.Pow(1.05, d)
 		}
