@@ -58,7 +58,7 @@ func runServe() {
 	// 默认只监听回环：页面会列出进程名、PID、主机负载水位，是内网侦察的现成材料。
 	// 要给别人看就显式 --listen 0.0.0.0，并自己在防火墙/反代上加访问控制。
 	listen := fs.String("listen", "127.0.0.1", "监听地址；默认仅本机。设为 0.0.0.0 前请确认有防火墙或反代鉴权")
-	interval := fs.String("interval", "5s", "Collect / check interval")
+	interval := fs.String("interval", "10s", "Collect / check interval")
 	procRoot := fs.String("proc", "/proc", "procfs root")
 	sysRoot := fs.String("sys", "/sys", "sysfs root")
 	rootFS := fs.String("rootfs", "/", "要监控容量的挂载点")
@@ -153,6 +153,15 @@ func runServe() {
 			out[i] = server.ProcTop(p)
 		}
 		return out, ts
+	}
+
+	builder.groupsFn = func() []server.ProcGroup {
+		gs := col.ProcGroups()
+		out := make([]server.ProcGroup, len(gs))
+		for i, g := range gs {
+			out[i] = server.ProcGroup(g)
+		}
+		return out
 	}
 
 	healthFn := func() server.HealthJSON { return builder.Health(col.Health()) }

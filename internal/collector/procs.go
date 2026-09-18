@@ -102,6 +102,7 @@ type procState struct {
 
 	topMu   sync.Mutex
 	top     []ProcTop
+	groups  []ProcGroup
 	topTS   time.Time
 	selfCPU float64
 	selfRSS uint64
@@ -130,6 +131,7 @@ func ProcKey(comm string) string {
 
 // parseProcStat 解析 /proc/PID/stat。comm 可能含空格与括号，必须以最后一个 ')' 为界。
 type procStat struct {
+	ppid                    uint64
 	comm                    string
 	state                   byte
 	cpu, start, rss, majflt uint64
@@ -152,6 +154,7 @@ func (c *Collector) parseProcStat(data []byte) (ps procStat, ok bool) {
 	if err1 != nil || err2 != nil || err3 != nil {
 		return ps, false
 	}
+	ps.ppid, _ = parseUint64(f[1]) // 4 ppid
 	ps.state = f[0][0]
 	ps.majflt, _ = parseUint64(f[9]) // 12 majflt
 	pages, _ := parseUint64(f[21])   // 24 rss（页）
@@ -229,6 +232,9 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		selfCPU  float64
 		selfRSS  uint64
 		pathBase = procRoot + "/"
+		// 进程组合计要沿 ppid 往上走，所以扫描时顺手把全表记下来（不额外读文件）
+		ppidOf = make(map[int]int, 512)
+		commOf = make(map[int]string, 512)
 	)
 	for _, name := range names {
 		if name == "" || name[0] < '0' || name[0] > '9' {
@@ -249,6 +255,8 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 			skipped++
 			continue
 		}
+		ppidOf[pid] = int(ps.ppid)
+		commOf[pid] = ps.comm
 		cur := procPrev{cpu: ps.cpu, start: ps.start, gen: p.gen, majflt: ps.majflt}
 		if d, err := c.readFileAbs(pathBase + name + "/io"); err == nil { // 需要 root 或同 uid
 			cur.rb, cur.wb, cur.ioOK = parseProcIO(d)
@@ -323,9 +331,10 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 	}
 
 	c.enrichThrottle(top, now, dt)
+	groups := buildGroups(all, ppidOf, commOf)
 
 	p.topMu.Lock()
-	p.top, p.topTS = top, now
+	p.top, p.topTS, p.groups = top, now, groups
 	p.selfCPU, p.selfRSS = selfCPU, selfRSS
 	p.scanDur = time.Since(t0)
 	p.nProcs = int(scanned)
@@ -456,4 +465,90 @@ func topByValue(m map[string]float64, n int) map[string]float64 {
 		out[k] = m[k]
 	}
 	return out
+}
+
+// ProcGroup 是一个进程组的合计：浏览器、数据库这类程序会拉起一堆子进程，
+// 单看每个子进程都不大，合起来才是真正的占用。
+//
+// 明细行保留不动——Chrome/Firefox 的渲染进程按标签页隔离，
+// 合并之后就丢掉了"哪个标签页在吃内存"这个信息，而那恰恰是排查时要的。
+// 所以是"明细 + 合计"，不是"合并"。
+type ProcGroup struct {
+	Name     string  `json:"name"`  // 组名 = 最上层祖先的进程名
+	PID      int     `json:"pid"`   // 组长 PID
+	Count    int     `json:"count"` // 成员数（含组长）
+	CPU      float64 `json:"cpu"`   // 合计，占一个核的百分比
+	RSS      uint64  `json:"rss"`   // 合计
+	ReadBps  float64 `json:"read_bps,omitempty"`
+	WriteBps float64 `json:"write_bps,omitempty"`
+}
+
+// groupRoot 沿 ppid 往上走，返回"最上层的非 init 祖先"。
+// 走到 1 或走不动就停；带环检测（/proc 快照不一致时可能出现）。
+func groupRoot(pid int, ppid map[int]int, comm map[int]string) (int, string) {
+	cur := pid
+	for i := 0; i < 32; i++ {
+		p, ok := ppid[cur]
+		if !ok || p <= 1 {
+			break
+		}
+		if _, ok := comm[p]; !ok {
+			break
+		}
+		cur = p
+	}
+	return cur, comm[cur]
+}
+
+// buildGroups 按"最上层非 init 祖先"聚合，只保留成员 ≥2 且占用够大的组。
+// 目的是回答"firefox 一共吃了多少"，而不是替代明细行。
+func buildGroups(all []ProcTop, ppidOf map[int]int, commOf map[int]string) []ProcGroup {
+	if len(ppidOf) == 0 {
+		return nil
+	}
+	type agg struct {
+		g   ProcGroup
+		pid int
+	}
+	byRoot := map[int]*agg{}
+	for _, p := range all {
+		root, name := groupRoot(p.PID, ppidOf, commOf)
+		if root == p.PID && len(all) > 0 {
+			// 自己就是根：也要统计，否则只有一个进程的程序不会出现在组里
+		}
+		a := byRoot[root]
+		if a == nil {
+			a = &agg{g: ProcGroup{Name: name, PID: root}, pid: root}
+			byRoot[root] = a
+		}
+		a.g.Count++
+		a.g.CPU += p.CPU
+		a.g.RSS += p.RSS
+		a.g.ReadBps += p.ReadBps
+		a.g.WriteBps += p.WriteBps
+	}
+	out := make([]ProcGroup, 0, 4)
+	for _, a := range byRoot {
+		// 单进程的组没有意义（明细行已经有了）；太小的组也不值得占一行
+		if a.g.Count < 2 || (a.g.CPU < 5 && a.g.RSS < 256<<20) {
+			continue
+		}
+		if a.g.Name == "" {
+			a.g.Name = "pid " + strconv.Itoa(a.g.PID)
+		}
+		out = append(out, a.g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RSS > out[j].RSS })
+	if len(out) > 5 {
+		out = out[:5]
+	}
+	return out
+}
+
+// ProcGroups 返回最近一轮的进程组合计（副本）。
+func (c *Collector) ProcGroups() []ProcGroup {
+	p := &c.procs
+	p.topMu.Lock()
+	defer p.topMu.Unlock()
+	return append([]ProcGroup(nil), p.groups...)
 }

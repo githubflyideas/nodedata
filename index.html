@@ -81,6 +81,8 @@ th[data-k] .ar{display:inline-block;width:10px;margin-left:2px;opacity:.35}
 th.sorted .ar{opacity:1}
 .pids{margin-left:6px;font-size:11px;color:var(--dim)}
 .pids b{font-weight:600;color:#2a5c9e}
+tr.grp-row td{background:#f8fafc;font-weight:600;border-top:1px solid var(--line)}
+tr.grp-row .pids{font-weight:400}
 .self-tag{margin-left:6px;font-size:11px;padding:0 5px;border-radius:3px;background:#fdf1dd;color:#96591a}
 .cmd{display:inline-block;margin:1px 4px 1px 0;padding:1px 6px;border-radius:4px;background:#f0f2f5;
      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;cursor:copy;border:0}
@@ -293,21 +295,9 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     所以累计计数器、page cache 这类指标不会恒定顶格。
   </div>
   <div class="sub" id="lagstatus"></div>
-  <div class="toolbar">
-    <div class="grp" id="tabs">
-      <button class="on" data-tab="acute">刚刚发生（5 分钟 ~ 40 分钟）</button>
-      <button data-tab="degrade">慢慢变坏（1.5 小时 ~ 7 天）</button>
-      <button data-tab="absolute">原始读数</button>
-    </div>
-    <div class="grp" id="wins">
-      <button data-win="1h" class="on">1h</button>
-      <button data-win="6h">6h</button>
-      <button data-win="24h">24h</button>
-      <button data-win="7d">7d</button>
-      <button data-win="14d">14d</button>
-    </div>
-    <span class="tabhint" id="tabhint"></span>
-  </div>
+  <div class="sub tabhint">L1 ~ L10 是十个时间尺度：L1 = 和 5 分钟前比，L4 = 40 分钟前，
+    L6 = 3 小时前，L9 = 昨天这个时候，L10 = 上周这个时候。突发抖动最先出现在左边几列，
+    缓慢劣化要看右边几列。</div>
   <div id="l3err"></div>
   <div class="tbl-wrap"><table id="l3tbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
   <h3 class="procs-h">此刻谁在用资源<span id="procsub">CPU 前 10 ∪ 读写前 10 ∪ RSS 增长前 5 ∪ RSS 最大前 5 ∪ D 状态 ∪ nodedata 自身。CPU 以"占一个核的百分比"计，读写为块设备口径。点命令即复制。</span></h3>
@@ -357,7 +347,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </div>
 <script>
 "use strict";
-var state={pane:"key",kwin:"6h",cmAll:false,l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
+var state={pane:"key",kwin:"6h",cmAll:false,win:"1h",l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9];                 // L5..L10 : 5400s .. 7d
 var HINT={acute:"只看最近 5 分钟到 40 分钟内发生的变化——突发抖动在这里最先出现。",
@@ -561,7 +551,6 @@ function pidsFor(id){
 
 function renderL3(){
   var h=state.heat,el=document.getElementById("l3tbl");
-  document.getElementById("tabhint").textContent=HINT[state.tab];
   renderProcs();
   if(!h){el.innerHTML="<tbody><tr><td class=\"empty\">无数据</td></tr></tbody>";return;}
   var ms=(h.metrics||[]).map(function(m){
@@ -570,9 +559,10 @@ function renderL3(){
   });
   if(!ms.length){el.innerHTML="<tbody><tr><td class=\"empty\">这个窗口里没有指标。</td></tr></tbody>";return;}
   var lags=h.lags||[],ready=h.lag_ready||[];
-  if(state.tab==="absolute") return renderAbs(el,ms);
 
-  var idx=(state.tab==="acute"?ACUTE:DEGRADE).filter(function(i){return i<lags.length;});
+  // 十个尺度一张表：原来分"刚刚发生/慢慢变坏"两个标签，等于把同一件事切成两半看
+  var idx=[];
+  for(var li=0;li<lags.length;li++) idx.push(li);
   ms.forEach(function(m){
     var pk=null;
     idx.forEach(function(i){var z=zval(m.pt,i);
@@ -596,29 +586,6 @@ function renderL3(){
       '<td class="num">'+((m.pt&&m.pt.breadth)||0)+'</td></tr>';
   }).join("");
   el.innerHTML="<thead>"+head+"</thead><tbody>"+rows+"</tbody>";
-}
-function renderAbs(el,ms){
-  // 原来这里有一列"主视图"，它只是内部的"属不属于核心域"标记，对看的人没有任何意义。
-  // 换成"最近变化"——绝对值页缺的恰恰是"这个数是刚变的还是一直如此"。
-  var st=sortRows(ms,["id","dom","unit","v","n"],"id");
-  var head='<tr>'+th("id","指标","",st)+th("dom","域","",st)+th("unit","单位","",st)+
-           th("v","当前值","num",st)+th("chg","窗口内变化","num",st)+th("n","窗口内样本","num",st)+'</tr>';
-  el.innerHTML="<thead>"+head+"</thead><tbody>"+ms.map(function(m){
-    var pts=m.pts||[], first=null, last=m.pt?m.pt.v:null, chg='<span class="na-dash">—</span>';
-    for(var i=0;i<pts.length;i++){ if(pts[i].v!=null&&isFinite(pts[i].v)){first=pts[i].v;break;} }
-    if(first!==null&&last!==null&&isFinite(last)){
-      if(first===0&&last===0) chg='<span class="chg">—</span>';
-      else if(first===0) chg='<span class="chg">从 0 起</span>';
-      else{
-        var pc=(last-first)/Math.abs(first)*100;
-        chg=Math.abs(pc)<0.5?'<span class="chg">—</span>'
-          :'<span class="chg'+(Math.abs(pc)>=20?" bad":"")+'">'+(pc>0?"▲ ":"▼ ")+Math.abs(pc).toFixed(0)+'%</span>';
-      }
-    }
-    return '<tr><td class="mid-id">'+esc(m.id)+pidsFor(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
-      '<td>'+esc(m.unit)+'</td><td class="num" data-sort="'+(m.pt?m.pt.v:"")+'">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td>'+
-      '<td class="num">'+chg+'</td><td class="num" data-sort="'+m.n+'">'+m.n+'</td></tr>';
-  }).join("")+"</tbody>";
 }
 
 // ---- 进程快照：把整机 CPU 偏离落到 PID，并直接给出下一步命令。
@@ -648,8 +615,25 @@ function renderProcs(){
         '<td class="num" data-sort="'+p.rss+'">'+esc(fmt(p.rss,"bytes"))+'</td>'+
         '<td class="num" data-sort="'+(p.growth_span?p.rss_growth:"")+'">'+growth(p)+'</td>'+
         '<td class="num" data-sort="'+(p.majflt||"")+'">'+(p.majflt?p.majflt.toFixed(0)+" /s":"—")+'</td>'+
-        '<td>'+cmdButtons(cmds(p))+'</td></tr>';}).join("")+'</tbody>';
+        '<td>'+cmdButtons(cmds(p))+'</td></tr>';}).join("")+groupRows()+'</tbody>';
   applySort(el);
+}
+
+// 进程组合计：浏览器、数据库会拉起一堆子进程，单看每个都不大，合起来才是真正的占用。
+// 明细行保留不动——渲染进程按标签页隔离，合并之后就丢掉"哪个标签页在吃内存"了。
+function groupRows(){
+  var gs=(state.heat&&state.heat.proc_groups)||[];
+  if(!gs.length) return "";
+  return gs.map(function(g){
+    return '<tr class="grp-row"><td class="num">—</td>'+
+      '<td class="mid-id">'+esc(g.name)+' <span class="pids">进程组合计 · '+g.count+' 个进程</span></td>'+
+      '<td class="mid">—</td>'+
+      '<td class="num" data-sort="'+g.cpu+'">'+g.cpu.toFixed(1)+' %</td>'+
+      '<td class="num">'+(g.read_bps?esc(fmt(g.read_bps,"bytes/s")):"—")+'</td>'+
+      '<td class="num">'+(g.write_bps?esc(fmt(g.write_bps,"bytes/s")):"—")+'</td>'+
+      '<td class="num" data-sort="'+g.rss+'">'+esc(fmt(g.rss,"bytes"))+'</td>'+
+      '<td class="num">—</td><td class="num">—</td><td>—</td></tr>';
+  }).join("");
 }
 
 /* ================= L4 ================= */
@@ -773,15 +757,26 @@ function cmpTable(sid,cols,rows){
   return '<div class="tbl-wrap"><table class="cmp" data-sid="'+esc(sid)+'"><thead><tr><th>指标</th><th class="num">当前</th>'+
     cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
     rows.map(function(r){
-      return '<tr title="'+esc(r.id)+'"><td class="'+mclass(r.id).trim()+'" data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
+      return '<tr title="'+esc(r.id)+'"><td data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
         '<td class="num cmp-now" data-sort="'+r.now+'"><span class="val">'+esc(fmt(r.now,r.unit))+
         '</span><span class="chg"></span></td>'+
         r.past.map(function(p){return '<td class="num" data-sort="'+(p===null?"":p)+'">'+cmpCell(r,p)+'</td>';}).join("")+'</tr>';
     }).join("")+'</tbody></table></div>';
 }
+// 重要的排前面，而不是靠颜色去找。顺序：出现即异常 > 首屏必看 > 其余 > 逐设备细分。
+function mrank(id){
+  if(M_CRIT.test(id)) return 0;
+  if(M_KEY.test(id))  return 1;
+  if(id.indexOf("@")>=0) return 3;
+  return 2;
+}
 function cmpRender(el,d,coreOnly){
   el.innerHTML=(d.groups||[]).map(function(g){
     var rows=coreOnly?g.rows.filter(function(r){return r.core;}):g.rows;
+    rows=rows.slice().sort(function(a,b){
+      var ra=mrank(a.id),rb=mrank(b.id);
+      return ra!==rb?ra-rb:0;   // 同级保持服务端给的顺序
+    });
     if(!rows.length) return "";
     return '<h3 class="cmp-h">'+esc(g.name)+'</h3>'+cmpTable("cmp:"+g.name,d.cols,rows);
   }).join("")||'<p class="empty">还没有数据。</p>';
@@ -1226,7 +1221,6 @@ function bindGrp(id,attr,onPick){
     onPick(b.getAttribute(attr));
   });
 }
-bindGrp("tabs","data-tab",function(v){state.tab=v;renderL3();});
 
 // 「只看异常项」的选择记在 localStorage，刷新后保持。L0 不折叠。
 var LS=(function(){try{return window.localStorage;}catch(e){return null;}})();
@@ -1235,7 +1229,6 @@ document.getElementById("l0only").checked=(function(){
 document.getElementById("l0only").addEventListener("change",function(){
   try{LS&&LS.setItem("nd.l0only",this.checked?"1":"0");}catch(e){}
   if(state.l0cats) renderL0Cards(state.l0cats);});
-bindGrp("wins","data-win",function(v){state.win=v;loadL3();});
 
 function toggleAuto(){
   state.auto=!state.auto;

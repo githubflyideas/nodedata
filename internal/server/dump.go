@@ -26,8 +26,9 @@ type HeatmapJSON struct {
 	Metrics     []MetricPoints  `json:"metrics"`
 	Rules       []RuleHit       `json:"rules"`
 	// Procs 是最近一轮的进程 CPU 快照（前 N + nodedata 自身），把整机偏离落到 PID。
-	Procs   []ProcTop `json:"procs"`
-	ProcsTS int64     `json:"procs_ts,omitempty"`
+	Procs   []ProcTop   `json:"procs"`
+	ProcsTS int64       `json:"procs_ts,omitempty"`
+	Groups  []ProcGroup `json:"proc_groups,omitempty"`
 }
 
 // ProcTop 与 collector.ProcTop 同构（server 包不依赖 collector）。
@@ -50,6 +51,18 @@ type ProcTop struct {
 	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"`
 	ThrottledFrac  float64 `json:"throttled_frac,omitempty"`
 	ThrottledRatio float64 `json:"throttled_ratio,omitempty"`
+}
+
+// ProcGroup 是进程组合计：浏览器、数据库会拉起一堆子进程，
+// 单看每个都不大，合起来才是真正的占用。明细行保留不动。
+type ProcGroup struct {
+	Name     string  `json:"name"`
+	PID      int     `json:"pid"`
+	Count    int     `json:"count"`
+	CPU      float64 `json:"cpu"`
+	RSS      uint64  `json:"rss"`
+	ReadBps  float64 `json:"read_bps,omitempty"`
+	WriteBps float64 `json:"write_bps,omitempty"`
 }
 
 type PSIAlert struct {

@@ -16,8 +16,9 @@ import (
 )
 
 // maxPointsPerMetric 每个指标保留的最大原始点数。
-// 5s 间隔 × 17280 点 ≈ 24 小时。
-const maxPointsPerMetric = 17280
+// 10s 间隔 × 8640 点 ≈ 24 小时。采集周期从 5s 放宽到 10s 之后，
+// 这个数也要跟着减半——否则原始层会变成 48 小时，内存白涨一倍。
+const maxPointsPerMetric = 8640
 
 // 长期层：每 5 分钟从原始点里"抽"一个点（不求平均），保留 14 天，并落盘。
 //

@@ -24,6 +24,8 @@ type HeatmapBuilder struct {
 	host   string
 	// procsFn 提供最近一轮进程快照；nil 时不输出。
 	procsFn func() ([]server.ProcTop, time.Time)
+	// groupsFn 提供进程组合计（浏览器/数据库的子进程合起来才是真正的占用）
+	groupsFn func() []server.ProcGroup
 
 	// frozen 是"处在异常中"的指标 → 异常起始时刻。见 MarkAnomaly。
 	frozenMu sync.Mutex
@@ -286,6 +288,9 @@ func (b *HeatmapBuilder) build(from, to time.Time, lastOnly bool) (*server.Heatm
 		}
 		if !ts.IsZero() {
 			out.ProcsTS = ts.Unix()
+		}
+		if b.groupsFn != nil {
+			out.Groups = b.groupsFn()
 		}
 	}
 	return out, nil
