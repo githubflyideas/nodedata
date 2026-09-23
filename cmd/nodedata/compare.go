@@ -29,11 +29,31 @@ type cmpRow struct {
 	Past  []*float64 `json:"past"`
 	Bad   int        `json:"bad"` // +1 往上是坏，-1 往下是坏，0 无所谓好坏
 	ID    string     `json:"id"`
+	// Floor 是"值得一提的最小变化量"。低于它的变化不显示百分比。
+	//
+	// 分母接近 0 时百分比是垃圾：盘 util 从 0.08% 到 0.52% 会报 ▲550%，
+	// IO 压力从 0.01% 到 0.14% 报 ▲1.3k%——这台机器基本在睡觉。
+	// z-score 那条路径在 v5.14.0 已经有这个门槛了，对比表是另一条路径，之前绕开了。
+	Floor float64 `json:"floor,omitempty"`
+}
+
+// cmpMover 是同期变化最大的进程。
+//
+// 看到"写 IOPS 涨了 10.8k%"，下一个问题必然是"谁写的"——
+// 而对比表原来只有整机数字，答不了。
+type cmpMover struct {
+	Name   string   `json:"name"`   // 进程名
+	Metric string   `json:"metric"` // 来源序列，如 proc.io.rsync
+	Unit   string   `json:"unit"`
+	Now    float64  `json:"now"`
+	Past   *float64 `json:"past"`
+	Col    string   `json:"col"` // 相对哪一列
 }
 
 type cmpGroup struct {
-	Name string   `json:"name"`
-	Rows []cmpRow `json:"rows"`
+	Name   string     `json:"name"`
+	Rows   []cmpRow   `json:"rows"`
+	Movers []cmpMover `json:"movers,omitempty"`
 }
 
 type CompareJSON struct {
@@ -292,7 +312,8 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 		}
 		grp := cmpGroup{Name: g.name}
 		for _, d := range defs {
-			row := cmpRow{Label: d.label, Unit: d.unit, Bad: d.bad, Core: d.core, ID: strings.Join(d.ids, "+")}
+			row := cmpRow{Label: d.label, Unit: d.unit, Bad: d.bad, Core: d.core,
+				ID: strings.Join(d.ids, "+"), Floor: minDeltaFor(d.ids[0])}
 			if row.Now = b.valueAt(d, now, 0, true); row.Now == nil {
 				continue // 这台机器没有这项（比如没有 PSI、没有 conntrack）：整行不显示
 			}
@@ -308,6 +329,7 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 			grp.Rows = append(grp.Rows, row)
 		}
 		if len(grp.Rows) > 0 {
+			grp.Movers = b.movers(g.name, now, ids)
 			out.Groups = append(out.Groups, grp)
 		}
 	}
@@ -316,3 +338,74 @@ func (b *HeatmapBuilder) Compare(now time.Time) *CompareJSON {
 
 func nan() float64         { return math.NaN() }
 func isNaN(v float64) bool { return math.IsNaN(v) || math.IsInf(v, 0) }
+
+// moverPrefix 决定每个组该看哪一类进程序列。
+var moverPrefix = map[string]struct{ prefix, unit string }{
+	"CPU": {"proc.cpu.", "percent"},
+	"磁盘":  {"proc.io.", "bytes/s"},
+	"内存":  {"proc.rss.", "bytes"},
+	"进程":  {"proc.cpu.", "percent"},
+}
+
+// movers 找出这一类资源里同期变化最大的进程，回答"谁干的"。
+//
+// 只看第一列（1 小时前）：更长的跨度上进程早就换了一批，
+// 拿"7 天前的某个进程"和现在比没有意义。
+func (b *HeatmapBuilder) movers(group string, now time.Time, ids []string) []cmpMover {
+	pu, ok := moverPrefix[group]
+	if !ok || len(compareCols) == 0 {
+		return nil
+	}
+	col := compareCols[0]
+	floor := minDeltaFor("x." + pu.unit) // 按单位取门槛
+	switch pu.unit {
+	case "percent":
+		floor = 3
+	case "bytes/s":
+		floor = 1 << 20
+	case "bytes":
+		floor = 128 << 20
+	}
+	var out []cmpMover
+	for _, id := range ids {
+		if !strings.HasPrefix(id, pu.prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(id, pu.prefix)
+		if name == "__others__" {
+			continue // 聚合桶，指不到具体进程
+		}
+		cur, ok := b.series.Last(id)
+		if !ok || now.Sub(cur.TS) > 2*time.Minute {
+			continue
+		}
+		m := cmpMover{Name: name, Metric: id, Unit: pu.unit, Now: cur.V, Col: col.Name}
+		if p, ok := b.series.Lookup(id, now.Add(-col.Ago), lookupTol(col.Ago)); ok {
+			v := p
+			m.Past = &v
+		}
+		// 变化够大才算"变化最大的进程"——否则一台安静机器也会给出一串名字
+		delta := m.Now
+		if m.Past != nil {
+			delta = m.Now - *m.Past
+		}
+		if math.Abs(delta) < floor {
+			continue
+		}
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		di, dj := out[i].Now, out[j].Now
+		if out[i].Past != nil {
+			di -= *out[i].Past
+		}
+		if out[j].Past != nil {
+			dj -= *out[j].Past
+		}
+		return math.Abs(di) > math.Abs(dj)
+	})
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
+}
