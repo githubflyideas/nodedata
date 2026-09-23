@@ -89,6 +89,10 @@ tr.grp-row .pids{font-weight:400}
 .cmd:hover{background:#e3e7ee}
 h3.procs-h{margin:18px 0 6px;font-size:13px;font-weight:600}
 h3.cmp-h{margin:14px 0 6px;font-size:14px;font-weight:600}
+.movers{margin:6px 0 2px;padding:6px 10px;background:#f8fafc;border:1px solid var(--line);
+  border-radius:5px;font-size:12px;display:flex;flex-wrap:wrap;gap:4px 16px;align-items:baseline}
+.movers b{font-weight:600;color:var(--dim);font-size:11.5px;margin-right:4px}
+.movers .mv code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
 h2 .fold{appearance:none;border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer;
   font:inherit;font-size:11.5px;color:var(--dim);padding:1px 8px;margin-left:10px;font-weight:400}
 h2 .fold:hover{color:#1d4ed8;border-color:#1d4ed8}
@@ -664,24 +668,6 @@ document.addEventListener("click",function(e){
   }
 });
 
-/* ================= 关键指标对比 ================= */
-function cmpCell(r,p){
-  if(p==null) return '<span class="na-dash">—</span>';
-  var v='<span class="val">'+esc(fmt(p,r.unit))+'</span>', now=r.now, ch;
-  if(p===0&&now===0) ch='<span class="chg">—</span>';
-  else if(p===0) ch='<span class="chg'+(r.bad>0?" bad":"")+'">▲ 新增</span>';
-  else{
-    var pct=(now-p)/Math.abs(p)*100;
-    if(Math.abs(pct)<0.5) ch='<span class="chg">—</span>';
-    else{
-      var up=pct>0, bad=(r.bad>0&&up)||(r.bad<0&&!up);
-      var cls=Math.abs(pct)>=20?(bad?" bad":(r.bad!==0?" good":"")):"";
-      var a=Math.abs(pct), txt=a>=1000?(Math.round(a/100)/10)+"k":a.toFixed(0);
-      ch='<span class="chg'+cls+'">'+(up?"▲":"▼")+" "+txt+'%</span>';
-    }
-  }
-  return v+" "+ch;
-}
 /* ================= 通用表格排序 =================
    任何带 data-sid 的表格都可点表头排序。状态按 sid 记住，
    20 秒自动刷新后排序保持——否则每次刷新都跳回原序，等于没有排序。
@@ -742,6 +728,9 @@ function toggleL0(){
 function cmpCell(r,p){
   if(p==null) return '<span class="na-dash">—</span>';
   var v='<span class="val">'+esc(fmt(p,r.unit))+'</span>', now=r.now, ch;
+  // 分母接近 0 时百分比是垃圾：盘 util 0.08%→0.52% 会报 ▲550%，而这台机器基本在睡觉。
+  // 变化量低于该类指标的门槛就只给"—"，原始数值照常显示，看的人自己判断。
+  if(r.floor&&Math.abs(now-p)<r.floor) return v+' <span class="chg">—</span>';
   if(p===0&&now===0) ch='<span class="chg">—</span>';
   else if(p===0) ch='<span class="chg'+(r.bad>0?" bad":"")+'">▲ 新增</span>';
   else{
@@ -755,6 +744,18 @@ function cmpCell(r,p){
     }
   }
   return v+" "+ch;
+}
+// 看到"写 IOPS 涨了 10.8k%"，下一个问题必然是"谁写的"。整机数字答不了，这一行答。
+function moversHTML(g){
+  var ms=g.movers||[];
+  if(!ms.length) return "";
+  return '<div class="movers"><b>同期变化最大的进程</b>'+
+    ms.map(function(m){
+      var d=m.past==null?null:(m.now-m.past);
+      var delta=d==null?"新出现":(d>0?"▲ ":"▼ ")+fmt(Math.abs(d),m.unit);
+      return '<span class="mv"><code>'+esc(m.name)+'</code> '+esc(fmt(m.now,m.unit))+
+        ' <span class="pids">'+esc(delta)+' vs '+esc(m.col)+'前</span></span>';
+    }).join("")+'</div>';
 }
 function cmpTable(sid,cols,rows){
   return '<div class="tbl-wrap"><table class="cmp" data-sid="'+esc(sid)+'"><thead><tr><th>指标</th><th class="num">当前</th>'+
@@ -781,7 +782,7 @@ function cmpRender(el,d,coreOnly){
       return ra!==rb?ra-rb:0;   // 同级保持服务端给的顺序
     });
     if(!rows.length) return "";
-    return '<h3 class="cmp-h">'+esc(g.name)+'</h3>'+cmpTable("cmp:"+g.name,d.cols,rows);
+    return '<h3 class="cmp-h">'+esc(g.name)+'</h3>'+cmpTable("cmp:"+g.name,d.cols,rows)+moversHTML(g);
   }).join("")||'<p class="empty">还没有数据。</p>';
   applySortAll();
 }
