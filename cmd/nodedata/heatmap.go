@@ -335,7 +335,10 @@ func unitOf(id string) string {
 	// 速率类：吞吐（字节/秒）与事件/秒。@ 后面是设备或接口名。
 	case strings.HasPrefix(id, "disk.rbytes"), strings.HasPrefix(id, "disk.wbytes"),
 		id == "net.rx", id == "net.tx", strings.HasPrefix(id, "net.rx@"), strings.HasPrefix(id, "net.tx@"),
-		strings.HasPrefix(id, "proc.io."):
+		strings.HasPrefix(id, "proc.io."),
+		// 必须排在下面的 "swap. 开头 = 字节" 之前：swap.in/out 是速率不是存量，
+		// 落到那条规则上 50MB/s 会显示成 "50 MiB"，看不出这台机器正在挨打。
+		id == "swap.in", id == "swap.out":
 		return "bytes/s"
 	case strings.Contains(id, "_drop"), strings.Contains(id, "_errs"), strings.Contains(id, "_errors"),
 		id == "tcp.retrans", id == "tcp.passive_opens", id == "tcp.attempt_fails",
