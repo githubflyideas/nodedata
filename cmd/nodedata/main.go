@@ -297,6 +297,20 @@ func runServe() {
 		fmt.Fprint(w, healthLine(hostname, l0, diagnoser.Run(3.0), builder.healthValues(now), now))
 	})
 
+	// USE 五行：每个资源一行，会终结的那张清单
+	mux.HandleFunc("/api/use", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, diagnoser.Use(time.Now()))
+	})
+
+	// 给大模型看的纯文本简报。text/plain 是刻意的：一条 curl 就能贴进对话，
+	// 不需要对端先学一套 JSON 结构。
+	mux.HandleFunc("/api/report", func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		fmt.Fprint(w, textReport(hostname, diagnoser.Use(now), diagnoser.Run(3.0), now))
+	})
+
 	// 一条 curl 回答"L1–L5 为什么没数"：卡在 σ 还是卡在配对
 	mux.HandleFunc("/api/lagdiag", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, builder.DiagnoseLags(time.Now()))

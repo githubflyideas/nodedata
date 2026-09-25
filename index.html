@@ -201,6 +201,25 @@ h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .item summary{cursor:pointer;color:var(--accent)}
 .item details ul{margin:5px 0 0 16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .notes{font-size:12px;color:var(--dim);margin-top:9px;padding-top:8px;border-top:1px dotted var(--line)}
+/* ---- USE 五行 ---- */
+.use{display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:7px;overflow:hidden}
+.use-r{display:grid;grid-template-columns:62px 52px 1fr;gap:10px;align-items:baseline;
+  background:var(--card);padding:8px 11px;font-size:13px}
+.use-r>b{font-weight:600}
+.use-s{font-size:11.5px;font-weight:600;text-align:center;border-radius:10px;padding:1px 0}
+.use-s.ok{color:var(--ok);background:#eaf6ef}
+.use-s.warn{color:var(--warn);background:#fdf3e6}
+.use-s.bad{color:#fff;background:var(--bad)}
+.use-s.idle{color:var(--dim);background:#eef0f3}
+.use-f{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums;line-height:1.75}
+.use-f .v{color:var(--ink);font-weight:600}
+.use-f .chk{color:var(--bad)}
+.use-f .who{color:var(--cool)}
+.use-f i{font-style:normal;color:#98a1ad}
+.use-blind{font-size:11.5px;color:var(--dim);margin-top:9px;padding-top:8px;
+  border-top:1px dotted var(--line);line-height:1.7}
+.use-blind b{color:var(--warn);font-weight:600}
 /* ---- footer ---- */
 .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:8px}
 .hcell{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fcfcfd}
@@ -221,6 +240,15 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     <button onclick="refreshAll()">立即刷新</button>
   </div>
 </header>
+<section>
+  <h2>是不是它<span class="layer">USE · 每个资源一行：用得多满 / 有没有人在排队等它 / 有没有出错</span></h2>
+  <div class="sub">这张清单会<b>终结</b>：逐个资源看一遍，要么找到，要么排除。
+    判定只来自下面的 L0 硬阈值与自身基线，这里不另设门槛，也不下因果结论。
+    <a href="/api/report" target="_blank">取文本简报</a></div>
+  <div class="use" id="usebody"><div class="empty">加载中…</div></div>
+  <div class="use-blind" id="useblind" hidden></div>
+</section>
+
 <section>
   <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span>
     <button class="fold" id="l0fold" onclick="toggleL0()">折叠</button></h2>
@@ -1271,8 +1299,60 @@ async function clearBaseline(){
   await fetch("/api/baseline",{method:"DELETE"});
   await loadBaseline(); await loadL0();
 }
+// ---- USE 五行 ----
+// 状态词只有四个，刻意不含因果：说"磁盘 异常"，不说"磁盘是瓶颈"。
+// 后者是推理，错了比不给更糟。
+function useCls(lv){ return lv>=2?"bad":lv===1?"warn":lv<0?"idle":"ok"; }
+
+function useFactHTML(f){
+  var s='<span class="v">'+esc(f.label)+' '+esc(fmt(f.value,f.unit))+'</span>';
+  var ex=[];
+  if(f.base!=null) ex.push("平时 "+esc(fmt(f.base,f.unit)));
+  if(f.z!=null&&Math.abs(f.z)>=3) ex.push("z="+f.z.toFixed(1));
+  if(ex.length) s+=' <i>('+ex.join("，")+')</i>';
+  return s;
+}
+
+function renderUse(rows){
+  var body=document.getElementById("usebody");
+  if(!rows||!rows.length){ body.innerHTML='<div class="empty">没有数据</div>'; return; }
+  body.innerHTML=rows.map(function(r){
+    // 判定各占一行：一条 L0 判定是一个独立结论，用 · 串起来会读成一句话。
+    var lines=(r.checks||[]).map(function(c){
+      return '<div class="chk">['+esc(c.id)+'] '+esc(c.name)+' '+esc(c.message)+'</div>';
+    });
+    // 事实和归因是同一句话的几个部分，串在一行。
+    var bits=(r.facts||[]).map(useFactHTML);
+    if(r.movers&&r.movers.length){
+      bits.push('<span class="who">谁干的：'+r.movers.map(function(m){
+        return esc(m.name)+" "+esc(fmt(m.now,m.unit));
+      }).join("，")+'</span>');
+    }
+    if(bits.length) lines.push('<div>'+bits.join(" · ")+'</div>');
+    // 一行也没有时给个占位，否则"正常"那几行会塌成空白，看不出采集是通的
+    if(!lines.length) lines.push('<div><i>无越线项</i></div>');
+    return '<div class="use-r"><b>'+esc(r.resource)+'</b>'+
+      '<span class="use-s '+useCls(r.level)+'">'+esc(r.state)+'</span>'+
+      '<span class="use-f">'+lines.join("")+'</span></div>';
+  }).join("");
+
+  // 看不到的东西必须显式出现：一行"网络 正常"会让人以为网络已经查过了。
+  var blind=[];
+  rows.forEach(function(r){ (r.blind||[]).forEach(function(s){ blind.push(r.resource+" "+s); }); });
+  var el=document.getElementById("useblind");
+  el.hidden=blind.length===0;
+  el.innerHTML='<b>看不到</b>（以下方面本页没有依据，别据此下结论）：'+
+    blind.map(esc).join(" ； ");
+}
+
+async function loadUse(){
+  try{ renderUse((await getJSON("/api/use")).json); }
+  catch(e){ document.getElementById("usebody").innerHTML=
+    '<div class="err">/api/use → '+esc(e.message)+'</div>'; }
+}
+
 async function refreshAll(){
-  await Promise.all([loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadUse(),loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

@@ -15,6 +15,10 @@ import (
 	"unsafe"
 )
 
+// pageSizeF 是 pageSize（procs.go，uint64）的浮点副本。
+// parseVmstat 在采集热路径上，每轮做一次 uint64→float64 转换没必要。
+var pageSizeF = float64(pageSize)
+
 // Sample 是单条落库记录。
 type Sample struct {
 	MetricID string
@@ -592,11 +596,21 @@ func (c *Collector) parseVmstat(data []byte, now time.Time, dt float64, hasPrev 
 			continue
 		}
 		var metricID string
+		// scale 把原始计数换成上报单位。pswpin/pswpout 以**页**计，
+		// 换成字节/秒才能跟 mem.* 放在一起比较；缺页数本身就是次数。
+		scale := 1.0
 		switch {
 		case bytes.Equal(fields[0], []byte("pgfault")):
 			metricID = "pgfault"
 		case bytes.Equal(fields[0], []byte("pgmajfault")):
 			metricID = "pgmajfault"
+		// SwapFree 是存量，不疼；换入换出的**速率**才疼。
+		// 内存饱和度的硬信号：机器可以 swap 用了一半却毫无感觉，
+		// 也可以只用了 2% 但每秒换出 50MB，后者是真卡。
+		case bytes.Equal(fields[0], []byte("pswpin")):
+			metricID, scale = "swap.in", pageSizeF
+		case bytes.Equal(fields[0], []byte("pswpout")):
+			metricID, scale = "swap.out", pageSizeF
 		default:
 			continue
 		}
@@ -607,7 +621,7 @@ func (c *Collector) parseVmstat(data []byte, now time.Time, dt float64, hasPrev 
 		if hasPrev {
 			prev := c.prevGlobal[metricID]
 			if v >= prev {
-				*out = append(*out, Sample{MetricID: metricID, TS: now, Value: float64(v-prev) / dt})
+				*out = append(*out, Sample{MetricID: metricID, TS: now, Value: float64(v-prev) * scale / dt})
 			}
 		}
 		c.prevGlobal[metricID] = v
