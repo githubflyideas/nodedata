@@ -101,7 +101,8 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 		}
 		return float64(*p) / 20
 	}
-	for lag := 9; lag <= 10; lag++ {
+	// 长档（1天、3天、7天）= 第 7..9 档：重启后必须立刻可用，全靠落盘的长期层
+	for lag := 7; lag <= deviation.NLag; lag++ {
 		if math.IsNaN(zf("cpu.user", lag)) {
 			t.Fatalf("L%d not ready after restart — long-term tier was not used", lag)
 		}
@@ -113,8 +114,8 @@ func TestLongLagsSurviveRestart(t *testing.T) {
 	if !math.IsNaN(zf("cpu.user", 1)) {
 		t.Errorf("L1 should not be ready one minute after restart")
 	}
-	if zf("mem.used", 10) < 3 {
-		t.Errorf("slow degradation missed at L10: z=%.2f", zf("mem.used", 10))
+	if zf("mem.used", deviation.NLag) < 3 {
+		t.Errorf("slow degradation missed at 7d: z=%.2f", zf("mem.used", deviation.NLag))
 	}
 	for _, id := range []string{"cpu.user", "mem.used"} {
 		t.Logf("after restart %-8s L1..L10: %v", id, fmtZ(zf, id))

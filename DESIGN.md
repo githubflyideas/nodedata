@@ -20,30 +20,41 @@
 
 **Validation**: benchmark with `go test -bench . -benchmem` shows ≤20 allocs/round
 
-## 14-Lag Structure
+## 9-Lag Structure (v5.18.0)
 
-**Why this structure**:
-- 300s–2.4M seconds covers 5min to 28-day ranges
-- L9+ must be 86.4k (24h) multiples for day-over-day comparison
-- 14 lags provide dense coverage without explosion
+**One set of time points for the whole page** (`cmd/nodedata/timepoints.go`):
+5m · 10m · 30m · 1h · 6h · 12h · 1d · 3d · 7d · 14d.
+The comparison table (raw values) and the services table (present or not) use all ten.
+The z-score table uses the first nine (`deviation.LagSeconds`); a test pins the two lists together.
+
+**Why 7d is the longest lag**: a z at lag H needs 2×H of history — reach back H, then
+estimate how large an H-change normally is. Retention is 14 days, so the longest lag is 7 days.
+Tables that show raw values or presence need no statistics and can go to 14 days.
+
+**Why these nine and not the old ten** (5m 10m 20m 40m 1.5h 3h 6h 12h 1d 7d):
+- The old set was irregular (×2, ×2, ×2, ×2.25, ×2, ×2, ×2, ×2, ×7) and matched neither of the
+  other two tables on the page.
+- Short lags do not detect faster. A step change is visible at every lag immediately (now vs
+  t−H differs for all H). Lags differ only in how long a change still counts as "new", and in
+  that slow drift needs a lag long enough to accumulate. 20m/40m added columns, not detection speed.
+- Onset precision ("started 40m ago" vs "1.5h ago") was never reliable: while a fault persists,
+  its own samples inflate σ and mask the shorter lags.
 
 **Table**:
 ```
-L1: 300s (5min)      — micro transient
-L2: 600s (10min)     — transient
-L3: 1.2k (20min)     — short anomaly
-L4: 2.4k (40min)     — medium anomaly
-L5: 5.4k (90min)     — long anomaly
-L6: 10.8k (3hr)      — daily macro 1
-L7: 21.6k (6hr)      — daily macro 2
-L8: 43.2k (12hr)     — daily macro 3
-L9: 86.4k (24hr)     — day-over-day ★
-L10: 172.8k (2d)     — 2-day pattern
-L11: 345.6k (4d)     — 4-day pattern
-L12: 604.8k (1w)     — weekly ★
-L13: 1.2M (2w)       — 2-week pattern
-L14: 2.4M (4w)       — monthly ★
+L1: 300s     5m   — just now
+L2: 600s     10m  — a moment ago
+L3: 1800s    30m  — half an hour ago
+L4: 3600s    1h   — an hour ago
+L5: 21600s   6h   — earlier today
+L6: 43200s   12h  — half a day ago
+L7: 86400s   1d   — same time yesterday ★
+L8: 259200s  3d   — a few days ago
+L9: 604800s  7d   — same time last week ★
 ```
+
+**Breadth** ("how many lags are abnormal") now tops out at 9. The "critical" threshold stays at
+5 lags — same proportion as 5 of the old 10. Fault corpus: 8/8 after the change.
 
 ## Sigma Computation (v0.2.0 Fixed)
 

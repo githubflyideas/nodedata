@@ -13,13 +13,8 @@ import (
 	"time"
 )
 
-var compareCols = []struct {
-	Name string
-	Ago  time.Duration
-}{
-	{"1h", time.Hour}, {"6h", 6 * time.Hour}, {"12h", 12 * time.Hour},
-	{"1d", 24 * time.Hour}, {"3d", 72 * time.Hour}, {"7d", 7 * 24 * time.Hour},
-}
+// compareCols 就是全页面那一套时间点（timepoints.go）。
+var compareCols = timePoints
 
 type cmpRow struct {
 	Label string     `json:"label"`
@@ -235,11 +230,17 @@ const procCmpTop = 5
 // lookupTol：历史值的时间容差，约为回看时长的 1%，夹在 30 秒到 10 分钟之间。
 func lookupTol(ago time.Duration) time.Duration {
 	t := ago / 100
+	// 短列（5分钟、10分钟）不能套用下面那条 150 秒的下限：那等于"5 分钟前"
+	// 可以拿 7 分半前的点来顶。上限压在一半跨度。
+	floor := coarseStep / 2
+	if half := ago / 2; half < floor {
+		floor = half
+	}
 	// 下限必须够上长期层的格子：长期层 5 分钟一个点，离目标时刻最远 150 秒。
 	// 原来的下限是 30 秒，"1小时前"算出来 36 秒——重启后头一个小时（原始层还没攒够 1 小时）
 	// 这一列大约四次里有三次是空的。跟 v5.13.0 的 LagTolerance 是同一类错。
-	if t < coarseStep/2 {
-		t = coarseStep / 2
+	if t < floor {
+		t = floor
 	}
 	if t > 10*time.Minute {
 		t = 10 * time.Minute
@@ -365,7 +366,13 @@ func (b *HeatmapBuilder) movers(group string, now time.Time, ids []string) []cmp
 	if !ok || len(compareCols) == 0 {
 		return nil
 	}
-	col := compareCols[0]
+	// 固定跟 1 小时前比，不跟着列表第一列走：列表从 5 分钟开始了，
+	// 而"谁干的"要的是一段够长的变化——5 分钟前后进程占用几乎一样，比不出谁。
+	// 更长也不行：跨度一长进程早换了一批，拿"7 天前的某个进程"和现在比没有意义。
+	col, ok := timePointNamed("1h")
+	if !ok {
+		return nil
+	}
 	floor := minDeltaFor("x." + pu.unit) // 按单位取门槛
 	switch pu.unit {
 	case "percent":

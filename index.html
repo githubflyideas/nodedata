@@ -157,10 +157,12 @@ table[data-sid] thead th.sorted .ar{opacity:1}
 table.cmp td:first-child{white-space:nowrap}
 /* 对齐：过去各列是"数值 + 变化%"，当前列只有数值，自动布局下宽度不同，表头和数字对不上 */
 table.cmp{table-layout:fixed;width:100%}
-table.cmp th:first-child,table.cmp td:first-child{width:22%}
-table.cmp td.num,table.cmp th.num{text-align:right;padding-right:10px}
-table.cmp td.num .val{display:inline-block;min-width:76px;text-align:right}
-table.cmp td.num .chg{display:inline-block;min-width:54px;text-align:right}
+table.cmp th:first-child,table.cmp td:first-child{width:18%}
+table.cmp td.num,table.cmp th.num{text-align:right;padding-right:8px}
+/* 数值和变化上下叠放：10 个时间列时每列只有 ~95px，并排放要 134px，会压到隔壁列上 */
+table.cmp td.num .val{display:block;text-align:right;white-space:nowrap}
+table.cmp td.num .chg{display:block;text-align:right;margin-left:0;line-height:1.25;white-space:nowrap}
+table.cmp td.num .chg:empty{display:none}
 .cmp-now{font-weight:600}
 .chg{font-size:11px;margin-left:4px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .chg.bad{color:#c0392b}.chg.good{color:#1e8449}
@@ -397,12 +399,6 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 <script>
 "use strict";
 var state={pane:"key",kwin:"6h",cmAll:false,win:"1h",l0fold:false,tab:"acute",win:"1h",heat:null,timer:null,auto:true,l0cats:null,sort:{k:"peak",d:-1}};
-var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
-var DEGRADE=[4,5,6,7,8,9];                 // L5..L10 : 5400s .. 7d
-var HINT={acute:"只看最近 5 分钟到 40 分钟内发生的变化——突发抖动在这里最先出现。",
-          degrade:"只看 1.5 小时到 7 天尺度上的变化——内存泄漏、连接数爬升这类慢性问题在这里才显形。和1天前比需要至少 2 天历史，和7天前比需要至少 14 天；历史落盘，重启不丢。",
-          absolute:"不做任何归一化，直接给当前原始读数；窗口内变化 = 这个窗口里第一个点到现在的变化。"};
-
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 
@@ -517,7 +513,7 @@ async function loadLagStatus(){
   var d;
   try{ d=(await getJSON("/api/lagdiag")).json; }catch(e){ el.textContent=""; return; }
   var blind=d.filter(function(x){return x.z_available===0;});
-  if(!blind.length){ el.innerHTML='<span class="ok-note">十个时间尺度都有数据。</span>'; return; }
+  if(!blind.length){ el.innerHTML='<span class="ok-note">九个时间尺度都有数据。</span>'; return; }
   var names=blind.map(function(x){return (x.name||x.lag)+"前";}).join("、");
   var why=blind.map(function(x){return x.plain||x.reason||"";}).filter(Boolean);
   el.innerHTML='<b>和 '+esc(names)+' 比的列现在没有数据</b>（表里显示为斜纹格）：'+
@@ -618,7 +614,7 @@ function renderL3(){
   if(!ms.length){el.innerHTML="<tbody><tr><td class=\"empty\">这个窗口里没有指标。</td></tr></tbody>";return;}
   var lags=h.lags||[],ready=h.lag_ready||[];
 
-  // 十个尺度一张表：原来分"刚刚发生/慢慢变坏"两个标签，等于把同一件事切成两半看
+  // 九个尺度一张表：原来分"刚刚发生/慢慢变坏"两个标签，等于把同一件事切成两半看
   var idx=[];
   for(var li=0;li<lags.length;li++) idx.push(li);
   ms.forEach(function(m){
@@ -784,12 +780,13 @@ function cmpCell(r,p){
   var v='<span class="val">'+esc(fmt(p,r.unit))+'</span>', now=r.now, ch;
   // 分母接近 0 时百分比是垃圾：盘 util 0.08%→0.52% 会报 ▲550%，而这台机器基本在睡觉。
   // 变化量低于该类指标的门槛就只给"—"，原始数值照常显示，看的人自己判断。
-  if(r.floor&&Math.abs(now-p)<r.floor) return v+' <span class="chg">—</span>';
-  if(p===0&&now===0) ch='<span class="chg">—</span>';
+  // 没有值得一提的变化就什么都不写：10 列里每格一个"—"，满屏的横线比数字还多
+  if(r.floor&&Math.abs(now-p)<r.floor) return v;
+  if(p===0&&now===0) ch='';
   else if(p===0) ch='<span class="chg'+(r.bad>0?" bad":"")+'">▲ 新增</span>';
   else{
     var pct=(now-p)/Math.abs(p)*100;
-    if(Math.abs(pct)<0.5) ch='<span class="chg">—</span>';
+    if(Math.abs(pct)<0.5) ch='';
     else{
       var up=pct>0, bad=(r.bad>0&&up)||(r.bad<0&&!up);
       var cls=Math.abs(pct)>=20?(bad?" bad":(r.bad!==0?" good":"")):"";
@@ -797,7 +794,7 @@ function cmpCell(r,p){
       ch='<span class="chg'+cls+'">'+(up?"▲":"▼")+" "+txt+'%</span>';
     }
   }
-  return v+" "+ch;
+  return v+ch;
 }
 // 看到"写 IOPS 涨了 10.8k%"，下一个问题必然是"谁写的"。整机数字答不了，这一行答。
 function moversHTML(g){
@@ -813,8 +810,8 @@ function moversHTML(g){
 }
 // "1h"/"3d" 是接口里的列编号，页面上写成"1小时"/"3天"。跟变化幅度表同一套说法。
 function colLabel(c){
-  var m=/^(\d+)([hd])$/.exec(c||"");
-  return m?(m[1]+(m[2]==="h"?"小时":"天")):c;
+  var m=/^(\d+)([mhd])$/.exec(c||"");
+  return m?(m[1]+({m:"分钟",h:"小时",d:"天"})[m[2]]):c;
 }
 function cmpTable(sid,cols,rows){
   return '<div class="tbl-wrap"><table class="cmp" data-sid="'+esc(sid)+'"><thead><tr><th>指标</th><th class="num">当前</th>'+

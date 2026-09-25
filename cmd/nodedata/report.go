@@ -211,6 +211,8 @@ func nonEmpty(s, def string) string {
 func colName(c string) string {
 	if n := len(c); n >= 2 {
 		switch c[n-1] {
+		case 'm':
+			return c[:n-1] + "分钟"
 		case 'h':
 			return c[:n-1] + "小时"
 		case 'd':

@@ -6,15 +6,8 @@ import (
 	"time"
 )
 
-// svcCols 与对比表的时间列对齐，看的人不用换脑子。
-var svcCols = []struct {
-	Name string
-	Ago  time.Duration
-}{
-	{"1h", time.Hour}, {"6h", 6 * time.Hour}, {"12h", 12 * time.Hour},
-	{"1d", 24 * time.Hour}, {"3d", 72 * time.Hour}, {"7d", 7 * 24 * time.Hour},
-	{"14d", 14 * 24 * time.Hour},
-}
+// svcCols 就是全页面那一套时间点（timepoints.go），跟对比表完全一样。
+var svcCols = timePoints
 
 type svcRow struct {
 	Name      string  `json:"name"`

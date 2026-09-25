@@ -48,9 +48,24 @@ func TestCompare(t *testing.T) {
 			rows[r.Label] = r
 		}
 	}
+	// 按列名取，不按下标：时间点列表改过一次（6 列 → 10 列），下标写死的测试全得跟着改
+	col := func(name string) int {
+		for i, c := range c.Cols {
+			if c == name {
+				return i
+			}
+		}
+		t.Fatalf("没有 %s 列：%v", name, c.Cols)
+		return -1
+	}
 	mem := rows["可用内存"]
-	if *mem.Now != 4<<30 || *mem.Past[0] != 4<<30 || mem.Past[3] == nil || *mem.Past[4] != 8<<30 || *mem.Past[5] != 8<<30 {
+	if *mem.Now != 4<<30 || *mem.Past[col("1h")] != 4<<30 || mem.Past[col("1d")] == nil ||
+		*mem.Past[col("3d")] != 8<<30 || *mem.Past[col("7d")] != 8<<30 {
 		t.Fatalf("mem.available past values wrong: %+v", mem.Past)
+	}
+	// 14 天前没有数据（夹具只造了 8 天）：必须是 null，不能是 0
+	if mem.Past[col("14d")] != nil {
+		t.Fatalf("14d 前没有数据，应为 null：%v", *mem.Past[col("14d")])
 	}
 	busy := rows["CPU 忙碌 %"]
 	if want := 160 / float64(runtime.NumCPU()); *busy.Now != want {
@@ -60,7 +75,7 @@ func TestCompare(t *testing.T) {
 		t.Fatalf("metric absent on this host must be omitted, not shown as 0")
 	}
 	sdb, ok := rows["util % · sdb"]
-	if !ok || *sdb.Now != 90 || sdb.Past[1] != nil {
+	if !ok || *sdb.Now != 90 || sdb.Past[col("6h")] != nil {
 		t.Fatalf("per-disk row: ok=%v %+v（6h 前 sdb 不存在，必须是 null 而不是 0）", ok, sdb.Past)
 	}
 	if _, ok := rows["util % · sdc"]; ok {
@@ -69,7 +84,7 @@ func TestCompare(t *testing.T) {
 	if _, ok := rows["入向 · eth0"]; ok {
 		t.Fatalf("single NIC must not get per-NIC rows")
 	}
-	if len(c.Cols) != 6 || c.Cols[0] != "1h" || c.Cols[5] != "7d" {
+	if len(c.Cols) != len(timePoints) || c.Cols[0] != "5m" || c.Cols[len(c.Cols)-1] != "14d" {
 		t.Fatalf("cols = %v", c.Cols)
 	}
 	// 进程组：内存大的在前，__others__ 不当成进程

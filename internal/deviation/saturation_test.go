@@ -177,16 +177,16 @@ func TestLagToleranceIsBounded(t *testing.T) {
 
 // 页面上一律用人话：L6 对人没有意义，3小时才有。名字由 LagSeconds 算出，不另存表。
 func TestLagNames(t *testing.T) {
-	want := []string{"5分钟", "10分钟", "20分钟", "40分钟", "1.5小时", "3小时", "6小时", "12小时", "1天", "7天"}
+	want := []string{"5分钟", "10分钟", "30分钟", "1小时", "6小时", "12小时", "1天", "3天", "7天"}
 	for i, w := range want {
 		if got := LagName(i); got != w {
 			t.Errorf("LagName(%d) = %q，期望 %q", i, got, w)
 		}
 	}
-	if got := LagNameByID("L6"); got != "3小时" {
+	if got := LagNameByID("L6"); got != "12小时" {
 		t.Errorf("LagNameByID(L6) = %q", got)
 	}
-	for _, bad := range []string{"", "L", "L0", "L11", "X3", "L3x"} {
+	for _, bad := range []string{"", "L", "L0", "L10", "X3", "L3x"} {
 		if got := LagNameByID(bad); got != bad {
 			t.Errorf("认不出的 %q 应原样返回，实得 %q", bad, got)
 		}

@@ -88,8 +88,8 @@ func TestZThresholdBoundary(t *testing.T) {
 		t.Fatalf("z=4.25 should fire once, got %d", c.Count)
 	}
 	ev := strings.Join(c.Items[0].Evidence, " | ")
-	// 档位用人话写：第 4 档是"40分钟"，不是"L4"
-	if !strings.Contains(ev, "+4.25") || !strings.Contains(ev, "40分钟") {
+	// 档位用人话写：第 4 档是"1小时"，不是"L4"
+	if !strings.Contains(ev, "+4.25") || !strings.Contains(ev, "1小时") {
 		t.Fatalf("evidence must carry the actual z and lag, got %q", ev)
 	}
 	if !strings.Contains(c.Items[0].Description, "91.5") {
