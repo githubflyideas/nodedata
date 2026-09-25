@@ -326,6 +326,14 @@ func runServe() {
 		writeJSON(w, diagnoser.Use(time.Now()))
 	})
 
+	// 给巡视台（nodedata-fleet）拉的。和 /api/use 同一份 USE 五行，外面包一层带版本号的信封：
+	// /api/use 是页面自己用的，形状随页面改；这里是跨机器的契约，只加字段不改字段。
+	// 带上本机时间，巡视台据此算时钟偏差——"同时发生"靠各台的时间对齐，钟不准就会骗人。
+	mux.HandleFunc("/api/fleet", func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		writeJSON(w, fleetDoc{V: fleetAPIVersion, Host: hostname, Version: version, At: now.Unix(), Rows: diagnoser.Use(now)})
+	})
+
 	// 给大模型看的纯文本简报。text/plain 是刻意的：一条 curl 就能贴进对话，
 	// 不需要对端先学一套 JSON 结构。
 	// 页面上的"先后 / 最近变化"：跟报告同一份数据、同一套写法

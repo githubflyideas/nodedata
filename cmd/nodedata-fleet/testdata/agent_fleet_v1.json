@@ -1,0 +1,205 @@
+{
+ "v": 1,
+ "host": "demo",
+ "version": "v5.22.0",
+ "at": 1790347606,
+ "rows": [
+  {
+   "resource": "CPU",
+   "state": "正常",
+   "level": 0,
+   "facts": [
+    {
+     "kind": "U",
+     "label": "整机忙碌",
+     "id": "cpu.busy_pct",
+     "value": 3.0456070875232553,
+     "unit": "percent",
+     "base": 2.5974051896207584,
+     "base_n": 22
+    },
+    {
+     "kind": "U",
+     "label": "最忙单核",
+     "id": "cpu.core_top1",
+     "value": 3.3966033966033966,
+     "unit": "percent",
+     "base": 2.6,
+     "base_n": 22
+    }
+   ],
+   "checked": [
+    "用户态（各核之和）",
+    "第二忙的核",
+    "内核态（各核之和）",
+    "软中断（各核之和）",
+    "软中断最重的核",
+    "CPU 压力",
+    "1 分钟负载",
+    "运行队列",
+    "被偷走的时间"
+   ],
+   "l0_total": 9,
+   "l0_pass": 9
+  },
+  {
+   "resource": "内存",
+   "state": "正常",
+   "level": 0,
+   "facts": [
+    {
+     "kind": "U",
+     "label": "已用",
+     "id": "mem.used_pct",
+     "value": 6.988367472888324,
+     "unit": "percent",
+     "base": 6.2342,
+     "base_n": 180
+    }
+   ],
+   "checked": [
+    "可用",
+    "换出",
+    "换入",
+    "内存压力",
+    "主缺页",
+    "回写堆积",
+    "脏页"
+   ],
+   "l0_total": 8,
+   "l0_pass": 8
+  },
+  {
+   "resource": "磁盘",
+   "state": "异常",
+   "level": 2,
+   "facts": [
+    {
+     "kind": "S",
+     "label": "IO 压力",
+     "id": "psi.io.some10",
+     "value": 0.42,
+     "unit": "percent",
+     "base": 0.0401,
+     "base_n": 180
+    },
+    {
+     "kind": "S",
+     "label": "写等待",
+     "id": "disk.await_w",
+     "value": 1.1333333333333333,
+     "unit": "ms",
+     "base": 0.1623,
+     "base_n": 177
+    },
+    {
+     "kind": "U",
+     "label": "最忙盘 util",
+     "id": "disk.util",
+     "value": 0,
+     "unit": "percent",
+     "base": 0.0392,
+     "note": "vda 是虚拟盘：util 满不等于盘满，仅供参考",
+     "base_n": 180
+    }
+   ],
+   "checks": [
+    {
+     "id": "D03",
+     "name": "只读重挂",
+     "level": 2,
+     "message": "以下挂载点是只读的：/opt/app /opt/tools"
+    },
+    {
+     "id": "F02",
+     "name": "其他分区空间",
+     "level": 1,
+     "message": "/opt/app 已用 90.7%（最紧张的一个）"
+    }
+   ],
+   "blind": [
+    "已退出的短命进程，写入被内核记到父进程头上：归因指向 bash/sshd 这类进程时，通常是它派生的某个已退出的子进程干的"
+   ],
+   "movers": [
+    {
+     "name": "java",
+     "metric": "proc.io.java",
+     "unit": "bytes/s",
+     "now": 1121075.1020180362,
+     "past": null,
+     "col": "1h",
+     "pid": 90,
+     "parent": "systemd"
+    }
+   ],
+   "checked": [
+    "根分区可用",
+    "读等待",
+    "在途 I/O",
+    "阻塞进程"
+   ],
+   "l0_total": 10,
+   "l0_pass": 8,
+   "commands": [
+    {
+     "cmd": "cat /proc/90/io",
+     "cost": "零开销"
+    },
+    {
+     "cmd": "ls -l /proc/90/fd | head -30",
+     "cost": "零开销",
+     "why": "看它在读写哪些文件"
+    },
+    {
+     "cmd": "pidstat -d -p 90 1 5",
+     "cost": "零开销",
+     "why": "需装 sysstat"
+    },
+    {
+     "cmd": "iostat -x 1 3",
+     "cost": "零开销",
+     "why": "逐盘的等待、队列深度（需装 sysstat）"
+    },
+    {
+     "cmd": "cat /proc/pressure/io",
+     "cost": "零开销"
+    }
+   ]
+  },
+  {
+   "resource": "网络",
+   "state": "正常",
+   "level": 0,
+   "facts": [
+    {
+     "kind": "U",
+     "label": "入向",
+     "id": "net.rx",
+     "value": 4802.899580226577,
+     "unit": "bytes/s",
+     "base": 4553.4693,
+     "base_n": 180
+    }
+   ],
+   "blind": [
+    "流量归因不到进程：/proc 不提供每进程网络计数"
+   ],
+   "checked": [
+    "出向",
+    "收包丢弃",
+    "发包丢弃",
+    "收包错误",
+    "TCP 重传"
+   ],
+   "l0_total": 8,
+   "l0_pass": 8
+  },
+  {
+   "resource": "系统",
+   "state": "正常",
+   "level": 0,
+   "l0_total": 6,
+   "l0_pass": 6
+  }
+ ]
+}

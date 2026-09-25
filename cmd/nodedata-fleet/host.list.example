@@ -1,0 +1,18 @@
+# nodedata 巡视台 主机清单
+#
+# 一台一行：  名字  地址[:端口]  键=值 …
+#   名字     字母、数字、. - _，不能重复
+#   地址     10.1.0.11 / 10.1.0.11:8888 / 完整 URL（经反代、https、基本认证时）
+#            只写 IP 不写端口时按 nodedata 默认的 8888
+#   dc       机房        rack     机柜
+#   product  产品线      group    主机组
+#   tags     标签，逗号分隔，一台可以有多个
+#
+# 改完保存即可，巡视台每轮开始前检查文件，不用重启。
+# 新文件有任何一处写错，巡视台会整份不采用、继续用上一版，并在大屏顶部提示哪一行错了。
+
+pay-db-01     10.1.0.11:8888  dc=tokyo1 rack=A03 product=支付 group=mysql-主 tags=核心,SSD
+pay-java-01   10.1.0.21       dc=tokyo1 rack=A03 product=支付 group=java-app tags=核心
+ord-redis-01  10.1.0.31       dc=tokyo1 rack=A04 product=订单 group=redis    tags=SSD
+log-kafka-01  10.2.0.41       dc=osaka1 rack=B01 product=日志平台 group=kafka tags=HDD
+edge-01       https://ops:secret@gw.example.com/nd/edge-01  dc=osaka1 rack=B02 product=基础设施 group=lvs

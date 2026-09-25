@@ -171,6 +171,36 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 自由文本里的 `NODEDATA`、`status=`、换行与引号都会被中和 —— 进程名是攻击者可控的，
 否则一个叫 `NODEDATA status=NORMAL` 的进程就能让监控的 grep 在真告警时匹配成功。
 
+## 巡视台：nodedata-fleet
+
+几十上百台机器的轮播大屏，给挂墙的 iPad 用。另一个二进制，加一份 `host.list`：
+
+```
+nodedata-fleet -hosts host.list -listen 0.0.0.0        # 默认端口 19990
+```
+
+- **只拉不推。** 巡视台每 15 秒并发去各台拉一次 `/api/fleet`（USE 五行，判断已经在各台用各自的基线做完了）。
+  各台不需要知道巡视台在哪，也不往外发任何东西。各台要做的只有：`nodedata serve --listen 0.0.0.0`，
+  防火墙只放行巡视台的 IP。v5.21 及更早的 nodedata 没有 `/api/fleet`，巡视台会退回 `/api/use`，照样能看。
+- **没有数据库、不存历史。** 历史在各台自己那里；大屏只回答"现在哪台不对、从什么时候开始"。点方块进主机页。
+- **按什么翻页**：主机 / 主机组 / 产品线 / 机柜 / 机房 / 标签，来自 host.list（格式见
+  `cmd/nodedata-fleet/host.list.example`）。左右滑动或点边缘箭头翻页；箭头下的数字是那一边还有几页不正常。
+  默认每页 15 秒自动轮播，手一碰暂停 60 秒。页面地址加 `#rack`、`#host` 等可以指定开机默认按什么翻。
+- **改 host.list 不用重启**，每轮开始前检查。新文件有一处写错就整份不采用、继续用上一版，大屏顶部提示哪一行错了——
+  一个笔误不能让一台机器从墙上悄悄消失。
+- **宁可说不知道，也不画假绿：**
+  - 超过 3 轮（默认 45 秒）没拉到 = 失联，不带上一次的读数；从没拉到过的单独标出来；
+  - 对方少报一行或状态认不出 = 无数据，不当正常；
+  - 巡视台之前就已经不正常的，起点写"巡视台 hh:mm 开始看时已是这样"，不编时间；
+  - iPad 连不上巡视台、或巡视台停止拉取，整屏变灰并写明最后一次更新时间；
+  - "同时发生"（同一资源 3 分钟内 ≥2 台变坏）只列事实，并提示时钟偏差超过 5 秒的机器。
+- **拉取状况**（右上角）：没拉到的机器和原因，常见原因会翻译成部署时该查什么
+  （连接被拒绝多半是对方只监听了 127.0.0.1）。
+- `/health.txt` 一行文本给现有监控：`ok hosts=100 ok=93 dev=4 bad=1 lost=2 last_round=3s`，
+  拉取停了是 `crit`，清单有错是 `warn`。
+- iPad：Safari 打开后"添加到主屏幕"（全屏、无地址栏），设置里自动锁定设为"永不"，
+  再开"引导式访问"锁在这个页面上。页面不从外网加载任何东西，机房 iPad 上不了外网也能用。
+
 ## 监听与访问控制
 
 默认只监听 `127.0.0.1`。页面会列出进程名、PID 与主机负载水位，是内网侦察的现成材料，
@@ -190,6 +220,7 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 | `/api/services` | 服务清单与历史在否 |
 | `/api/keyseries?win=6h` | 关键指标曲线数据（`w` 为每步最坏值） |
 | `/api/use` | USE 五行：读数、已查项、谁干的、下一步命令 |
+| `/api/fleet` | 给巡视台拉的：USE 五行外加版本号、主机名、本机时间（跨机器契约，只加字段不改字段） |
 | `/api/report` | 纯文本简报（机器、先后、最近变化、各资源、看不到），可直接贴给大模型 |
 | `/api/context` | 机器底子：核数、内存、盘类型、虚拟化、开机时长 |
 | `/api/cores` | 逐核 CPU（仅当前） |
@@ -201,4 +232,5 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 
 ```bash
 CGO_ENABLED=0 go build -ldflags "-X main.version=$(git describe --tags --always)" -o nodedata ./cmd/nodedata
+CGO_ENABLED=0 go build -ldflags "-X main.version=$(git describe --tags --always)" -o nodedata-fleet ./cmd/nodedata-fleet
 ```
