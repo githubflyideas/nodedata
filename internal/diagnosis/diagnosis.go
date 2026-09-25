@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/githubflyideas/nodedata/internal/deviation"
 )
 
 // Level 诊断级别。与 L0 的 level 语义一致：0=info/pass, 1=warn, 2=critical/fail。
@@ -158,7 +160,7 @@ func Diagnose(l0 []L0Category, devs []Deviation, opt Options) *Chain {
 	}
 	c.Count = len(c.Items)
 	if c.Count == 0 {
-		c.Notes = append(c.Notes, "no findings: L0 all pass and no metric exceeded the z threshold")
+		c.Notes = append(c.Notes, "没有发现：硬阈值检查全部通过，也没有指标的 z 超过门槛")
 	}
 	return c
 }
@@ -175,7 +177,7 @@ func fromL0(cats []L0Category, opt Options) []Item {
 			if ck.Level >= 2 {
 				lvl = Critical
 			}
-			ev := []string{fmt.Sprintf("L0 %s/%s level=%d", cat.Name, ck.ID, ck.Level)}
+			ev := []string{fmt.Sprintf("硬阈值检查 %s/%s 等级=%d", cat.Name, ck.ID, ck.Level)}
 			if ck.Message != "" {
 				ev = append(ev, "message: "+ck.Message)
 			}
@@ -248,9 +250,9 @@ func fromDeviations(devs []Deviation, opt Options) ([]Item, []string) {
 			Impact: impactForDomain(d.Domain, lvl),
 			Action: actionForDomain(d.Domain, d.MetricID),
 			Evidence: []string{
-				fmt.Sprintf("L1 %s = %.3f %s", d.MetricID, d.Value, d.Unit),
-				fmt.Sprintf("L3 peak z = %+.2f at %s", peak, peakLag),
-				fmt.Sprintf("L3 onset_lag = %s, breadth = %d", onset, d.Breadth),
+				fmt.Sprintf("当前 %s = %.3f %s", d.MetricID, d.Value, d.Unit),
+				fmt.Sprintf("峰值 z = %+.2f（和 %s前比）", peak, peakLag),
+				fmt.Sprintf("最早从和 %s前比就开始偏离，%d 个时间尺度上都异常", deviation.LagNameByID(onset), d.Breadth),
 			},
 			Timestamp: opt.Now,
 		})
@@ -275,7 +277,7 @@ func peakZ(z []float64) (peak float64, lag string, ready bool) {
 		}
 	}
 	if idx >= 0 {
-		lag = fmt.Sprintf("L%d", idx+1)
+		lag = deviation.LagName(idx)
 	}
 	return
 }
@@ -339,7 +341,7 @@ func actionForCheck(category, id string) string {
 	case "errors":
 		return "dmesg -T | tail -50"
 	default:
-		return "复核 L0 判断 " + id + " 的采集来源"
+		return "复核硬阈值检查 " + id + " 的采集来源"
 	}
 }
 

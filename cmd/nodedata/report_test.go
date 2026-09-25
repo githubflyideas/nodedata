@@ -63,9 +63,6 @@ func TestReportAlwaysDeclaresBlindSpots(t *testing.T) {
 	if !strings.Contains(out, "不要据此下结论") {
 		t.Error("『看不到』要明说不能据此下结论，否则模型还是会当成已查过")
 	}
-	if !strings.Contains(out, "逐核") {
-		t.Error("逐核缺口没写进去")
-	}
 	if !strings.Contains(out, "每进程网络计数") {
 		t.Error("网络归因缺口没写进去")
 	}

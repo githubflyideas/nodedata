@@ -97,7 +97,7 @@ func TestUseStateComesFromL0(t *testing.T) {
 func TestUsePrimaryFactAlwaysShownWithBaseline(t *testing.T) {
 	d, s := newUseFixture(t, check.FullResult{})
 	now := time.Now()
-	feed(s, now, "cpu.user", 12)
+	feed(s, now, "cpu.busy_pct", 12)
 
 	for _, r := range d.Use(now) {
 		if r.Resource != "CPU" {
@@ -107,8 +107,8 @@ func TestUsePrimaryFactAlwaysShownWithBaseline(t *testing.T) {
 			t.Fatal("主指标必须出现，哪怕一切正常")
 		}
 		f := r.Facts[0]
-		if f.ID != "cpu.user" || f.Value != 12 {
-			t.Fatalf("主指标应是 cpu.user=12，实得 %+v", f)
+		if f.ID != "cpu.busy_pct" || f.Value != 12 {
+			t.Fatalf("主指标应是 cpu.busy_pct=12，实得 %+v", f)
 		}
 		if f.Base == nil {
 			t.Fatal("喂了 3 小时长期层，基线不该是 nil")
@@ -189,7 +189,8 @@ func TestUseMoversOnlyWhenSomethingIsWrong(t *testing.T) {
 	}
 }
 
-// 逐核和网络归因这两个缺口必须写在脸上，否则用户以为已经查过了。
+// 网络归因这个缺口必须写在脸上，否则用户以为已经查过了。
+// （逐核在 v5.17.0 补上了，那条盲区随之删掉——还留着就是在说假话。）
 func TestUseDeclaresItsBlindSpots(t *testing.T) {
 	d, s := newUseFixture(t, check.FullResult{})
 	now := time.Now()
@@ -200,8 +201,8 @@ func TestUseDeclaresItsBlindSpots(t *testing.T) {
 	for _, r := range d.Use(now) {
 		blind[r.Resource] = strings.Join(r.Blind, " | ")
 	}
-	if !strings.Contains(blind["CPU"], "逐核") {
-		t.Errorf("CPU 必须声明没有逐核，实得 %q", blind["CPU"])
+	if strings.Contains(blind["CPU"], "逐核") {
+		t.Errorf("逐核已经有了，CPU 行不该再声明没有：%q", blind["CPU"])
 	}
 	if !strings.Contains(blind["网络"], "归因") {
 		t.Errorf("网络必须声明归因不到进程，实得 %q", blind["网络"])
@@ -228,4 +229,28 @@ func TestUseDeclaresParentIOAccounting(t *testing.T) {
 		return
 	}
 	t.Fatal("没有磁盘行")
+}
+
+// 一个被单线程钉死在 100% 的核，天天如此，z 永远是 0。
+// 如果"最忙单核"只在偏离时显示，最典型的单核瓶颈永远不会出现在页面上。
+func TestUseBusiestCoreAlwaysShown(t *testing.T) {
+	d, s := newUseFixture(t, check.FullResult{})
+	now := time.Now()
+	feed(s, now, "cpu.busy_pct", 6.5)  // 16 核整机：看上去很闲
+	feed(s, now, "cpu.core_top1", 100) // 其实有个核一直满着
+	for _, r := range d.Use(now) {
+		if r.Resource != "CPU" {
+			continue
+		}
+		for _, f := range r.Facts {
+			if f.ID == "cpu.core_top1" {
+				if f.Value != 100 {
+					t.Errorf("最忙单核应为 100，实得 %v", f.Value)
+				}
+				return
+			}
+		}
+		t.Fatalf("稳态打满的核没有显示出来：%+v", r.Facts)
+	}
+	t.Fatal("没有 CPU 行")
 }

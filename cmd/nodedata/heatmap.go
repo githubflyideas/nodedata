@@ -210,6 +210,7 @@ func (b *HeatmapBuilder) build(from, to time.Time, lastOnly bool) (*server.Heatm
 	}
 	for i, sec := range deviation.LagSeconds {
 		out.Lags[i] = deviation.LagID(i)
+		out.LagNames = append(out.LagNames, deviation.LagName(i))
 		out.LagSeconds[i] = sec
 		// 档位就绪 = 缓冲区历史跨度 ≥ 该档滞后时长
 		out.LagReady[i] = to.Sub(from) >= time.Duration(sec)*time.Second
@@ -407,7 +408,9 @@ type LagDiag struct {
 	LookupOK     int    `json:"lookup_ok"`   // 能配到 t−H 的指标数
 	ZAvailable   int    `json:"z_available"` // 最终能出 z 的指标数
 	SampleMetric string `json:"sample_metric"`
-	Reason       string `json:"reason"`
+	Reason       string `json:"reason"` // 给排障的人看：σ、层、容差这些词都在
+	Name         string `json:"name"`   // "3小时"
+	Plain        string `json:"plain"`  // 给页面看的人话
 }
 
 // DiagnoseLags 逐档位说明"现在能不能出 z，不能的话卡在哪一步"。
@@ -477,6 +480,17 @@ func (b *HeatmapBuilder) DiagnoseLags(now time.Time) []LagDiag {
 				sec, tol, coarseStep)
 		default:
 			d.Reason = "部分指标可出 z"
+		}
+		d.Name = deviation.LagName(i)
+		switch {
+		case d.ZAvailable > 0:
+			d.Plain = ""
+		case d.SigmaReady == 0:
+			// 最常见的是长档：和 7天前比，要先有 14 天历史才知道"一周的变化"平时有多大
+			d.Plain = fmt.Sprintf("和 %s前比：历史还不够（已有 %s），暂时判断不了变化算不算异常",
+				d.Name, deviation.DurationName(int(d.HistSpanS)))
+		case d.LookupOK == 0:
+			d.Plain = fmt.Sprintf("和 %s前比：找不到那个时刻的数据（nodedata 那时还没在跑，或刚重启）", d.Name)
 		}
 		out = append(out, d)
 	}

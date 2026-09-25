@@ -19,6 +19,7 @@ type HeatmapJSON struct {
 	GeneratedAt int64           `json:"generated_at"`
 	Degraded    map[string]bool `json:"degraded"`
 	Lags        []string        `json:"lags"`
+	LagNames    []string        `json:"lag_names"` // "5分钟"…"7天"，页面只用这个
 	LagSeconds  []int           `json:"lag_seconds"`
 	LagReady    []bool          `json:"lag_ready"`
 	LowConf     []string        `json:"low_confidence"`

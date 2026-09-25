@@ -5,6 +5,8 @@ package deviation
 import (
 	"math"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,9 +27,55 @@ var LagSeconds = [NLag]int{
 	86400, 604800,
 }
 
-// LagID 返回档位名，1-indexed。
+// LagID 返回档位的内部编号，1-indexed。只给程序用（JSON 字段、测试）；
+// 页面和报告上一律用 LagName——"L6"对人没有意义，"3小时"才有。
 func LagID(i int) string {
 	return "L" + itoa(i+1)
+}
+
+// LagName 返回档位的人话名字：5分钟、1.5小时、1天、7天……
+// 直接从 LagSeconds 算，不另存一张表——改了档位长度，名字自动跟着变。
+func LagName(i int) string {
+	if i < 0 || i >= NLag {
+		return ""
+	}
+	return DurationName(LagSeconds[i])
+}
+
+// LagNameByID 把 "L6" 翻成 "3小时"；认不出的原样返回。
+func LagNameByID(id string) string {
+	if len(id) < 2 || id[0] != 'L' {
+		return id
+	}
+	n := 0
+	for _, c := range id[1:] {
+		if c < '0' || c > '9' {
+			return id
+		}
+		n = n*10 + int(c-'0')
+	}
+	if n < 1 || n > NLag {
+		return id
+	}
+	return LagName(n - 1)
+}
+
+// DurationName 把秒数写成最短的人话：300→5分钟，5400→1.5小时，86400→1天。
+func DurationName(sec int) string {
+	trim := func(f float64) string {
+		s := strconv.FormatFloat(f, 'f', 1, 64)
+		return strings.TrimSuffix(s, ".0")
+	}
+	switch {
+	case sec >= 86400: // 历史跨度这种不整的数：431700 秒写成 5天，不写 119.9小时
+		return trim(float64(sec)/86400) + "天"
+	case sec >= 3600:
+		return trim(float64(sec)/3600) + "小时"
+	case sec >= 60:
+		return trim(float64(sec)/60) + "分钟"
+	default:
+		return itoa(sec) + "秒"
+	}
 }
 
 // Sample 是一个时间序列点。

@@ -174,3 +174,29 @@ func TestLagToleranceIsBounded(t *testing.T) {
 		t.Fatalf("最长档容差应封顶 30min，实得 %v", got)
 	}
 }
+
+// 页面上一律用人话：L6 对人没有意义，3小时才有。名字由 LagSeconds 算出，不另存表。
+func TestLagNames(t *testing.T) {
+	want := []string{"5分钟", "10分钟", "20分钟", "40分钟", "1.5小时", "3小时", "6小时", "12小时", "1天", "7天"}
+	for i, w := range want {
+		if got := LagName(i); got != w {
+			t.Errorf("LagName(%d) = %q，期望 %q", i, got, w)
+		}
+	}
+	if got := LagNameByID("L6"); got != "3小时" {
+		t.Errorf("LagNameByID(L6) = %q", got)
+	}
+	for _, bad := range []string{"", "L", "L0", "L11", "X3", "L3x"} {
+		if got := LagNameByID(bad); got != bad {
+			t.Errorf("认不出的 %q 应原样返回，实得 %q", bad, got)
+		}
+	}
+}
+
+func TestDurationNameUneven(t *testing.T) {
+	for sec, w := range map[int]string{431700: "5天", 129600: "1.5天", 3000: "50分钟", 45: "45秒"} {
+		if got := DurationName(sec); got != w {
+			t.Errorf("DurationName(%d) = %q，期望 %q", sec, got, w)
+		}
+	}
+}

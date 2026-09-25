@@ -60,6 +60,10 @@ type Collector struct {
 	readBuf          [65536]byte             // 零分配文件读缓冲，复用于每次 readFileAbs
 	fieldBuf         [64][]byte              // 复用字段切片，避免 splitFields 重复分配
 	throttlePrev     map[string]throttleStat // cgroup 路径 → 上一轮限流计数
+	coreCur          []coreTicks             // 本轮逐核节拍（见 cores.go）
+	corePrev         []coreTicks             // 上一轮逐核节拍
+	coreStats        []CoreStat              // 本轮逐核占用的工作缓冲
+	coreSnap         atomic.Value            // []CoreStat，给页面的只读快照
 	bootTS           int64                   // 开机时刻，unix 秒（缓存）
 	ctMax            int64                   // conntrack 上限，负数表示读过但不可用
 	devNames         map[string]string       // 设备/接口名驻留，避免每轮分配
@@ -404,6 +408,12 @@ func (c *Collector) parseStat(data []byte, now time.Time, dt float64, hasPrev bo
 		if len(line) < 4 {
 			continue
 		}
+		// cpuN 行：逐核（见 cores.go）。必须排在 "cpu " 之前判断吗？不必——"cpu " 带空格，
+		// 两者前缀互斥；放在前面只是因为逐核行多，先命中省几次比较。
+		if line[0] == 'c' && line[1] == 'p' && line[2] == 'u' && line[3] >= '0' && line[3] <= '9' {
+			c.noteCoreLine(c.splitFieldsBuf(line))
+			continue
+		}
 		// cpu 行
 		if bytes.HasPrefix(line, []byte("cpu ")) {
 			fields := c.splitFieldsBuf(line)
@@ -483,6 +493,7 @@ func (c *Collector) parseStat(data []byte, now time.Time, dt float64, hasPrev bo
 			}
 		}
 	}
+	c.finishCores(now, hasPrev, out)
 }
 
 // ──────────────────── parseLoadavg ─────────────────────────────

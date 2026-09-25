@@ -50,6 +50,10 @@ type svcEvent struct {
 	LastRSS uint64  `json:"last_rss,omitempty"`
 	PeakRSS uint64  `json:"peak_rss,omitempty"`
 	SeenAt  int64   `json:"seen_at,omitempty"` // 最后一次看见它的时刻
+	// 最后一眼的父进程。服务消失时这个最有用：父进程是 bash/sshd 的，
+	// 多半是 SSH 会话一断就跟着没了（SIGHUP），不是被 OOM 或谁 kill 的。
+	LastPPID   int    `json:"last_ppid,omitempty"`
+	LastParent string `json:"last_parent,omitempty"`
 }
 
 // vanishConfirm：连续这么多轮没看见才算消失。一轮抖动（读 /proc 撞上进程重启）不算。
@@ -189,7 +193,8 @@ func (l *ServiceLog) Update(svcs []collector.Service, now time.Time) []svcEvent 
 		delete(l.lastSeen, id)
 		out = append(out, l.appendLocked(svcEvent{TS: now.Unix(), Kind: evVanish,
 			ID: id, Name: s.Name, Exe: s.Exe, Ports: s.Ports,
-			LastCPU: s.CPU, LastRSS: s.RSS, PeakRSS: peak, SeenAt: seen}))
+			LastCPU: s.CPU, LastRSS: s.RSS, PeakRSS: peak, SeenAt: seen,
+			LastPPID: s.PPID, LastParent: s.Parent}))
 	}
 	if len(out) > 0 {
 		l.expireLocked(now)

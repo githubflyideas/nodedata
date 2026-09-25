@@ -297,6 +297,16 @@ func runServe() {
 		fmt.Fprint(w, healthLine(hostname, l0, diagnoser.Run(3.0), builder.healthValues(now), now))
 	})
 
+	// 实时逐核明细：只在内存里，历史只存最忙 3 核与软中断最高核（见 collector/cores.go）。
+	// 历史回答"最忙的几个核有多忙"，这里回答"是哪个核"——中断绑核时核号是固定的。
+	mux.HandleFunc("/api/cores", func(w http.ResponseWriter, r *http.Request) {
+		cs := col.Cores()
+		if cs == nil {
+			cs = []collector.CoreStat{}
+		}
+		writeJSON(w, cs)
+	})
+
 	// USE 五行：每个资源一行，会终结的那张清单
 	mux.HandleFunc("/api/use", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, diagnoser.Use(time.Now()))

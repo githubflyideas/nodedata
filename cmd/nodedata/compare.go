@@ -97,6 +97,12 @@ var compareDefs = []struct {
 }{
 	{"CPU", []cmpDef{
 		perCPU("CPU 忙碌 %", true, "cpu.user", "cpu.sys", "cpu.softirq"),
+		// 逐核：整机平均会把单核打满稀释掉。三个数一起看形状——
+		// 100/12/10 是一个核被钉死，100/100/98 是三个线程或三个网卡队列都满了。
+		one("最忙单核 %", "percent", 1, "cpu.core_top1"),
+		one("第二忙的核 %", "percent", 1, "cpu.core_top2"),
+		one("第三忙的核 %", "percent", 1, "cpu.core_top3"),
+		one("软中断最重的核 %", "percent", 1, "cpu.core_softirq_max"),
 		core("1 分钟负载", "load", 1, "loadavg.1m"),
 		perCPU("iowait %", true, "cpu.iowait"),
 		perCPU("steal %（虚机被宿主机抢占）", true, "cpu.steal"),
@@ -229,8 +235,11 @@ const procCmpTop = 5
 // lookupTol：历史值的时间容差，约为回看时长的 1%，夹在 30 秒到 10 分钟之间。
 func lookupTol(ago time.Duration) time.Duration {
 	t := ago / 100
-	if t < 30*time.Second {
-		t = 30 * time.Second
+	// 下限必须够上长期层的格子：长期层 5 分钟一个点，离目标时刻最远 150 秒。
+	// 原来的下限是 30 秒，"1小时前"算出来 36 秒——重启后头一个小时（原始层还没攒够 1 小时）
+	// 这一列大约四次里有三次是空的。跟 v5.13.0 的 LagTolerance 是同一类错。
+	if t < coarseStep/2 {
+		t = coarseStep / 2
 	}
 	if t > 10*time.Minute {
 		t = 10 * time.Minute

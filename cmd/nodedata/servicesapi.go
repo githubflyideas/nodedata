@@ -29,6 +29,9 @@ type svcRow struct {
 	CPU       float64 `json:"cpu"`
 	RSS       uint64  `json:"rss"`
 	Alive     bool    `json:"alive"`
+	// 父进程：活着的服务是当前值，消失的服务是最后一眼的值
+	PPID   int    `json:"ppid,omitempty"`
+	Parent string `json:"parent,omitempty"`
 	// 消失的服务：最后一眼看到的占用，以及历史峰值
 	LastCPU float64  `json:"last_cpu,omitempty"`
 	LastRSS uint64   `json:"last_rss,omitempty"`
@@ -69,12 +72,14 @@ func servicesJSON(l *ServiceLog, now time.Time) *ServicesJSON {
 			Name: s.Name, Exe: s.Exe, Kind: s.Kind, PID: s.PID, Instances: s.Instances,
 			StartTS: s.StartTS, UptimeS: now.Unix() - s.StartTS, Ports: s.Ports, Unit: s.Unit,
 			CPU: s.CPU, RSS: s.RSS, Alive: true, Self: s.Self, Past: past(s.ID()),
+			PPID: s.PPID, Parent: s.Parent,
 		})
 	}
 	for _, e := range l.Vanished() {
 		out.Rows = append(out.Rows, svcRow{
 			Name: e.Name, Exe: e.Exe, Ports: e.Ports, Alive: false, Past: past(e.ID),
 			LastCPU: e.LastCPU, LastRSS: e.LastRSS, PeakRSS: e.PeakRSS, SeenAt: e.SeenAt,
+			PPID: e.LastPPID, Parent: e.LastParent,
 		})
 	}
 	sort.Slice(out.Rows, func(i, j int) bool {

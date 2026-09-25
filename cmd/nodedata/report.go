@@ -122,7 +122,7 @@ func moversLine(ms []cmpMover) string {
 	for _, m := range ms {
 		s := m.Name + " " + fmtUnit(m.Now, m.Unit)
 		if m.Past != nil {
-			s += " (" + m.Col + "前 " + fmtUnit(*m.Past, m.Unit) + ")"
+			s += " (" + colName(m.Col) + "前 " + fmtUnit(*m.Past, m.Unit) + ")"
 		}
 		parts = append(parts, s)
 	}
@@ -205,4 +205,17 @@ func nonEmpty(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// colName 把对比列编号 "1h"/"3d" 写成 "1小时"/"3天"，跟页面同一套说法。
+func colName(c string) string {
+	if n := len(c); n >= 2 {
+		switch c[n-1] {
+		case 'h':
+			return c[:n-1] + "小时"
+		case 'd':
+			return c[:n-1] + "天"
+		}
+	}
+	return c
 }

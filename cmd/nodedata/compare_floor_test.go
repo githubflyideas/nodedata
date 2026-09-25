@@ -78,3 +78,29 @@ func TestCompareMoversAnswerWho(t *testing.T) {
 	}
 	t.Fatal("没有磁盘组")
 }
+
+// 重启后原始层是空的，只有落盘的长期层（5 分钟一格）。此刻离格点差 2.5 分钟时，
+// "1小时前"那一列也必须有数——原来容差只有 36 秒，这一列在重启后头一个小时基本是空的。
+func TestCompareOneHourColumnAfterRestart(t *testing.T) {
+	s := NewSeries()
+	grid := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	for ts := grid.Add(-3 * time.Hour); !ts.After(grid); ts = ts.Add(5 * time.Minute) {
+		s.AddCoarse([]collector.Sample{{MetricID: "disk.util", TS: ts, Value: 7}})
+	}
+	now := grid.Add(2*time.Minute + 30*time.Second) // 离最近格点最远的位置
+	s.Add([]collector.Sample{{MetricID: "disk.util", TS: now, Value: 7}})
+
+	c := NewHeatmapBuilder(s).Compare(now)
+	for _, g := range c.Groups {
+		for _, r := range g.Rows {
+			if r.Label != "最忙盘 util %" {
+				continue
+			}
+			if len(r.Past) == 0 || r.Past[0] == nil {
+				t.Fatalf("重启后只有长期层时，1小时前那一列不该是空的")
+			}
+			return
+		}
+	}
+	t.Fatal("没找到 最忙盘 util % 这一行")
+}

@@ -201,6 +201,16 @@ h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .item summary{cursor:pointer;color:var(--accent)}
 .item details ul{margin:5px 0 0 16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .notes{font-size:12px;color:var(--dim);margin-top:9px;padding-top:8px;border-top:1px dotted var(--line)}
+/* ---- 逐核实时 ---- */
+.cores{display:flex;flex-wrap:wrap;gap:3px;margin:4px 0 6px}
+.core{width:22px;display:flex;flex-direction:column;align-items:center;font-size:9.5px;
+  color:var(--dim);font-variant-numeric:tabular-nums}
+.core .bar{position:relative;width:14px;height:44px;background:#eef0f3;border-radius:2px;overflow:hidden}
+.core .bar i{position:absolute;left:0;right:0;bottom:0;background:var(--cool);opacity:.55}
+.core .bar b{position:absolute;left:0;right:0;bottom:0;background:var(--accent)}
+.core.hot .bar i{background:var(--bad);opacity:.75}
+.cores-legend{font-size:11.5px;color:var(--dim)}
+.cores-legend span{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 10px;vertical-align:-1px}
 /* ---- USE 五行 ---- */
 .use{display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);
   border-radius:7px;overflow:hidden}
@@ -243,14 +253,14 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 <section>
   <h2>是不是它<span class="layer">USE · 每个资源一行：用得多满 / 有没有人在排队等它 / 有没有出错</span></h2>
   <div class="sub">这张清单会<b>终结</b>：逐个资源看一遍，要么找到，要么排除。
-    判定只来自下面的 L0 硬阈值与自身基线，这里不另设门槛，也不下因果结论。
+    判定只来自下面的硬阈值检查与自身基线，这里不另设门槛，也不下因果结论。
     <a href="/api/report" target="_blank">取文本简报</a></div>
   <div class="use" id="usebody"><div class="empty">加载中…</div></div>
   <div class="use-blind" id="useblind" hidden></div>
 </section>
 
 <section>
-  <h2>绝对判定<span class="layer">L0 · 9 类 41 项硬阈值判定，不依赖历史</span>
+  <h2>绝对判定<span class="layer">9 类 41 项硬阈值检查，不依赖历史</span>
     <button class="fold" id="l0fold" onclick="toggleL0()">折叠</button></h2>
   <div class="sub"><span id="l0sum">—</span>
     <label class="only"><input type="checkbox" id="l0only"> 只看异常项</label></div>
@@ -292,7 +302,7 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 </section>
 
 <section>
-  <h2>线索<span class="layer beta">测试中 · 供参考不作结论</span><span class="layer">由 L0 判定与 L3 偏离推导，供参考，不作结论</span></h2>
+  <h2>线索<span class="layer beta">测试中 · 供参考不作结论</span><span class="layer">由硬阈值检查与变化幅度推导，供参考，不作结论</span></h2>
   <div class="sub" id="l4sum">—</div>
   <div id="l4err"></div>
   <div id="items"></div>
@@ -311,6 +321,13 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
 <section>
   <h2>OS 指标<span class="layer">CPU / 内存 / 磁盘 / 网络 / 套接字 / 进程 —— 全部采集项</span></h2>
   <div class="sub">含逐块盘、逐网卡、PSI、包速率、上下文切换等。列的含义与"关键指标"相同。</div>
+  <h3 style="font-size:13px;margin:6px 0 2px">逐核 · 此刻</h3>
+  <div class="cores-legend">每根柱是一个核，高度 = 忙碌率（不含 iowait）
+    <span style="background:var(--cool);opacity:.55"></span>忙碌
+    <span style="background:var(--accent)"></span>其中软中断
+    <span style="background:var(--bad);opacity:.75"></span>最忙的那个核
+    · 历史里只存最忙 3 个核有多忙，不存是哪个核；要看核号只能看这里</div>
+  <div class="cores" id="cores"><span class="empty">加载中…</span></div>
   <div id="cmpall"><p class="empty">加载中…</p></div>
 </section>
 
@@ -327,8 +344,8 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     所以累计计数器、page cache 这类指标不会恒定顶格。
   </div>
   <div class="sub" id="lagstatus"></div>
-  <div class="sub tabhint">L1 ~ L10 是十个时间尺度：L1 = 和 5 分钟前比，L4 = 40 分钟前，
-    L6 = 3 小时前，L9 = 昨天这个时候，L10 = 上周这个时候。突发抖动最先出现在左边几列，
+  <div class="sub tabhint">表头的时间 = 和多久之前比：<b>5分钟前</b>……<b>1天前</b>（昨天这个时候）、
+    <b>7天前</b>（上周这个时候）。突发抖动最先出现在左边几列，
     缓慢劣化要看右边几列。</div>
   <div id="l3err"></div>
   <div class="tbl-wrap"><table id="l3tbl"><tbody><tr><td class="empty">加载中…</td></tr></tbody></table></div>
@@ -383,7 +400,7 @@ var state={pane:"key",kwin:"6h",cmAll:false,win:"1h",l0fold:false,tab:"acute",wi
 var ACUTE=[0,1,2,3];                       // L1..L4  : 300s .. 2400s
 var DEGRADE=[4,5,6,7,8,9];                 // L5..L10 : 5400s .. 7d
 var HINT={acute:"只看最近 5 分钟到 40 分钟内发生的变化——突发抖动在这里最先出现。",
-          degrade:"只看 1.5 小时到 7 天尺度上的变化——内存泄漏、连接数爬升这类慢性问题在这里才显形。L9 起需要 ≥2 天历史、L10 需要 ≥14 天；历史落盘，重启不丢。",
+          degrade:"只看 1.5 小时到 7 天尺度上的变化——内存泄漏、连接数爬升这类慢性问题在这里才显形。和1天前比需要至少 2 天历史，和7天前比需要至少 14 天；历史落盘，重启不丢。",
           absolute:"不做任何归一化，直接给当前原始读数；窗口内变化 = 这个窗口里第一个点到现在的变化。"};
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -452,7 +469,7 @@ async function loadL0(){
     cats.length+" 类 / "+total+" 项：通过 "+P+"，告警 "+W+"，失败 "+F+"（exit_code "+(d.exit_code==null?"—":d.exit_code)+"）";
   var b=document.getElementById("overall");
   b.className="badge "+(F>0?"bad":W>0?"warn":"ok");
-  b.textContent=F>0?("L0 失败 "+F):W>0?("L0 告警 "+W):"L0 全通过";
+  b.textContent=F>0?("硬阈值 失败 "+F):W>0?("硬阈值 告警 "+W):"硬阈值 全通过";
   if(d.timestamp) document.getElementById("ts").textContent=new Date(d.timestamp).toLocaleTimeString();
   if(!cats.length){document.getElementById("cats").innerHTML='<div class="empty">巡检结果还没生成。</div>';return;}
 
@@ -501,9 +518,10 @@ async function loadLagStatus(){
   try{ d=(await getJSON("/api/lagdiag")).json; }catch(e){ el.textContent=""; return; }
   var blind=d.filter(function(x){return x.z_available===0;});
   if(!blind.length){ el.innerHTML='<span class="ok-note">十个时间尺度都有数据。</span>'; return; }
-  var names=blind.map(function(x){return x.lag;}).join("、");
-  var why=blind[0].reason||"";
-  el.innerHTML='<b>'+esc(names)+' 现在没有数据</b>（表里显示为斜纹格）：'+esc(why);
+  var names=blind.map(function(x){return (x.name||x.lag)+"前";}).join("、");
+  var why=blind.map(function(x){return x.plain||x.reason||"";}).filter(Boolean);
+  el.innerHTML='<b>和 '+esc(names)+' 比的列现在没有数据</b>（表里显示为斜纹格）：'+
+    why.map(esc).join("；");
 }
 
 async function loadL3(){
@@ -581,6 +599,14 @@ function pidsFor(id){
     return 'PID <b>'+p.pid+'</b> '+p.cpu.toFixed(1)+'%';}).join("，")+(ps.length>3?" …":"")+'</span>';
 }
 
+// 档位的人话名字由后端按真实滞后时长算好（lag_names），页面不另存一张表。
+function lagLabel(h,i){ var n=h&&h.lag_names&&h.lag_names[i]; return n?(n+"前"):("第"+(i+1)+"档"); }
+function onsetLabel(h,id){
+  if(!id) return "—";
+  var i=(h&&h.lags||[]).indexOf(id);
+  return i>=0?lagLabel(h,i):id;
+}
+
 function renderL3(){
   var h=state.heat,el=document.getElementById("l3tbl");
   renderProcs();
@@ -606,7 +632,7 @@ function renderL3(){
   var head='<tr>'+th("id","指标","",st)+th("dom","域","",st)+th("v","当前值","num",st)+th("peak","峰值 z","num",st,"按 |z| 排序")+
     idx.map(function(i){
       var s=h.lag_seconds?h.lag_seconds[i]:0;
-      return th("z"+i,lags[i],"mid",st,s+"s，按 |z| 排序");}).join("")+
+      return th("z"+i,lagLabel(h,i),"mid",st,"和"+lagLabel(h,i)+"比，按 |z| 排序");}).join("")+
     th("onset","从多久前开始","mid",st)+th("breadth","几个时间尺度上都异常","num",st)+'</tr>';
   var rows=ms.map(function(m){
     var pk=m.peak==null?'<span class="z na">—</span>':
@@ -614,7 +640,7 @@ function renderL3(){
     return '<tr><td class="mid-id'+mclass(m.id)+'">'+esc(m.id)+pidsFor(m.id)+'</td><td>'+esc(m.dom)+'</td>'+
       '<td class="num">'+esc(fmt(m.pt?m.pt.v:null,m.unit))+'</td><td class="num">'+pk+'</td>'+
       idx.map(function(i){return '<td class="mid">'+zcell(zval(m.pt,i),ready[i])+'</td>';}).join("")+
-      '<td class="mid">'+esc((m.pt&&m.pt.onset_lag)||"—")+'</td>'+
+      '<td class="mid">'+esc(onsetLabel(h,m.pt&&m.pt.onset_lag))+'</td>'+
       '<td class="num">'+((m.pt&&m.pt.breadth)||0)+'</td></tr>';
   }).join("");
   el.innerHTML="<thead>"+head+"</thead><tbody>"+rows+"</tbody>";
@@ -782,12 +808,17 @@ function moversHTML(g){
       var d=m.past==null?null:(m.now-m.past);
       var delta=d==null?"新出现":(d>0?"▲ ":"▼ ")+fmt(Math.abs(d),m.unit);
       return '<span class="mv"><code>'+esc(m.name)+'</code> '+esc(fmt(m.now,m.unit))+
-        ' <span class="pids">'+esc(delta)+' vs '+esc(m.col)+'前</span></span>';
+        ' <span class="pids">'+esc(delta)+' vs '+esc(colLabel(m.col))+'前</span></span>';
     }).join("")+'</div>';
+}
+// "1h"/"3d" 是接口里的列编号，页面上写成"1小时"/"3天"。跟变化幅度表同一套说法。
+function colLabel(c){
+  var m=/^(\d+)([hd])$/.exec(c||"");
+  return m?(m[1]+(m[2]==="h"?"小时":"天")):c;
 }
 function cmpTable(sid,cols,rows){
   return '<div class="tbl-wrap"><table class="cmp" data-sid="'+esc(sid)+'"><thead><tr><th>指标</th><th class="num">当前</th>'+
-    cols.map(function(c){return '<th class="num">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
+    cols.map(function(c){return '<th class="num">'+esc(colLabel(c))+'前</th>';}).join("")+'</tr></thead><tbody>'+
     rows.map(function(r){
       return '<tr title="'+esc(r.id)+'"><td data-sort="'+esc(r.label)+'">'+esc(r.label)+'</td>'+
         '<td class="num cmp-now" data-sort="'+r.now+'"><span class="val">'+esc(fmt(r.now,r.unit))+
@@ -1150,9 +1181,11 @@ async function loadServices(){
   try{ d=(await getJSON("/api/services")).json; }
   catch(e){ el.innerHTML='<p class="empty">服务数据不可用：'+esc(e.message)+'</p>'; return; }
   if(!d.rows||!d.rows.length){ el.innerHTML='<p class="empty">还没有识别到服务（启动后一分钟内完成首次识别）。</p>'; return; }
-  el.innerHTML='<table data-sid="svc"><thead><tr><th>服务</th><th>进程</th><th class="num">PID</th><th class="num">实例</th>'+
+  // 父进程：跟进程表同一个格式。systemd/containerd-shim 是托管，bash/sshd 是有人手工起的
+  var par=function(r){return r.parent?esc(r.parent)+' <span class="pids">'+r.ppid+'</span>':'<span class="na-dash">—</span>';};
+  el.innerHTML='<table data-sid="svc"><thead><tr><th>服务</th><th>进程</th><th class="num">PID</th><th>父进程</th><th class="num">实例</th>'+
     '<th>启动时间</th><th class="num">已运行</th><th class="num">CPU</th><th class="num">内存</th>'+
-    d.cols.map(function(c){return '<th class="mid">'+esc(c)+'前</th>';}).join("")+'</tr></thead><tbody>'+
+    d.cols.map(function(c){return '<th class="mid">'+esc(colLabel(c))+'前</th>';}).join("")+'</tr></thead><tbody>'+
     d.rows.map(function(r){
       var ports=r.ports&&r.ports.length?' <span class="svc-port">:'+r.ports.join(",")+'</span>':"";
       var name=esc(r.name)+ports+(r.self?'<span class="self-tag">nodedata 自身</span>':"");
@@ -1164,7 +1197,9 @@ async function loadServices(){
         var peak=r.peak_rss?fmt(r.peak_rss,"bytes"):"—";
         var last=r.last_rss?fmt(r.last_rss,"bytes"):"—";
         return '<tr class="gone"><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
-          '<td class="mid-id">'+esc(r.exe||"")+'</td><td colspan="2">已消失</td>'+
+          '<td class="mid-id">'+esc(r.exe||"")+'</td><td class="num">已消失</td>'+
+          '<td class="mid-id" data-sort="'+esc(r.parent||"")+'" title="最后一眼的父进程">'+par(r)+'</td>'+
+          '<td class="num">—</td>'+
           '<td>最后见于 '+esc(when)+'</td><td class="num">—</td>'+
           '<td class="num" data-sort="'+(r.last_cpu||0)+'">'+(r.last_cpu?r.last_cpu.toFixed(1)+" %":"—")+'</td>'+
           '<td class="num" data-sort="'+(r.peak_rss||0)+'">'+esc(last)+
@@ -1175,6 +1210,7 @@ async function loadServices(){
       return '<tr><td data-sort="'+esc(r.name)+'">'+name+'</td>'+
         '<td class="mid-id">'+esc(r.exe)+'<span class="svc-kind">'+esc(r.kind)+'</span></td>'+
         '<td class="num" data-sort="'+r.pid+'">'+r.pid+'</td>'+
+        '<td class="mid-id" data-sort="'+esc(r.parent||"")+'">'+par(r)+'</td>'+
         '<td class="num" data-sort="'+r.instances+'">'+r.instances+'</td>'+
         '<td data-sort="'+r.start_ts+'">'+esc(start.toLocaleString())+'</td>'+
         '<td class="num" data-sort="'+r.uptime_s+'">'+esc(uptimeStr(r.uptime_s))+'</td>'+
@@ -1198,7 +1234,7 @@ async function loadIncidents(){
   var el=document.getElementById("incidents"); if(!el) return;
   var list;
   try{ list=(await getJSON("/api/incidents")).json||[]; }catch(e){ el.innerHTML='<p class="empty">事故留证不可用：'+esc(e.message)+'</p>'; return; }
-  if(!list.length){ el.innerHTML='<p class="empty">还没有留证。L4 出现带责任方的结论时会自动保存现场（线程级 CPU、内核栈、D 状态进程、内核日志）。</p>'; return; }
+  if(!list.length){ el.innerHTML='<p class="empty">还没有留证。线索里出现带责任方的结论时会自动保存现场（线程级 CPU、内核栈、D 状态进程、内核日志）。</p>'; return; }
   el.innerHTML='<table><thead><tr><th>时间</th><th>结论</th><th>责任方</th><th></th></tr></thead><tbody>'+
     list.slice(0,20).map(function(m){
       var c=m.culprit?(esc(m.culprit.name)+(m.culprit.pid?' (PID '+m.culprit.pid+')':"")):"—";
@@ -1345,6 +1381,24 @@ function renderUse(rows){
     blind.map(esc).join(" ； ");
 }
 
+// ---- 逐核实时 ----
+// 只标"最忙的那个核"，不按阈值上色：柱高已经是数值本身，再加一套红黄绿就是在替人判断。
+function renderCores(cs){
+  var el=document.getElementById("cores");
+  if(!cs||!cs.length){ el.innerHTML='<span class="empty">还没有逐核数据（第二轮采集后出现）</span>'; return; }
+  var hot=0; cs.forEach(function(c,i){ if(c.busy>cs[hot].busy) hot=i; });
+  el.innerHTML=cs.map(function(c,i){
+    var b=Math.max(0,Math.min(100,c.busy)), si=Math.max(0,Math.min(b,c.softirq));
+    return '<div class="core'+(i===hot?' hot':'')+'" title="cpu'+c.cpu+' 忙 '+b.toFixed(1)+
+      '%，其中软中断 '+si.toFixed(1)+'%"><div class="bar"><i style="height:'+b.toFixed(1)+
+      '%"></i><b style="height:'+si.toFixed(1)+'%"></b></div>'+c.cpu+'</div>';
+  }).join("");
+}
+async function loadCores(){
+  try{ renderCores((await getJSON("/api/cores")).json); }
+  catch(e){ document.getElementById("cores").innerHTML='<div class="err">/api/cores → '+esc(e.message)+'</div>'; }
+}
+
 async function loadUse(){
   try{ renderUse((await getJSON("/api/use")).json); }
   catch(e){ document.getElementById("usebody").innerHTML=
@@ -1352,7 +1406,7 @@ async function loadUse(){
 }
 
 async function refreshAll(){
-  await Promise.all([loadUse(),loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadUse(),loadCores(),loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

@@ -37,6 +37,10 @@ type Service struct {
 	CPU       float64 `json:"cpu"`       // 占一个核的百分比
 	RSS       uint64  `json:"rss"`       // 同组合计
 	Self      bool    `json:"self,omitempty"`
+	// 主进程的父进程：是谁把它拉起来的。systemd / containerd-shim / supervisord 是正常托管；
+	// 父进程是 bash、sshd、tmux 说明是有人手工起的——SSH 一断、机器一重启，它就没了。
+	PPID   int    `json:"ppid,omitempty"`
+	Parent string `json:"parent,omitempty"`
 }
 
 // ID 是服务的稳定身份：名字 + 监听端口。重启后 PID 变、身份不变。
@@ -323,6 +327,10 @@ func (c *Collector) groupServices(procs []svcProc, listen map[uint64]int, now ti
 		s := g.svc
 		s.PID, s.StartTS, s.Instances = main.pid, main.startTS, len(g.procs)
 		s.Unit = main.unit
+		s.PPID = main.ppid
+		if pp := byPID[main.ppid]; pp != nil {
+			s.Parent = pp.comm // comm 而不是 exe：bash、sshd、containerd-shim 用 comm 认更直观
+		}
 		seen := map[int]bool{}
 		for _, p := range g.procs {
 			s.RSS += p.rss

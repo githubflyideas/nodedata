@@ -55,7 +55,13 @@ type UseRow struct {
 	Movers   []cmpMover `json:"movers,omitempty"`
 }
 
-type useMetric struct{ kind, label, id string }
+type useMetric struct {
+	kind, label, id string
+	// always：不管偏不偏离都显示。给那些"稳态本身就是问题"的指标用——
+	// 一个被单线程钉死在 100% 的核，天天如此，z 永远是 0，
+	// 只在偏离时才显示的话，这个最典型的单核瓶颈永远不会出现在页面上。
+	always bool
+}
 
 // useResources 定义五行。每组第一个指标是"主指标"，无论正不正常都显示——
 // "CPU 正常" 远不如 "CPU 正常（用户态 12%，平时 10%）" 有用：后者顺带
@@ -69,43 +75,47 @@ var useResources = []struct {
 	{
 		Name: "CPU", MoverGroup: "CPU",
 		Metrics: []useMetric{
-			{"U", "用户态", "cpu.user"},
-			{"U", "内核态", "cpu.sys"},
-			{"U", "软中断", "cpu.softirq"},
-			{"S", "CPU 压力", "psi.cpu.some10"},
-			{"S", "1 分钟负载", "loadavg.1m"},
-			{"S", "运行队列", "procs_running"},
-			{"E", "被偷走的时间", "cpu.steal"},
+			// 主指标用 0–100 的整机忙碌率，跟下一行的"最忙单核"同口径：
+			// 整机 7%、单核 100%，一眼就知道是一个核被钉死了。
+			{"U", "整机忙碌", "cpu.busy_pct", false},
+			// 整机汇总会把单核打满稀释掉：16 核上一个核 100%，汇总只多 6.25%。
+			{"U", "最忙单核", "cpu.core_top1", true},
+			{"U", "用户态（各核之和）", "cpu.user", false},
+			{"U", "第二忙的核", "cpu.core_top2", false},
+			{"U", "内核态（各核之和）", "cpu.sys", false},
+			{"U", "软中断（各核之和）", "cpu.softirq", false},
+			{"U", "软中断最重的核", "cpu.core_softirq_max", false},
+			{"S", "CPU 压力", "psi.cpu.some10", false},
+			{"S", "1 分钟负载", "loadavg.1m", false},
+			{"S", "运行队列", "procs_running", false},
+			{"E", "被偷走的时间", "cpu.steal", false},
 		},
-		// 逐核还没做：/proc/stat 只解析了 cpu 汇总行。16 核机器上一个
-		// 单线程进程打满一个核，这里显示 6.25%——看上去一片祥和。
-		Blind: []string{"只有整机汇总，没有逐核：单核打满在这一行看不出来"},
 	},
 	{
 		Name: "内存", MoverGroup: "内存",
 		Metrics: []useMetric{
-			{"U", "已用", "mem.used_pct"},
-			{"U", "可用", "mem.available"},
+			{"U", "已用", "mem.used_pct", false},
+			{"U", "可用", "mem.available", false},
 			// SwapFree 是存量，不疼；换入换出的速率才疼。一台机器可以
 			// swap 用掉一半而毫无感觉，也可以只用 2% 但每秒换出 50MB。
-			{"S", "换出", "swap.out"},
-			{"S", "换入", "swap.in"},
-			{"S", "内存压力", "psi.mem.some10"},
-			{"S", "主缺页", "pgmajfault"},
-			{"S", "回写堆积", "mem.writeback"},
-			{"S", "脏页", "mem.dirty"},
+			{"S", "换出", "swap.out", false},
+			{"S", "换入", "swap.in", false},
+			{"S", "内存压力", "psi.mem.some10", false},
+			{"S", "主缺页", "pgmajfault", false},
+			{"S", "回写堆积", "mem.writeback", false},
+			{"S", "脏页", "mem.dirty", false},
 		},
 	},
 	{
 		Name: "磁盘", MoverGroup: "磁盘",
 		Metrics: []useMetric{
-			{"U", "最忙盘 util", "disk.util"},
-			{"U", "根分区可用", "fs.avail"},
-			{"S", "写等待", "disk.await_w"},
-			{"S", "读等待", "disk.await_r"},
-			{"S", "在途 I/O", "disk.inflight"},
-			{"S", "IO 压力", "psi.io.some10"},
-			{"S", "阻塞进程", "procs_blocked"},
+			{"U", "最忙盘 util", "disk.util", false},
+			{"U", "根分区可用", "fs.avail", false},
+			{"S", "写等待", "disk.await_w", false},
+			{"S", "读等待", "disk.await_r", false},
+			{"S", "在途 I/O", "disk.inflight", false},
+			{"S", "IO 压力", "psi.io.some10", false},
+			{"S", "阻塞进程", "procs_blocked", false},
 		},
 		// 实测确认的一个坑，值得写在脸上：子进程被 wait() 回收时，内核把它的
 		// I/O 累加进父进程的 signal->ioac，而 /proc/PID/io 读的正是这个。
@@ -118,14 +128,14 @@ var useResources = []struct {
 	{
 		Name: "网络",
 		Metrics: []useMetric{
-			{"U", "入向", "net.rx"},
-			{"U", "出向", "net.tx"},
-			{"S", "softnet 挤压", "net.softnet_squeeze"},
-			{"E", "softnet 丢弃", "net.softnet_drop"},
-			{"E", "收包丢弃", "net.rx_drop"},
-			{"E", "发包丢弃", "net.tx_drop"},
-			{"E", "收包错误", "net.rx_errs"},
-			{"E", "TCP 重传", "tcp.retrans"},
+			{"U", "入向", "net.rx", false},
+			{"U", "出向", "net.tx", false},
+			{"S", "softnet 挤压", "net.softnet_squeeze", false},
+			{"E", "softnet 丢弃", "net.softnet_drop", false},
+			{"E", "收包丢弃", "net.rx_drop", false},
+			{"E", "发包丢弃", "net.tx_drop", false},
+			{"E", "收包错误", "net.rx_errs", false},
+			{"E", "TCP 重传", "tcp.retrans", false},
 		},
 		// 这一条必须说出来：CPU/磁盘/内存 三行都能给"谁干的"，网络给不了，
 		// 用户会默认这里也有。/proc/PID/ 下没有每进程网络计数，要拿到
@@ -247,7 +257,7 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 			if notable && level < 1 {
 				level = 1
 			}
-			if i == 0 || notable {
+			if i == 0 || m.always || notable {
 				row.Facts = append(row.Facts, f)
 			}
 		}

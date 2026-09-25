@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/githubflyideas/nodedata/internal/deviation"
 )
 
 // Proc 是 L1 进程快照里的一个进程（与 collector.ProcTop 同构，diagnosis 不依赖 collector）。
@@ -210,7 +212,7 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		}
 		// 起始档位不进标题：σ 会随故障持续而被污染，短档先被掩盖，"起始 L6"会让人误读成三小时前开始。
 		it.Title = fmt.Sprintf("%s 劣化：%s %s %.1fσ", cls, head.d.MetricID, dir, math.Abs(head.peak))
-		it.Evidence = append(it.Evidence, fmt.Sprintf("领头指标最短显著档位 %s", onset))
+		it.Evidence = append(it.Evidence, fmt.Sprintf("领头指标最早在和 %s前比时就显著偏离", deviation.LagNameByID(onset)))
 		var also []string
 		seenFam := map[string]bool{familyOf(head.d.MetricID): true}
 		for _, t := range ts {
@@ -233,7 +235,7 @@ func causal(devs []Deviation, opt Options) ([]Item, map[string]bool) {
 		}
 		for _, t := range ts {
 			it.Metrics = append(it.Metrics, t.d.MetricID)
-			it.Evidence = append(it.Evidence, fmt.Sprintf("L3 %s = %s，peak z %+.2f @ %s，breadth %d",
+			it.Evidence = append(it.Evidence, fmt.Sprintf("%s = %s，峰值 z %+.2f（和 %s前比），%d 个时间尺度上异常",
 				t.d.MetricID, fmtVal(t.d.Value, t.d.Unit), t.peak, t.lag, t.d.Breadth))
 		}
 		switch cls {
@@ -643,12 +645,15 @@ var metricFamilies = map[string]string{
 	"net.rx_drop": "丢包", "net.tx_drop": "丢包", "net.rx_errs": "丢包", "net.tx_errs": "丢包",
 	"fs.used_pct": "根分区", "fs.avail": "根分区",
 	"psi.cpu.some10": "CPU 压力", "loadavg.1m": "CPU 压力", "procs_running": "CPU 压力",
+	// 最忙的 3 个核是同一件事的三个侧面：一次单核打满不该变成三条
+	"cpu.core_top1": "单核", "cpu.core_top2": "单核", "cpu.core_top3": "单核",
 }
 
 // familyCanon 是每个族的固定代表。
 var familyCanon = map[string]string{
 	"内存余量": "mem.available", "盘延迟": "disk.await_w", "网卡吞吐": "net.rx",
 	"丢包": "net.rx_drop", "根分区": "fs.used_pct", "CPU 压力": "psi.cpu.some10",
+	"单核": "cpu.core_top1",
 }
 
 func familyOf(id string) string {
