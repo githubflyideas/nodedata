@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/githubflyideas/nodedata/internal/deviation"
+	"github.com/githubflyideas/nodedata/internal/metrics"
 	"github.com/githubflyideas/nodedata/internal/server"
 )
 
@@ -309,66 +310,18 @@ func (b *HeatmapBuilder) Health(collectorHealth map[string]float64) server.Healt
 	}
 }
 
-// domainOf 由 metricID 前缀推断域。
-func domainOf(id string) string {
-	if i := strings.IndexByte(id, '.'); i > 0 {
-		return id[:i]
-	}
-	return id
-}
+// domainOf 由 metricID 前缀推断域（见 internal/metrics）。
+func domainOf(id string) string { return metrics.Domain(id) }
 
-// unitOf 由 metricID 推断单位。/proc 里的内存类指标采集时已换算成字节。
-// unitOf 决定某指标的显示单位。
-//
-// 顺序要紧：百分比规则必须排在 mem./swap. 前缀之前，否则 mem.used_pct（一个百分数）
-// 会命中"mem. 开头 = 字节"，14.49% 被显示成 "14.49 B"。
-// 落到 default 的后果同样具体：fs.avail 会走通用格式化，67 GiB 显示成 "67046.88M"。
-func unitOf(id string) string {
-	switch {
-	case strings.HasSuffix(id, "_pct"), strings.Contains(id, "util"),
-		strings.HasPrefix(id, "cpu."), strings.HasPrefix(id, "proc.cpu."),
-		strings.HasPrefix(id, "psi"):
-		return "percent"
-	case strings.HasSuffix(id, "_ms"), strings.Contains(id, "await"):
-		return "ms"
-	case strings.HasSuffix(id, "_s"), strings.HasSuffix(id, "_sec"):
-		return "s"
-	// 速率类：吞吐（字节/秒）与事件/秒。@ 后面是设备或接口名。
-	case strings.HasPrefix(id, "disk.rbytes"), strings.HasPrefix(id, "disk.wbytes"),
-		id == "net.rx", id == "net.tx", strings.HasPrefix(id, "net.rx@"), strings.HasPrefix(id, "net.tx@"),
-		strings.HasPrefix(id, "proc.io."),
-		// 必须排在下面的 "swap. 开头 = 字节" 之前：swap.in/out 是速率不是存量，
-		// 落到那条规则上 50MB/s 会显示成 "50 MiB"，看不出这台机器正在挨打。
-		id == "swap.in", id == "swap.out":
-		return "bytes/s"
-	case strings.Contains(id, "_drop"), strings.Contains(id, "_errs"), strings.Contains(id, "_errors"),
-		id == "tcp.retrans", id == "tcp.passive_opens", id == "tcp.attempt_fails",
-		id == "udp.no_ports", id == "pgfault", id == "pgmajfault":
-		return "/s"
-	// 字节量：注意 fs.avail 与 proc.rss.<名字> 都不含 "bytes" 字样，必须显式列出
-	case strings.Contains(id, "bytes"), strings.HasPrefix(id, "mem."),
-		strings.HasPrefix(id, "swap."), strings.HasPrefix(id, "proc.rss."),
-		id == "slab", id == "fs.avail":
-		return "bytes"
-	case strings.Contains(id, "iops"), strings.Contains(id, "pps"),
-		strings.HasSuffix(id, "_per_s"):
-		return "ops/s"
-	case strings.HasPrefix(id, "loadavg"):
-		return "load"
-	default:
-		return "count"
-	}
-}
+// unitOf 决定某指标的显示单位。单位登记在 internal/metrics，这里不再按名字猜。
+func unitOf(id string) string { return metrics.Lookup(id).Unit }
 
 // primaryOf 标记主视图指标。
 func primaryOf(id string) int {
-	switch domainOf(id) {
-	case "cpu", "mem", "disk", "net", "psi", "loadavg", "swap",
-		"procs_running", "procs_blocked", "slab":
+	if metrics.Lookup(id).Primary {
 		return 1
-	default:
-		return 0
 	}
+	return 0
 }
 
 // LowConfLags 返回某指标各档位此刻是否"低置信"（同时段样本数 < HighConfN）。

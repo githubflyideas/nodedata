@@ -1,0 +1,1672 @@
+{
+ "@e": {
+  "class": "",
+  "direction": 1,
+  "domain": "@e",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "a.bytes_total": {
+  "class": "",
+  "direction": 1,
+  "domain": "a",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "b.iops_x": {
+  "class": "",
+  "direction": 1,
+  "domain": "b",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 100,
+  "primary": 0,
+  "unit": "ops/s"
+ },
+ "c_per_s": {
+  "class": "",
+  "direction": 1,
+  "domain": "c_per_s",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 0,
+  "primary": 0,
+  "unit": "s"
+ },
+ "collector.degraded": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "collector.duration_ms": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 2,
+  "primary": 0,
+  "unit": "ms"
+ },
+ "collector.interval_s": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 0,
+  "primary": 0,
+  "unit": "s"
+ },
+ "collector.procs_scan_ms": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 2,
+  "primary": 0,
+  "unit": "ms"
+ },
+ "collector.procs_scanned": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "collector.procs_skipped": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "collector.psi_available": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "collector.rows_dropped": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "collector.taskstats_ok": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "collector.wal_bytes": {
+  "class": "",
+  "direction": 1,
+  "domain": "collector",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "conntrack": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "conntrack",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "conntrack.used_pct": {
+  "class": "",
+  "direction": 1,
+  "domain": "conntrack",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "cpu.": {
+  "class": "",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.busy_pct": {
+  "class": "",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.core_softirq_max": {
+  "class": "",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 20,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.core_top1": {
+  "class": "",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "单核",
+  "min_delta": 20,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.core_top2": {
+  "class": "",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "单核",
+  "min_delta": 20,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.core_top3": {
+  "class": "",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "单核",
+  "min_delta": 20,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.iowait": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.softirq": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.steal": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.sys": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "cpu.user": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "cpu",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "ctxt": {
+  "class": "",
+  "direction": 1,
+  "domain": "ctxt",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "d@": {
+  "class": "",
+  "direction": 1,
+  "domain": "d@",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "disk.await_r": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_r@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_r@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_r@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_r@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_w": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_w@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_w@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_w@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.await_w@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "盘延迟",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "ms"
+ },
+ "disk.inflight": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "disk.inflight@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "disk.inflight@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "disk.inflight@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "disk.inflight@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "disk.merged": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "disk.rbytes": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.rbytes@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.rbytes@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.rbytes@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.rbytes@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.riops": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.riops@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.riops@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.riops@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.riops@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.util": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "disk.util@": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "disk.util@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "disk.util@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "disk.util@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "disk.util@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "disk.wbytes": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.wbytes@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.wbytes@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.wbytes@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.wbytes@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "disk.wiops": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.wiops@dm-0": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.wiops@nvme0n1": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.wiops@sda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "disk.wiops@vda": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "disk",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "foo.bar": {
+  "class": "",
+  "direction": 1,
+  "domain": "foo",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "fs.avail": {
+  "class": "",
+  "direction": -1,
+  "domain": "fs",
+  "evidence_only": false,
+  "family": "根分区",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "fs.inode_used_pct": {
+  "class": "",
+  "direction": 1,
+  "domain": "fs",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "fs.used_pct": {
+  "class": "",
+  "direction": 1,
+  "domain": "fs",
+  "evidence_only": false,
+  "family": "根分区",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "intr": {
+  "class": "",
+  "direction": 1,
+  "domain": "intr",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "loadavg.1m": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "loadavg",
+  "evidence_only": false,
+  "family": "CPU 压力",
+  "min_delta": 0.5,
+  "primary": 1,
+  "unit": "load"
+ },
+ "mem.": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "mem",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "mem.available": {
+  "class": "内存",
+  "direction": -1,
+  "domain": "mem",
+  "evidence_only": false,
+  "family": "内存余量",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "mem.buffers": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "mem",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "mem.cached": {
+  "class": "内存",
+  "direction": -1,
+  "domain": "mem",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "mem.dirty": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "mem",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "mem.free": {
+  "class": "内存",
+  "direction": -1,
+  "domain": "mem",
+  "evidence_only": false,
+  "family": "内存余量",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "mem.used_pct": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "mem",
+  "evidence_only": false,
+  "family": "内存余量",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "mem.writeback": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "mem",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "net.rx": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.rx@bond0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.rx@ens3f1": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.rx@eth0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.rx_drop": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_drop@bond0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_drop@ens3f1": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_drop@eth0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_errs": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_errs@bond0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_errs@ens3f1": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_errs@eth0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.rx_pps": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "net.softnet_drop": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.softnet_squeeze": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 1,
+  "unit": "count"
+ },
+ "net.tx": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.tx@bond0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.tx@ens3f1": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.tx@eth0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "net.tx_drop": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_drop@bond0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_drop@ens3f1": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_drop@eth0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_errs": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_errs@bond0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_errs@ens3f1": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_errs@eth0": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": false,
+  "family": "丢包",
+  "min_delta": 1,
+  "primary": 1,
+  "unit": "/s"
+ },
+ "net.tx_pps": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "net",
+  "evidence_only": true,
+  "family": "网卡吞吐",
+  "min_delta": 100,
+  "primary": 1,
+  "unit": "ops/s"
+ },
+ "pgfault": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "pgfault",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 5,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "pgmajfault": {
+  "class": "",
+  "direction": 1,
+  "domain": "pgmajfault",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 5,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "proc.cpu.": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.cpu.__others__": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.cpu.bash": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.cpu.java": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.cpu.my.app": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.cpu.nginx": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.cpu.redis-server": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "proc.io.__others__": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 0,
+  "unit": "bytes/s"
+ },
+ "proc.io.bash": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 0,
+  "unit": "bytes/s"
+ },
+ "proc.io.java": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 0,
+  "unit": "bytes/s"
+ },
+ "proc.io.my.app": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 0,
+  "unit": "bytes/s"
+ },
+ "proc.io.nginx": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 0,
+  "unit": "bytes/s"
+ },
+ "proc.io.redis-server": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 0,
+  "unit": "bytes/s"
+ },
+ "proc.rss.__others__": {
+  "class": "",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "proc.rss.bash": {
+  "class": "",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "proc.rss.java": {
+  "class": "",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "proc.rss.my.app": {
+  "class": "",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "proc.rss.nginx": {
+  "class": "",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "proc.rss.redis-server": {
+  "class": "",
+  "direction": 1,
+  "domain": "proc",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 0,
+  "unit": "bytes"
+ },
+ "procs_blocked": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "procs_blocked",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "count"
+ },
+ "procs_running": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "procs_running",
+  "evidence_only": false,
+  "family": "CPU 压力",
+  "min_delta": 2,
+  "primary": 1,
+  "unit": "count"
+ },
+ "psi.cpu.some10": {
+  "class": "CPU",
+  "direction": 1,
+  "domain": "psi",
+  "evidence_only": false,
+  "family": "CPU 压力",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "psi.io.some10": {
+  "class": "IO",
+  "direction": 1,
+  "domain": "psi",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "psi.mem.some10": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "psi",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 1,
+  "unit": "percent"
+ },
+ "self.cpu_pct": {
+  "class": "",
+  "direction": 1,
+  "domain": "self",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "self.rss_mb": {
+  "class": "",
+  "direction": 1,
+  "domain": "self",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "slab": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "slab",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 134217728,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "sock.tcp_alloc": {
+  "class": "",
+  "direction": 1,
+  "domain": "sock",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "sock.tcp_inuse": {
+  "class": "",
+  "direction": 1,
+  "domain": "sock",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "sock.tcp_orphan": {
+  "class": "",
+  "direction": 1,
+  "domain": "sock",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "sock.tcp_tw": {
+  "class": "",
+  "direction": 1,
+  "domain": "sock",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "sock.udp_inuse": {
+  "class": "",
+  "direction": 1,
+  "domain": "sock",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "sock.used": {
+  "class": "",
+  "direction": 1,
+  "domain": "sock",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "softnet.drop": {
+  "class": "",
+  "direction": 1,
+  "domain": "softnet",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "softnet.squeeze": {
+  "class": "",
+  "direction": 1,
+  "domain": "softnet",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "swap.in": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "swap",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "swap.out": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "swap",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1048576,
+  "primary": 1,
+  "unit": "bytes/s"
+ },
+ "swap.used": {
+  "class": "内存",
+  "direction": 1,
+  "domain": "swap",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 33554432,
+  "primary": 1,
+  "unit": "bytes"
+ },
+ "tcp.attempt_fails": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "tcp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "tcp.estab": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "tcp",
+  "evidence_only": true,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "tcp.passive_opens": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "tcp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 5,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "tcp.retrans": {
+  "class": "网络",
+  "direction": 1,
+  "domain": "tcp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "udp.in_errors": {
+  "class": "",
+  "direction": 1,
+  "domain": "udp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "udp.in_pps": {
+  "class": "",
+  "direction": 1,
+  "domain": "udp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 100,
+  "primary": 0,
+  "unit": "ops/s"
+ },
+ "udp.no_ports": {
+  "class": "",
+  "direction": 1,
+  "domain": "udp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "udp.out_pps": {
+  "class": "",
+  "direction": 1,
+  "domain": "udp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 100,
+  "primary": 0,
+  "unit": "ops/s"
+ },
+ "udp.rcvbuf_errors": {
+  "class": "",
+  "direction": 1,
+  "domain": "udp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "udp.sndbuf_errors": {
+  "class": "",
+  "direction": 1,
+  "domain": "udp",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 1,
+  "primary": 0,
+  "unit": "/s"
+ },
+ "weird": {
+  "class": "",
+  "direction": 1,
+  "domain": "weird",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 10,
+  "primary": 0,
+  "unit": "count"
+ },
+ "x.util_thing": {
+  "class": "",
+  "direction": 1,
+  "domain": "x",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "y_pct": {
+  "class": "",
+  "direction": 1,
+  "domain": "y_pct",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 3,
+  "primary": 0,
+  "unit": "percent"
+ },
+ "z_ms": {
+  "class": "",
+  "direction": 1,
+  "domain": "z_ms",
+  "evidence_only": false,
+  "family": "",
+  "min_delta": 2,
+  "primary": 0,
+  "unit": "ms"
+ }
+}

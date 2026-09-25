@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/githubflyideas/nodedata/internal/deviation"
+	"github.com/githubflyideas/nodedata/internal/metrics"
 )
 
 // Proc 是 L1 进程快照里的一个进程（与 collector.ProcTop 同构，diagnosis 不依赖 collector）。
@@ -59,44 +60,17 @@ type Culprit struct {
 }
 
 const (
-	ClassCPU = "CPU"
-	ClassIO  = "IO"
-	ClassMem = "内存"
-	ClassNet = "网络"
+	ClassCPU = metrics.ClassCPU
+	ClassIO  = metrics.ClassIO
+	ClassMem = metrics.ClassMem
+	ClassNet = metrics.ClassNet
 )
 
-// classOf 把指标归到症状类；"" 表示不参与归因。
-func classOf(id string) string {
-	base := id
-	if i := strings.IndexByte(id, '@'); i >= 0 {
-		base = id[:i]
-	}
-	switch {
-	case strings.HasPrefix(base, "proc.cpu."), base == "cpu.user", base == "cpu.sys", base == "cpu.softirq",
-		base == "cpu.steal", strings.HasPrefix(base, "loadavg"), strings.HasPrefix(base, "psi.cpu"),
-		base == "procs_running":
-		return ClassCPU
-	case strings.HasPrefix(base, "proc.io."), strings.HasPrefix(base, "disk."), strings.HasPrefix(base, "psi.io"),
-		base == "cpu.iowait", base == "procs_blocked", base == "mem.dirty", base == "mem.writeback":
-		return ClassIO
-	case strings.HasPrefix(base, "mem."), strings.HasPrefix(base, "swap."), strings.HasPrefix(base, "psi.mem"),
-		base == "pgfault", base == "slab":
-		return ClassMem
-	case strings.HasPrefix(base, "net."), strings.HasPrefix(base, "tcp."), base == "conntrack":
-		return ClassNet
-	}
-	return ""
-}
+// classOf 返回指标的诊断归类（登记在 internal/metrics）。
+func classOf(id string) string { return metrics.Lookup(id).Class }
 
-// badDirection：该指标往哪个方向偏才算劣化。+1 往上坏，-1 往下坏。
-// badDirection 返回该指标"变坏"的方向：+1 表示上升是坏事，-1 表示下降是坏事。
-func badDirection(id string) float64 {
-	switch strings.SplitN(id, "@", 2)[0] {
-	case "mem.available", "mem.free", "mem.cached", "fs.avail":
-		return -1
-	}
-	return 1
-}
+// badDirection：+1 升高是坏事，-1 降低是坏事（登记在 internal/metrics）。
+func badDirection(id string) float64 { return metrics.Lookup(id).Direction() }
 
 // absGate 是"绝对值闸门"：指标变了不等于出问题，还得确实变坏了。
 //
@@ -632,23 +606,6 @@ func fmtVal(v float64, unit string) string {
 	return fmt.Sprintf("%.3g", v)
 }
 
-// 指标族：说的是同一件事的多个指标。族内只用一个固定代表领头，
-// 否则谁的 |z| 大谁上台，标题会在它们之间来回跳——实机注入时
-// 内存那次的领头就在 mem.available / mem.free / mem.used_pct 之间轮换过。
-//
-// 代表选"最贴近人的说法"：讲内存余量用 mem.available（它已扣掉可回收的页缓存），
-// 讲盘慢用写延迟（读延迟常年很低，写才是瓶颈信号）。
-var metricFamilies = map[string]string{
-	"mem.available": "内存余量", "mem.free": "内存余量", "mem.used_pct": "内存余量",
-	"disk.await_w": "盘延迟", "disk.await_r": "盘延迟",
-	"net.rx": "网卡吞吐", "net.tx": "网卡吞吐", "net.rx_pps": "网卡吞吐", "net.tx_pps": "网卡吞吐",
-	"net.rx_drop": "丢包", "net.tx_drop": "丢包", "net.rx_errs": "丢包", "net.tx_errs": "丢包",
-	"fs.used_pct": "根分区", "fs.avail": "根分区",
-	"psi.cpu.some10": "CPU 压力", "loadavg.1m": "CPU 压力", "procs_running": "CPU 压力",
-	// 最忙的 3 个核是同一件事的三个侧面：一次单核打满不该变成三条
-	"cpu.core_top1": "单核", "cpu.core_top2": "单核", "cpu.core_top3": "单核",
-}
-
 // familyCanon 是每个族的固定代表。
 var familyCanon = map[string]string{
 	"内存余量": "mem.available", "盘延迟": "disk.await_w", "网卡吞吐": "net.rx",
@@ -656,12 +613,8 @@ var familyCanon = map[string]string{
 	"单核": "cpu.core_top1",
 }
 
-func familyOf(id string) string {
-	if i := strings.IndexByte(id, '@'); i > 0 {
-		id = id[:i] // 逐设备的成员归入同族
-	}
-	return metricFamilies[id]
-}
+// familyOf：同族指标一次只报一条（登记在 internal/metrics）。
+func familyOf(id string) string { return metrics.Lookup(id).Family }
 
 // familyHead：若领头指标属于某个族，且该族的代表也在偏离列表里，就改用代表领头。
 func familyHead(ts []trig, head trig) (trig, bool) {
@@ -678,26 +631,8 @@ func familyHead(ts []trig, head trig) (trig, bool) {
 	return head, false
 }
 
-// evidenceOnly：这些指标的变化本身不代表出问题，只能当证据，不能领头下结论。
-//
-// 页缓存被回收（mem.cached 下降）是内核在正常干活——内存要用了就回收缓存。
-// 把它当成故障，就会得出"firefox 导致 mem.cached 下降"这种结论：
-// 现象是真的，因果是错的。实机注入时它还会跟真故障抢领头位置。
-// 这些指标留在证据里，帮人理解现场；但结论要由"确实变坏了"的指标来领。
-var evidenceOnly = map[string]bool{
-	"mem.cached": true, "mem.buffers": true, "slab": true,
-	"tcp.estab": true, "sock.tcp_inuse": true, "sock.udp_inuse": true, "sock.used": true,
-	"net.rx": true, "net.tx": true, "net.rx_pps": true, "net.tx_pps": true,
-	"disk.rbytes": true, "disk.wbytes": true, "disk.riops": true, "disk.wiops": true,
-	"ctxt": true, "intr": true, "pgfault": true,
-}
-
-func isEvidenceOnly(id string) bool {
-	if i := strings.IndexByte(id, '@'); i > 0 {
-		id = id[:i]
-	}
-	return evidenceOnly[id]
-}
+// isEvidenceOnly：只作旁证、不单独成条（登记在 internal/metrics）。
+func isEvidenceOnly(id string) bool { return metrics.Lookup(id).EvidenceOnly }
 
 // anyThrottled 判断快照里是否有进程正被 cgroup 配额明显限流。
 func anyThrottled(procs []Proc) bool {
