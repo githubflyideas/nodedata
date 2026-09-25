@@ -1,4 +1,4 @@
-package main
+package fleet
 
 import (
 	"context"
@@ -293,21 +293,6 @@ func TestHealthLine(t *testing.T) {
 	}
 }
 
-// 页面里不能留原型的模拟数据，也不能从外网加载任何东西（机房 iPad 多半上不了外网）。
-func TestPageIsSelfContained(t *testing.T) {
-	s := string(pageHTML)
-	for _, bad := range []string{"sampleInventory", "tickSim", "示例数据", "https://", "http://"} {
-		if strings.Contains(s, bad) {
-			t.Errorf("页面里不应出现 %q", bad)
-		}
-	}
-	for _, need := range []string{"api/state", "巡视台断开", "不代表正常"} {
-		if !strings.Contains(s, need) {
-			t.Errorf("页面里应有 %q", need)
-		}
-	}
-}
-
 // 契约：用一份真 nodedata 的 /api/fleet 输出（testdata，v5.22 采的）确认巡视台读得懂。
 // nodedata 那边改了 UseRow 的字段名，这里就会失败。
 func TestDecodeRealAgentOutput(t *testing.T) {
@@ -332,19 +317,6 @@ func TestDecodeRealAgentOutput(t *testing.T) {
 	}
 	if len(d.Rows[0].Facts) == 0 || d.Rows[0].Facts[0].Unit == "" || d.Rows[0].Facts[0].Label == "" {
 		t.Errorf("CPU 行应带读数：%+v", d.Rows[0].Facts)
-	}
-}
-
-// 仓库里给的样例清单必须能原样读通。
-func TestExampleInventoryParses(t *testing.T) {
-	f, err := os.Open("host.list.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	hs, errs := ParseInventory(f)
-	if len(errs) > 0 || len(hs) != 5 {
-		t.Fatalf("hosts=%d errs=%v", len(hs), errs)
 	}
 }
 
@@ -376,5 +348,47 @@ func TestReadmeInventoryExampleParses(t *testing.T) {
 	}
 	if strings.Contains(hs[4].Addr, "secret") {
 		t.Errorf("显示地址不能带密码：%s", hs[4].Addr)
+	}
+}
+
+// 巡检日记：只记亲眼看到的变化。启动时就不正常的不算；失联、回来各一条；从没拉到过的不记。
+func TestEvents(t *testing.T) {
+	a := newFakeAgent(t, false)
+	a.set("磁盘", "偏离") // 启动前就偏离：不是事件
+	hosts, _ := ParseInventory(strings.NewReader("a " + a.srv.URL + "\nnever 127.0.0.1:1\n"))
+	p := NewPoller(time.Second, 2, "t")
+	p.lostAfter = 50 * time.Millisecond
+	p.SetHosts(hosts)
+	ctx := context.Background()
+	p.Round(ctx)
+	ev := func() []Event { return p.Snapshot(time.Now(), time.Second, p.lostAfter, Inventory{}).Events }
+	if e := ev(); len(e) != 0 {
+		t.Fatalf("首轮不应有事件：%+v", e)
+	}
+	a.set("CPU", "异常")
+	a.set("磁盘", "正常")
+	p.Round(ctx)
+	e := ev()
+	if len(e) != 2 || e[0].Res != "CPU" || e[0].From != "ok" || e[0].To != "bad" || e[1].Res != "磁盘" || e[1].From != "dev" || e[1].To != "ok" {
+		t.Fatalf("应有 CPU ok→bad、磁盘 dev→ok 两条：%+v", e)
+	}
+	a.down.Store(true)
+	time.Sleep(60 * time.Millisecond)
+	p.Round(ctx)
+	p.Round(ctx) // 第二轮不重复记 lost
+	e = ev()
+	if len(e) != 3 || e[2].Kind != "lost" || e[2].Host != "a" {
+		t.Fatalf("应多一条 a 的 lost（且只一条）：%+v", e)
+	}
+	a.down.Store(false)
+	p.Round(ctx)
+	e = ev()
+	if len(e) != 4 || e[3].Kind != "back" {
+		t.Fatalf("回来应记 back：%+v", e)
+	}
+	for _, x := range e {
+		if x.Host == "never" {
+			t.Errorf("从没拉到过的机器不应有事件：%+v", x)
+		}
 	}
 }

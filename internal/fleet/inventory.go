@@ -8,7 +8,7 @@
 // # 后面是注释。地址可以是 10.1.0.5:8888，也可以是完整 URL（带反代、https、基本认证时用）。
 //
 // 纯文本、不用 YAML：零依赖，人手改不容易出错，也方便从 CMDB/Excel 导出。
-package main
+package fleet
 
 import (
 	"bufio"
