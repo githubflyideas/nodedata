@@ -347,3 +347,34 @@ func TestExampleInventoryParses(t *testing.T) {
 		t.Fatalf("hosts=%d errs=%v", len(hs), errs)
 	}
 }
+
+// README 里 host.list 的例子必须能原样读通：文档和代码不能各说各的。
+func TestReadmeInventoryExampleParses(t *testing.T) {
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	i := strings.Index(s, "### host.list 格式")
+	if i < 0 {
+		t.Fatal("README 里找不到 host.list 格式一节")
+	}
+	s = s[i:]
+	j := strings.Index(s, "**例子**")
+	if j < 0 {
+		t.Fatal("找不到例子")
+	}
+	s = s[j:]
+	a := strings.Index(s, "```\n") + 4
+	e := strings.Index(s[a:], "```")
+	hs, errs := ParseInventory(strings.NewReader(s[a : a+e]))
+	if len(errs) > 0 || len(hs) != 6 {
+		t.Fatalf("README 例子应读到 6 台且无错误：hosts=%d errs=%v", len(hs), errs)
+	}
+	if hs[3].Group != "kafka" || len(hs[3].Tags) != 0 || hs[5].URL != "http://10.9.0.5:8888" {
+		t.Errorf("README 例子解析结果不对：%+v / %+v", hs[3], hs[5])
+	}
+	if strings.Contains(hs[4].Addr, "secret") {
+		t.Errorf("显示地址不能带密码：%s", hs[4].Addr)
+	}
+}

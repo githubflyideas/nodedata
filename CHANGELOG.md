@@ -1,5 +1,10 @@
 # nodedata Changelog
 
+## [v5.22.2] — README 补 host.list 格式说明
+
+- README 新增"host.list 格式"一节：列、地址三种写法、5 个键、值不能带空格、注释、未填怎么归页、写错的处理，附完整例子。
+- 测试直接读 README 里的例子并解析，文档和代码对不上就会失败。
+
 ## [v5.22.1] — 巡视台默认端口改为 8888；README 写明启动参数
 
 - `nodedata-fleet` 默认端口 19990 → 8888（`-port` 可改）。巡视台所在机器也跑 nodedata 时两者都默认 8888，
