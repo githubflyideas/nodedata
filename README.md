@@ -176,8 +176,22 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 几十上百台机器的轮播大屏，给挂墙的 iPad 用。另一个二进制，加一份 `host.list`：
 
 ```
-nodedata-fleet -hosts host.list -listen 0.0.0.0        # 默认端口 19990
+nodedata-fleet -hosts host.list -listen 0.0.0.0 -port 8888
 ```
+
+启动参数：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-hosts` | `host.list` | 主机清单文件，改了自动重读 |
+| `-listen` | `127.0.0.1` | 监听地址；给 iPad 看要设 `0.0.0.0`，并用防火墙限制来源 |
+| `-port` | `8888` | 页面端口。**巡视台所在机器如果也跑着 nodedata（默认同样是 8888），两者必须错开**，比如 `-port 8890`；撞了启动会直接报"端口已被占用"并提示 |
+| `-interval` | `15s` | 多久拉一轮（最小 5s） |
+| `-timeout` | `5s` | 单台拉取超时（不超过间隔的一半） |
+| `-lost-after` | 3 轮 | 多久没拉到算失联 |
+| `-parallel` | `32` | 同时拉几台 |
+
+iPad 打开 `http://巡视台地址:8888/#rack`（`#` 后面是开机默认按什么翻：host / group / product / rack / dc / tags）。
 
 - **只拉不推。** 巡视台每 15 秒并发去各台拉一次 `/api/fleet`（USE 五行，判断已经在各台用各自的基线做完了）。
   各台不需要知道巡视台在哪，也不往外发任何东西。各台要做的只有：`nodedata serve --listen 0.0.0.0`，
@@ -198,7 +212,7 @@ nodedata-fleet -hosts host.list -listen 0.0.0.0        # 默认端口 19990
   （连接被拒绝多半是对方只监听了 127.0.0.1）。
 - `/health.txt` 一行文本给现有监控：`ok hosts=100 ok=93 dev=4 bad=1 lost=2 last_round=3s`，
   拉取停了是 `crit`，清单有错是 `warn`。
-- iPad：Safari 打开后"添加到主屏幕"（全屏、无地址栏），设置里自动锁定设为"永不"，
+- iPad：Safari 打开上面的地址后"添加到主屏幕"（全屏、无地址栏），设置里自动锁定设为"永不"，
   再开"引导式访问"锁在这个页面上。页面不从外网加载任何东西，机房 iPad 上不了外网也能用。
 
 ## 监听与访问控制

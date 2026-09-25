@@ -1,5 +1,11 @@
 # nodedata Changelog
 
+## [v5.22.1] — 巡视台默认端口改为 8888；README 写明启动参数
+
+- `nodedata-fleet` 默认端口 19990 → 8888（`-port` 可改）。巡视台所在机器也跑 nodedata 时两者都默认 8888，
+  撞端口时启动直接报"端口已被占用"并提示用 `-port` 换一个，不再只打一行底层错误。
+- README 加启动参数表和 iPad 打开的地址。
+
 ## [v5.22.0] — 巡视台 nodedata-fleet：百台轮播大屏，一个二进制加一份 host.list
 
 ### 新二进制 nodedata-fleet
