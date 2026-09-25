@@ -47,6 +47,10 @@ type Proc struct {
 	ThrottledRatio float64
 	ThrottledPerS  float64
 	CGroup         string
+	// 父进程与启动时刻：报告里的"谁干的"和"最近变化"要用
+	PPID    int
+	Parent  string
+	StartTS int64
 }
 
 // Culprit 是一条结论的责任方。

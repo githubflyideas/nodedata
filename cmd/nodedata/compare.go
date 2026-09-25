@@ -43,6 +43,9 @@ type cmpMover struct {
 	Now    float64  `json:"now"`
 	Past   *float64 `json:"past"`
 	Col    string   `json:"col"` // 相对哪一列
+	// PID/Parent 只在 USE 行里填（从进程快照按名字对上最忙的那个）。对比表不填。
+	PID    int    `json:"pid,omitempty"`
+	Parent string `json:"parent,omitempty"`
 }
 
 type cmpGroup struct {

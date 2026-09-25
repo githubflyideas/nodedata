@@ -28,6 +28,11 @@ type Diagnoser struct {
 	disks func() collector.DiskInfo
 	// cores 是本机核数，给"负载"附上"本机 N 核"。
 	cores int
+	// 报告 v2 的背景来源（v5.21），缺哪个就少哪一段
+	svcLog       *ServiceLog
+	kernel       func() ([]string, error) // 值得写进报告的内核消息
+	virt         func() string
+	procRootPath string
 }
 
 func NewDiagnoser(dataDir string, s *Series, b *HeatmapBuilder) *Diagnoser {
@@ -116,7 +121,8 @@ func procsFromCollector(col *collector.Collector, svc *ServiceLog) func() []diag
 				ReadBps: p.ReadBps, WriteBps: p.WriteBps, MajFlt: p.MajFlt, RSS: p.RSS,
 				RSSGrowth: p.RSSGrowth, GrowthSpan: p.GrowthSpan, Self: p.Self,
 				ThrottledFrac: p.ThrottledFrac, ThrottledRatio: p.ThrottledRatio,
-				ThrottledPerS: p.ThrottledPerS, CGroup: p.CGroup}
+				ThrottledPerS: p.ThrottledPerS, CGroup: p.CGroup,
+				PPID: p.PPID, Parent: p.Parent, StartTS: p.StartTS}
 			if svc != nil {
 				name, ports := svc.ServiceOf(p.PID)
 				if name == "" {

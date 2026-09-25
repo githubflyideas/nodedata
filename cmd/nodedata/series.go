@@ -612,3 +612,49 @@ func (s *Series) appendCoarseSamples(id string, dst []deviation.Sample) []deviat
 	}
 	return dst
 }
+
+// oldest 返回长期层里最早的一个点的时刻（"nodedata 攒了多久历史"）。
+func (s *Series) oldest() (time.Time, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var min int64
+	for id := range s.coarse {
+		if cb := s.coarseOf(id); len(cb) > 0 && (min == 0 || cb[0].T < min) {
+			min = cb[0].T
+		}
+	}
+	if min == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(min, 0), true
+}
+
+// bucketW 是长期层一个桶：抽样值和这个桶里的最坏值（没有峰值时两者相同）。
+type bucketW struct {
+	t             int64
+	sample, worst float64
+}
+
+// worstBuckets 取 [from, to] 内长期层的每个桶，附上该桶的最坏值。
+func (s *Series) worstBuckets(id string, from, to time.Time) []bucketW {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cb := s.coarseOf(id)
+	fu, tu := from.Unix(), to.Unix()
+	lo := sort.Search(len(cb), func(i int) bool { return cb[i].T >= fu })
+	pk := s.peaks[id]
+	dir := metrics.Lookup(id).Direction()
+	var out []bucketW
+	j := sort.Search(len(pk), func(i int) bool { return pk[i].T >= fu })
+	for i := lo; i < len(cb) && cb[i].T <= tu; i++ {
+		b := bucketW{t: cb[i].T, sample: cb[i].V, worst: cb[i].V}
+		for j < len(pk) && pk[j].T < cb[i].T {
+			j++
+		}
+		if j < len(pk) && pk[j].T == cb[i].T && (pk[j].P-b.worst)*dir > 0 {
+			b.worst = pk[j].P
+		}
+		out = append(out, b)
+	}
+	return out
+}

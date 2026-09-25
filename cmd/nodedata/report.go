@@ -35,41 +35,128 @@ import (
 // 而模型会把列出来的东西当成已经成立的事实。
 const reportMaxClues = 3
 
-// textReport 生成简报。所有入参都允许为零值，缺什么就少哪一段。
+// textReport 生成简报（只有资源行和线索，给测试和旧调用方用）。
 func textReport(host string, rows []UseRow, chain *diagnosis.Chain, now time.Time) string {
+	return renderReport(reportData{Host: host, At: now, Rows: rows, Chain: chain})
+}
+
+// renderReport 按固定顺序写：身份 → 背景 → 先后 → 最近变化 → 各资源 → 线索 → 看不到。
+// 缺哪个来源就少哪一段，不写"未知"占位——占位也是 token。
+func renderReport(rd reportData) string {
 	var b strings.Builder
+	w := func(format string, a ...interface{}) { fmt.Fprintf(&b, format, a...) }
 
 	// 头：模型没有上下文，主机名和时刻必须在第一行，否则它无从判断
 	// 这是哪台机器、数据有多新。
-	worst := worstUse(rows)
-	fmt.Fprintf(&b, "NODEDATA host=%s at=%s state=%s\n",
-		nonEmpty(host, "unknown"), now.Format(time.RFC3339), useState(worst))
-	b.WriteString("基线=最近 24h 同指标中位数；z=偏离档位数，|z|≥3 才列出\n\n")
+	w("NODEDATA host=%s at=%s state=%s\n", nonEmpty(rd.Host, "unknown"), rd.At.Format(time.RFC3339), useState(worstUse(rd.Rows)))
+	if m := rd.Machine; m != nil {
+		parts := []string{strconv.Itoa(m.Cores) + "核"}
+		if m.MemTotal > 0 {
+			parts = append(parts, siBytes(float64(m.MemTotal), "")+"内存")
+		}
+		if len(m.Disks) > 0 {
+			parts = append(parts, "盘 "+strings.Join(m.Disks, " "))
+		}
+		if m.Kernel != "" {
+			parts = append(parts, "内核 "+m.Kernel)
+		}
+		if m.Virt != "" {
+			parts = append(parts, m.Virt)
+		} else {
+			parts = append(parts, "物理机")
+		}
+		if m.Uptime > 0 {
+			parts = append(parts, "开机 "+humanDur(m.Uptime))
+		}
+		w("机器 %s\n", strings.Join(parts, " · "))
+	}
+	if l := rd.Learn; l != nil && l.Span > 0 {
+		line := "nodedata 已攒 " + humanDur(l.Span) + " 历史"
+		switch {
+		case l.Next == "":
+			line += "：九个时间尺度都能比"
+		case len(l.Usable) > 0:
+			line += "：最长能跟" + l.Usable[len(l.Usable)-1] + "前比"
+			if l.NextWait > 0 {
+				line += "，跟" + l.Next + "前比还要 " + humanDur(l.NextWait)
+			}
+		}
+		w("%s\n", line)
+	}
+	w("口径 平时=过去24h同指标中位数(不含最近10分钟)；z=超出平时波动的倍数，|z|≥3才列\n")
+
+	// 先后：只摆顺序，不说谁导致谁。读者自己会推。
+	if tl := timelineLines(rd); len(tl) > 0 {
+		w("\n先后（本次从 %s 开始；10秒内的算同时）\n", rd.Timeline[0].At.Format("15:04:05"))
+		for _, l := range tl {
+			w("  %s\n", l)
+		}
+	}
+
+	// 最近变化：写"没有"跟写"有"一样重要——它把发版、重启、配置变更排除掉了。
+	if cl := changeLines(rd); len(cl) > 0 {
+		w("\n最近变化（72小时）\n")
+		for _, l := range cl {
+			w("  %s\n", l)
+		}
+	}
 
 	// 严重的排前面。被截断时先丢掉的应该是"正常"那几行。
-	ord := make([]UseRow, len(rows))
-	copy(ord, rows)
+	ord := make([]UseRow, len(rd.Rows))
+	copy(ord, rd.Rows)
 	sort.SliceStable(ord, func(i, j int) bool { return ord[i].Level > ord[j].Level })
-
+	b.WriteString("\n")
 	for _, r := range ord {
-		fmt.Fprintf(&b, "%s %s\n", r.Resource, r.State)
-		for _, c := range r.Checks {
-			fmt.Fprintf(&b, "  [%s] %s %s\n", c.ID, c.Name, c.Message)
-		}
+		var facts, notes []string
 		for _, f := range r.Facts {
-			b.WriteString("  " + factLine(f) + "\n")
+			facts = append(facts, factLine(f))
+			if f.Note != "" {
+				notes = append(notes, f.Note)
+			}
+		}
+		line := r.Resource + " " + r.State
+		if len(facts) > 0 {
+			line += "  " + strings.Join(facts, " · ")
+		}
+		var checked []string
+		if len(r.Checked) > 0 {
+			checked = append(checked, "已查 "+strings.Join(r.Checked, "、"))
+		}
+		if r.L0Total > 0 {
+			checked = append(checked, fmt.Sprintf("硬阈值 %d/%d 通过", r.L0Pass, r.L0Total))
+		}
+		if len(checked) > 0 {
+			line += " · " + strings.Join(checked, "；")
+		}
+		b.WriteString(line + "\n")
+		for _, n := range notes {
+			w("  注  %s\n", n)
+		}
+		for _, c := range r.Checks {
+			w("  [%s] %s %s\n", c.ID, c.Name, c.Message)
 		}
 		if len(r.Movers) > 0 {
-			b.WriteString("  谁干的: " + moversLine(r.Movers) + "\n")
+			w("  谁干的  %s\n", moversLine(r.Movers))
+		}
+		for i, c := range r.Commands {
+			lead := "        "
+			if i == 0 {
+				lead = "  下一步"
+			}
+			why := c.Cost
+			if c.Why != "" {
+				why += "，" + c.Why
+			}
+			w("%s  %s    # %s\n", lead, c.Cmd, why)
 		}
 	}
 
 	// 线索单独成段并标"测试中"：放进上面的资源行里，模型会当成判定。
-	if chain != nil && len(chain.Items) > 0 {
+	if rd.Chain != nil && len(rd.Chain.Items) > 0 {
 		var clues []string
-		for _, it := range chain.Items {
+		for _, it := range rd.Chain.Items {
 			if it.Class == "" {
-				continue // 只有归因产生的条目算线索，L0 已经在上面了
+				continue // 只有归因产生的条目算线索，硬阈值已经在上面了
 			}
 			clues = append(clues, it.Title)
 			if len(clues) >= reportMaxClues {
@@ -86,10 +173,13 @@ func textReport(host string, rows []UseRow, chain *diagnosis.Chain, now time.Tim
 
 	// 最后一段，也是最重要的一段：没有它，"网络 正常"会被读成"网络查过了"。
 	var blind []string
-	for _, r := range rows {
+	for _, r := range rd.Rows {
 		for _, s := range r.Blind {
 			blind = append(blind, r.Resource+" "+s)
 		}
+	}
+	if rd.KernelErr != "" && rd.HaveChanges {
+		blind = append(blind, "内核日志读不到（"+rd.KernelErr+"）：OOM、IO 错误这类事件无从确认")
 	}
 	if len(blind) > 0 {
 		b.WriteString("\n看不到(以下方面本报告没有依据，不要据此下结论):\n")
@@ -98,6 +188,18 @@ func textReport(host string, rows []UseRow, chain *diagnosis.Chain, now time.Tim
 		}
 	}
 	return b.String()
+}
+
+// humanDur：5.2天 / 13小时 / 40分钟。
+func humanDur(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return trimNum(d.Hours()/24, 1) + "天"
+	case d >= time.Hour:
+		return trimNum(d.Hours(), 1) + "小时"
+	default:
+		return trimNum(d.Minutes(), 0) + "分钟"
+	}
 }
 
 // factLine 把一条观测写成一行：`写等待 41ms (平时 2ms, z=7.2)`。
@@ -113,9 +215,6 @@ func factLine(f UseFact) string {
 	if len(extra) > 0 {
 		s += " (" + strings.Join(extra, ", ") + ")"
 	}
-	if f.Note != "" {
-		s += " —— " + f.Note
-	}
 	return s
 }
 
@@ -123,7 +222,14 @@ func factLine(f UseFact) string {
 func moversLine(ms []cmpMover) string {
 	parts := make([]string, 0, len(ms))
 	for _, m := range ms {
-		s := m.Name + " " + fmtUnit(m.Now, m.Unit)
+		who := m.Name
+		switch {
+		case m.PID > 0 && m.Parent != "":
+			who += "(" + strconv.Itoa(m.PID) + ",父进程" + m.Parent + ")"
+		case m.PID > 0:
+			who += "(" + strconv.Itoa(m.PID) + ")"
+		}
+		s := who + " " + fmtUnit(m.Now, m.Unit)
 		if m.Past != nil {
 			s += " (" + colName(m.Col) + "前 " + fmtUnit(*m.Past, m.Unit) + ")"
 		}
@@ -223,4 +329,63 @@ func colName(c string) string {
 		}
 	}
 	return c
+}
+
+// timelineLines 是"先后"一段的每一行（报告和页面共用同一套写法）。
+func timelineLines(rd reportData) []string {
+	var out []string
+	for _, e := range rd.Timeline {
+		mark := ""
+		if e.First {
+			mark = "   ← 最先越线"
+		}
+		out = append(out, fmt.Sprintf("%s  %s %s → %s%s", e.At.Format("15:04:05"), e.What, e.From, e.To, mark))
+	}
+	return out
+}
+
+// changeLines 是"最近变化"一段的每一行。
+func changeLines(rd reportData) []string {
+	if !rd.HaveChanges {
+		return nil
+	}
+	var out []string
+	if len(rd.Services) == 0 {
+		out = append(out, fmt.Sprintf("服务：没有出现、消失或重启（%d 个服务在跑）", rd.SvcCount))
+	}
+	for _, c := range rd.Services {
+		out = append(out, c.At.Format("01-02 15:04")+"  "+c.Text)
+	}
+	if len(rd.NewProcs) == 0 {
+		out = append(out, "进程：没有新进程进入 CPU/读写/内存前列")
+	}
+	for _, c := range rd.NewProcs {
+		out = append(out, c.At.Format("01-02 15:04")+"  "+c.Text)
+	}
+	switch {
+	case rd.KernelErr != "":
+		// 读不到放进"看不到"那一段
+	case len(rd.Kernel) == 0:
+		out = append(out, "内核日志：没有 OOM、IO 错误、网卡状态变化、进程卡死")
+	default:
+		for _, c := range rd.Kernel {
+			out = append(out, c.At.Format("01-02 15:04")+"  内核："+c.Text)
+		}
+	}
+	if len(rd.Episodes) > 0 {
+		out = append(out, "过去的事（按每5分钟桶的最坏值）")
+		for _, c := range rd.Episodes {
+			out = append(out, "  "+c.At.Format("01-02 15:04")+"–"+c.End.Format("15:04")+"  "+c.Text)
+		}
+	}
+	return out
+}
+
+// ContextJSON 是页面上"先后 / 最近变化"两块的数据：直接给写好的行，页面不再重新拼。
+type ContextJSON struct {
+	TimelineFrom int64    `json:"timeline_from,omitempty"`
+	Timeline     []string `json:"timeline"`
+	Changes      []string `json:"changes"`
+	Machine      string   `json:"machine,omitempty"`
+	Learn        string   `json:"learn,omitempty"`
 }

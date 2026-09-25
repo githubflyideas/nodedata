@@ -232,6 +232,17 @@ svg line.pk{stroke:var(--bad);stroke-width:1.6;opacity:.75;stroke-linecap:round}
 .use-f .who{color:var(--cool)}
 .use-f i{font-style:normal;color:#98a1ad}
 .use-f i.note{color:var(--warn)}
+.use-ck{font-size:11.5px;color:#98a1ad}
+.use-cmds{margin-top:4px;font-size:11.5px}
+.use-cmds .lbl{color:var(--dim);margin-right:6px}
+.use-cmds div{margin:2px 0}
+.use-cmds .cost{color:var(--dim);margin-left:4px}
+.use-cmds .cost.heavy{color:var(--bad)}
+.use-ctx{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.use-ctx h4{margin:0 0 4px;font-size:12px;color:var(--dim);font-weight:600}
+.use-ctx pre{margin:0;font-size:11.5px;line-height:1.6;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink)}
+.use-bg{font-size:11.5px;color:var(--dim);margin-top:8px}
+@media (max-width:900px){.use-ctx{grid-template-columns:1fr}}
 .use-blind{font-size:11.5px;color:var(--dim);margin-top:9px;padding-top:8px;
   border-top:1px dotted var(--line);line-height:1.7}
 .use-blind b{color:var(--warn);font-weight:600}
@@ -261,6 +272,11 @@ footer{color:var(--dim);font-size:11.5px;text-align:center;padding:6px 0 14px}
     判定只来自下面的硬阈值检查与自身基线，这里不另设门槛，也不下因果结论。
     <a href="/api/report" target="_blank">取文本简报</a></div>
   <div class="use" id="usebody"><div class="empty">加载中…</div></div>
+  <div class="use-bg" id="usebg"></div>
+  <div class="use-ctx" id="usectx" hidden>
+    <div id="usetl" hidden><h4 id="usetlh">先后</h4><pre id="usetlp"></pre></div>
+    <div id="usech" hidden><h4>最近变化（72 小时）</h4><pre id="usechp"></pre></div>
+  </div>
   <div class="use-blind" id="useblind" hidden></div>
 </section>
 
@@ -1351,8 +1367,17 @@ async function clearBaseline(){
 // 后者是推理，错了比不给更糟。
 function useCls(lv){ return lv>=2?"bad":lv===1?"warn":lv<0?"idle":"ok"; }
 
+// 每个数都能说出自己是怎么来的：悬停看"平时"用了多少点、z 是跟多久之前比的
+function factWhy(f){
+  var w=[];
+  if(f.base!=null) w.push("平时 = 过去 24 小时这个指标的中位数（不含最近 10 分钟，共 "+f.base_n+" 个点）");
+  else w.push("历史不足 1 小时，还说不出平时是多少");
+  if(f.z_lag) w.push("z = 和"+f.z_lag+"前比，这个变化是平时波动的几倍");
+  if(f.id) w.push("指标 "+f.id);
+  return w.join("\n");
+}
 function useFactHTML(f){
-  var s='<span class="v">'+esc(f.label)+' '+esc(fmt(f.value,f.unit))+'</span>';
+  var s='<span class="v" title="'+esc(factWhy(f))+'">'+esc(f.label)+' '+esc(fmt(f.value,f.unit))+'</span>';
   var ex=[];
   if(f.base!=null) ex.push("平时 "+esc(fmt(f.base,f.unit)));
   if(f.z!=null&&Math.abs(f.z)>=3) ex.push("z="+f.z.toFixed(1));
@@ -1373,10 +1398,24 @@ function renderUse(rows){
     var bits=(r.facts||[]).map(useFactHTML);
     if(r.movers&&r.movers.length){
       bits.push('<span class="who">谁干的：'+r.movers.map(function(m){
-        return esc(m.name)+" "+esc(fmt(m.now,m.unit));
+        var who=esc(m.name);
+        if(m.pid) who+='<span class="pids">'+m.pid+(m.parent?'，父进程 '+esc(m.parent):'')+'</span>';
+        return who+" "+esc(fmt(m.now,m.unit));
       }).join("，")+'</span>');
     }
     if(bits.length) lines.push('<div>'+bits.join(" · ")+'</div>');
+    // 查过没事的：不写出来，看的人不知道换出、内存压力查没查过
+    var ck=[];
+    if(r.checked&&r.checked.length) ck.push("已查 "+r.checked.join("、"));
+    if(r.l0_total) ck.push("硬阈值 "+r.l0_pass+"/"+r.l0_total+" 通过");
+    if(ck.length) lines.push('<div class="use-ck">'+esc(ck.join("；"))+'</div>');
+    // 下一步：只给诊断命令，标明开销；点一下复制。nodedata 自己永远不执行它们
+    if(r.commands&&r.commands.length){
+      lines.push('<div class="use-cmds"><span class="lbl">下一步</span>'+r.commands.map(function(c){
+        return '<div><button class="cmd" data-cmd="'+esc(c.cmd)+'" title="点击复制">'+esc(c.cmd)+'</button>'+
+          '<span class="cost'+(c.cost==="会拖慢目标进程"?" heavy":"")+'">'+esc(c.cost)+(c.why?"，"+esc(c.why):"")+'</span></div>';
+      }).join("")+'</div>');
+    }
     // 一行也没有时给个占位，否则"正常"那几行会塌成空白，看不出采集是通的
     if(!lines.length) lines.push('<div><i>无越线项</i></div>');
     return '<div class="use-r"><b>'+esc(r.resource)+'</b>'+
@@ -1411,6 +1450,23 @@ async function loadCores(){
   catch(e){ document.getElementById("cores").innerHTML='<div class="err">/api/cores → '+esc(e.message)+'</div>'; }
 }
 
+// 先后与最近变化：跟 /api/report 同一份数据、同一套写法，页面不再重新拼
+async function loadContext(){
+  var d; try{ d=(await getJSON("/api/context")).json; }catch(e){ return; }
+  var bg=[]; if(d.machine) bg.push("机器 "+d.machine); if(d.learn) bg.push(d.learn);
+  document.getElementById("usebg").textContent=bg.join("　·　");
+  var tl=d.timeline||[], ch=d.changes||[];
+  document.getElementById("usetl").hidden=!tl.length;
+  document.getElementById("usech").hidden=!ch.length;
+  document.getElementById("usectx").hidden=!(tl.length||ch.length);
+  if(tl.length){
+    var t=new Date(d.timeline_from*1000);
+    document.getElementById("usetlh").textContent="先后（本次从 "+t.toLocaleTimeString()+" 开始，10 秒内的算同时）";
+    document.getElementById("usetlp").textContent=tl.join("\n");
+  }
+  if(ch.length) document.getElementById("usechp").textContent=ch.join("\n");
+}
+
 async function loadUse(){
   try{ renderUse((await getJSON("/api/use")).json); }
   catch(e){ document.getElementById("usebody").innerHTML=
@@ -1418,7 +1474,7 @@ async function loadUse(){
 }
 
 async function refreshAll(){
-  await Promise.all([loadUse(),loadCores(),loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
+  await Promise.all([loadUse(),loadContext(),loadCores(),loadKeyCharts(),loadCompare(),loadServices(),loadLagStatus(),loadL0(),loadL3(),loadL4(),loadBaseline(),loadIncidents()]);
 }
 getJSON("/api/version").then(function(r){
   document.getElementById("ver").textContent=(r.json&&(r.json.version||r.json))||"";

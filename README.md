@@ -188,7 +188,11 @@ curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' |
 | `/api/diagnosis?z=3` | L4 诊断链 |
 | `/health.txt` | 一行文本，给监控 grep |
 | `/api/services` | 服务清单与历史在否 |
-| `/api/keyseries?win=6h` | 关键指标曲线数据 |
+| `/api/keyseries?win=6h` | 关键指标曲线数据（`w` 为每步最坏值） |
+| `/api/use` | USE 五行：读数、已查项、谁干的、下一步命令 |
+| `/api/report` | 纯文本简报（机器、先后、最近变化、各资源、看不到），可直接贴给大模型 |
+| `/api/context` | 机器底子：核数、内存、盘类型、虚拟化、开机时长 |
+| `/api/cores` | 逐核 CPU（仅当前） |
 | `/api/baseline` | GET / POST / DELETE 人工基线 |
 | `/api/incidents` | GET 留证列表；POST 立即留证 |
 | `/api/incidents/<id>` | 一份证据 |

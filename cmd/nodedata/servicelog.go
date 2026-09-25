@@ -363,3 +363,58 @@ func (l *ServiceLog) ServiceByKey(exe string) (string, []int) {
 	}
 	return "", nil
 }
+
+// svcChange 是报告里的一条服务变化。
+type svcChange struct {
+	svcEvent
+	// DuringDowntime：nodedata 停机期间出现的（重启后第一次见到，而之前从没见过）。
+	DuringDowntime bool
+}
+
+// ChangesSince 返回 since 之后真正的服务变化（按时间升序）。
+//
+// 事件流里每次 nodedata 启动都会把看到的服务记一条"出现"作为基线（时间戳是启动时刻），
+// 这样重启后历史才完整——但那不是变化。实测一台演示机重启 10 次，报告里列了 33 条"出现"，
+// 其实一个服务都没动过。所以：
+//   - 启动基线里、之前就在的服务：重新看见而已，不算；
+//   - 启动基线里、之前从没见过的：算"nodedata 停机期间出现"；
+//   - 有史以来第一次启动的基线：什么都不算（那是"开始观察"，不是"出现"）；
+//   - 运行期间的出现、消失、重启：照常算。
+func (l *ServiceLog) ChangesSince(since time.Time) []svcChange {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	u := since.Unix()
+	present := map[string]bool{}
+	ups := 0
+	lastUp := int64(-1)
+	var out []svcChange
+	for _, e := range l.events {
+		switch e.Kind {
+		case evUp:
+			ups++
+			lastUp = e.TS
+			continue
+		case evAppear:
+			wasThere := present[e.ID]
+			present[e.ID] = true
+			if e.TS == lastUp { // 启动基线
+				if ups <= 1 || wasThere {
+					continue
+				}
+				if e.TS >= u {
+					out = append(out, svcChange{svcEvent: e, DuringDowntime: true})
+				}
+				continue
+			}
+		case evVanish:
+			present[e.ID] = false
+		case evRestart:
+		default:
+			continue
+		}
+		if e.TS >= u {
+			out = append(out, svcChange{svcEvent: e})
+		}
+	}
+	return out
+}

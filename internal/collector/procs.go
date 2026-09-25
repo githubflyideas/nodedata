@@ -74,6 +74,8 @@ type ProcTop struct {
 	// PPID / Parent：看到 "Isolated Web Co" 这种名字时，第一个问题是"它是谁的子进程"
 	PPID   int    `json:"ppid,omitempty"`
 	Parent string `json:"parent,omitempty"`
+	// StartTS：进程启动时刻（unix 秒）。"异常前一分钟刚启动了一个新进程"是最强的线索之一。
+	StartTS int64 `json:"start_ts,omitempty"`
 
 	CGroup         string  `json:"cgroup,omitempty"`
 	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"` // 每秒被限流多少次
@@ -204,6 +206,7 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 	defer c.mu.Unlock()
 	p := &c.procs
 	p.init()
+	bootTS := c.bootTime() // 启动时刻换算用；有缓存，不是每轮都读
 
 	d, err := os.Open(procRoot)
 	if err != nil {
@@ -289,7 +292,8 @@ func (c *Collector) CollectProcs(procRoot string, now time.Time) ([]Sample, erro
 		byKey[key] += pct
 		byKeyRSS[key] += float64(ps.rss) // 同名多进程（php-fpm、nginx worker）合计
 		t := ProcTop{PID: pid, Comm: ps.comm, Key: key, CPU: pct, RSS: ps.rss,
-			State: string(ps.state), MajFlt: udiff(ps.majflt, prev.majflt) / dt}
+			State: string(ps.state), MajFlt: udiff(ps.majflt, prev.majflt) / dt,
+			StartTS: bootTS + int64(ps.start)/clockTicks}
 		if cur.ioOK && prev.ioOK {
 			t.ReadBps = udiff(cur.rb, prev.rb) / dt
 			t.WriteBps = udiff(cur.wb, prev.wb) / dt

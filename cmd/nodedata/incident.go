@@ -400,8 +400,15 @@ func (r *Recorder) dstate() []dRow {
 // kernelLog 非阻塞读 /dev/kmsg 的整个环形缓冲，保留最后 N 条。
 // 记录格式 "pri,seq,ts_usec,flags;message"，续行以空格开头（结构化字段）跳过。
 func (r *Recorder) kernelLog() ([]string, error) {
+	return r.kernelLogKeep(nil, incidentKmsgLines)
+}
+
+// kernelLogKeep 扫整个环形缓冲，只留 keep 为真的行（nil = 全留），最多留最后 max 条。
+// 报告要的是"最近三天有没有 OOM / IO 错误"：先截最后 100 条再筛，早一点的就漏了。
+func (r *Recorder) kernelLogKeep(keep func(string) bool, max int) ([]string, error) {
 	if fi, err := os.Stat(r.kmsgPath); err == nil && fi.Mode().IsRegular() { // 测试用普通文件
-		return readKmsgFile(r.kmsgPath)
+		all, err := readKmsgFile(r.kmsgPath)
+		return filterTail(all, keep, max), err
 	}
 	// 必须用裸 syscall：os.File 会把可 poll 的字符设备（/dev/kmsg）交给 Go 的 netpoller，
 	// 非阻塞读到 EAGAIN 时不返回，而是挂起等"下一条内核消息"——实测留证 goroutine 卡死 4 分钟，
@@ -413,9 +420,9 @@ func (r *Recorder) kernelLog() ([]string, error) {
 	defer syscall.Close(fd)
 	var ring []string
 	push := func(rec []byte) {
-		if l := formatKmsg(rec); l != "" {
+		if l := formatKmsg(rec); l != "" && (keep == nil || keep(l)) {
 			ring = append(ring, l)
-			if len(ring) > incidentKmsgLines {
+			if len(ring) > max {
 				ring = ring[1:]
 			}
 		}
@@ -438,6 +445,19 @@ func (r *Recorder) kernelLog() ([]string, error) {
 	return ring, nil
 }
 
+func filterTail(all []string, keep func(string) bool, max int) []string {
+	var out []string
+	for _, l := range all {
+		if keep == nil || keep(l) {
+			out = append(out, l)
+		}
+	}
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return out
+}
+
 // readKmsgFile 读普通文件形式的 kmsg 记录（测试用），续行（空格开头）跳过。
 func readKmsgFile(path string) ([]string, error) {
 	b, err := os.ReadFile(path)
@@ -452,9 +472,6 @@ func readKmsgFile(path string) ([]string, error) {
 		if l := formatKmsg([]byte(line)); l != "" {
 			out = append(out, l)
 		}
-	}
-	if len(out) > incidentKmsgLines {
-		out = out[len(out)-incidentKmsgLines:]
 	}
 	return out, nil
 }

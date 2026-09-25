@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/githubflyideas/nodedata/internal/collector"
+	"github.com/githubflyideas/nodedata/internal/deviation"
+	"github.com/githubflyideas/nodedata/internal/diagnosis"
 )
 
 // UseFact 是一条带基线的观测。Base 为 nil 表示历史还不够，说不出"平时多少"。
@@ -39,6 +41,9 @@ type UseFact struct {
 	Z float64 `json:"z,omitempty"`
 	// Note 是读这个数之前必须知道的前提，例如"vda 是虚拟盘，util 满不等于盘满"。
 	Note string `json:"note,omitempty"`
+	// 来源（v5.21）：页面悬停时说清"平时"和 z 是怎么来的。
+	BaseN int    `json:"base_n,omitempty"` // "平时"用了多少个点（过去 24 小时，不含最近 10 分钟）
+	ZLag  string `json:"z_lag,omitempty"`  // |z| 最大的那一档："1小时"= 跟 1 小时前比
 }
 
 // UseCheck 是 L0 里越线的一条判定。它决定 State，UseFact 不决定。
@@ -58,6 +63,13 @@ type UseRow struct {
 	Checks   []UseCheck `json:"checks,omitempty"`
 	Blind    []string   `json:"blind,omitempty"`
 	Movers   []cmpMover `json:"movers,omitempty"`
+	// Checked：看过、没问题、所以没列出来的指标（v5.21）。
+	// "内存 正常"只写一个数时，看的人（和模型）不知道换出、内存压力查没查过。
+	Checked []string `json:"checked,omitempty"`
+	L0Total int      `json:"l0_total,omitempty"` // 这个资源的硬阈值检查项数
+	L0Pass  int      `json:"l0_pass,omitempty"`  // 其中通过的
+	// Commands：下一步该跑的诊断命令。只填 PID，不填进程名（见 nextsteps.go）。
+	Commands []NextCmd `json:"commands,omitempty"`
 }
 
 type useMetric struct {
@@ -212,6 +224,7 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 	// 把 37 项全列出来就又变成一张网格了。
 	checksBy := map[string][]UseCheck{}
 	seen := map[string]bool{}
+	l0Total, l0Pass := map[string]int{}, map[string]int{}
 	for _, cat := range d.loadL0() {
 		for _, c := range cat.Checks {
 			res := l0Resource(c.ID)
@@ -219,6 +232,10 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 				continue
 			}
 			seen[res] = true
+			l0Total[res]++
+			if c.Level == 0 {
+				l0Pass[res]++
+			}
 			if c.Level > 0 {
 				checksBy[res] = append(checksBy[res], UseCheck{
 					ID: c.ID, Name: c.Name, Level: c.Level, Message: c.Message})
@@ -228,14 +245,18 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 
 	// L3 的 z 已经过了低置信档过滤与 minDeltaFor 门槛，直接用，不再加门槛。
 	zBy := map[string]float64{}
+	zLag := map[string]string{}
 	for _, dev := range d.latestDeviationsAt(now) {
-		peak := 0.0
-		for _, z := range dev.Z {
+		peak, at := 0.0, -1
+		for i, z := range dev.Z {
 			if !math.IsNaN(z) && math.Abs(z) > math.Abs(peak) {
-				peak = z
+				peak, at = z, i
 			}
 		}
 		zBy[dev.MetricID] = peak
+		if at >= 0 {
+			zLag[dev.MetricID] = deviation.LagName(at)
+		}
 	}
 
 	var ids []string
@@ -261,6 +282,9 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 			}
 			haveAny = true
 			f.Z = zBy[m.id]
+			if math.Abs(f.Z) >= useZThreshold {
+				f.ZLag = zLag[m.id]
+			}
 			f.Note = d.noteFor(m.id, now)
 			notable := math.Abs(f.Z) >= useZThreshold
 			if notable && level < 1 {
@@ -268,10 +292,13 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 			}
 			if i == 0 || m.always || notable {
 				row.Facts = append(row.Facts, f)
+			} else {
+				row.Checked = append(row.Checked, m.label)
 			}
 		}
 
 		row.Checks = checksBy[res.Name]
+		row.L0Total, row.L0Pass = l0Total[res.Name], l0Pass[res.Name]
 		for _, c := range row.Checks {
 			if c.Level > level {
 				level = c.Level
@@ -284,11 +311,19 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 		row.Level, row.State = level, useState(level)
 
 		// 谁干的：只在这一行有事时才算。一台安静机器上列一串进程名是噪音。
+		var procs []diagnosis.Proc
+		if level > 0 && d.procs != nil {
+			procs = d.procs()
+		}
 		if level > 0 && res.MoverGroup != "" && d.builder != nil {
 			row.Movers = d.builder.movers(res.MoverGroup, now, ids)
 			if len(row.Movers) > 3 {
 				row.Movers = row.Movers[:3]
 			}
+			attachPIDs(row.Movers, procs)
+		}
+		if level > 0 {
+			row.Commands = nextSteps(res.Name, row.Movers, d.busiestNIC(now))
 		}
 		out = append(out, row)
 	}
@@ -305,9 +340,10 @@ func (d *Diagnoser) useFact(m useMetric, now time.Time) (UseFact, bool) {
 	if !ok || now.Sub(p.TS) > 2*time.Minute || math.IsNaN(p.V) {
 		return UseFact{}, false
 	}
+	base, n := d.baselineN(m.id, now)
 	return UseFact{
 		Kind: m.kind, Label: m.label, ID: m.id,
-		Value: p.V, Unit: unitOf(m.id), Base: d.baselineOf(m.id, now),
+		Value: p.V, Unit: unitOf(m.id), Base: base, BaseN: n,
 	}, true
 }
 
@@ -317,8 +353,14 @@ func (d *Diagnoser) useFact(m useMetric, now time.Time) (UseFact, bool) {
 // 一个持续 20 分钟的故障会让"平时"看起来也很糟，于是没人觉得不对。
 // 用中位数不用均值：一次 dd 就能把均值拉到没法看。
 func (d *Diagnoser) baselineOf(id string, now time.Time) *float64 {
+	b, _ := d.baselineN(id, now)
+	return b
+}
+
+// baselineN 同 baselineOf，另外返回用了多少个点（页面悬停时说明"平时"的来历）。
+func (d *Diagnoser) baselineN(id string, now time.Time) (*float64, int) {
 	if d.series == nil {
-		return nil
+		return nil, 0
 	}
 	pts := d.series.CoarseRange(id, now.Add(-24*time.Hour), now.Add(-10*time.Minute))
 	v := make([]float64, 0, len(pts))
@@ -330,11 +372,11 @@ func (d *Diagnoser) baselineOf(id string, now time.Time) *float64 {
 	// 少于 12 个点（长期层 5 分钟一点 = 1 小时）说不出"平时"，
 	// 宁可不给也不要拿 3 个点编一个出来。
 	if len(v) < 12 {
-		return nil
+		return nil, len(v)
 	}
 	sort.Float64s(v)
 	m := v[len(v)/2]
-	return &m
+	return &m, len(v)
 }
 
 // worstUse 返回五行里最严重的等级，供 /health.txt 与页面标题用。

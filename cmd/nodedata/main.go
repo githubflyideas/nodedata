@@ -227,7 +227,12 @@ func runServe() {
 	} else {
 		recorder.sysRoot = *sysRoot
 		recorder.before = beforeSeries
+		// 报告里的"内核日志"：扫整个环形缓冲，只留 OOM、IO 错误、网卡、卡死这类
+		diagnoser.kernel = func() ([]string, error) { return recorder.kernelLogKeep(isKernelNotable, 200) }
 	}
+	diagnoser.svcLog = svcLog
+	diagnoser.virt = col.Virt
+	diagnoser.procRootPath = *procRoot
 
 	// ── L2：静态转储 → data/{1h,6h,24h,7d,14d}.json + health.json
 	dumper := server.NewDumper(webDir, builder.Build, healthFn)
@@ -323,11 +328,31 @@ func runServe() {
 
 	// 给大模型看的纯文本简报。text/plain 是刻意的：一条 curl 就能贴进对话，
 	// 不需要对端先学一套 JSON 结构。
+	// 页面上的"先后 / 最近变化"：跟报告同一份数据、同一套写法
+	mux.HandleFunc("/api/context", func(w http.ResponseWriter, r *http.Request) {
+		rd := diagnoser.gatherReport(hostname, time.Now())
+		out := ContextJSON{Timeline: timelineLines(rd), Changes: changeLines(rd)}
+		if len(rd.Timeline) > 0 {
+			out.TimelineFrom = rd.Timeline[0].At.Unix()
+		}
+		// 机器和学习进度也按报告的写法给一行
+		head := strings.SplitN(renderReport(reportData{At: rd.At, Machine: rd.Machine, Learn: rd.Learn}), "\n", 4)
+		for _, l := range head {
+			switch {
+			case strings.HasPrefix(l, "机器 "):
+				out.Machine = strings.TrimPrefix(l, "机器 ")
+			case strings.HasPrefix(l, "nodedata 已攒"):
+				out.Learn = l
+			}
+		}
+		writeJSON(w, out)
+	})
+
 	mux.HandleFunc("/api/report", func(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		fmt.Fprint(w, textReport(hostname, diagnoser.Use(now), diagnoser.Run(3.0), now))
+		fmt.Fprint(w, renderReport(diagnoser.gatherReport(hostname, now)))
 	})
 
 	// 一条 curl 回答"L1–L5 为什么没数"：卡在 σ 还是卡在配对

@@ -50,6 +50,8 @@ type ProcTop struct {
 
 	PPID   int    `json:"ppid,omitempty"`
 	Parent string `json:"parent,omitempty"`
+	// StartTS：进程启动时刻（unix 秒）。"异常前一分钟刚启动了一个新进程"是最强的线索之一。
+	StartTS int64 `json:"start_ts,omitempty"`
 
 	CGroup         string  `json:"cgroup,omitempty"`
 	ThrottledPerS  float64 `json:"throttled_per_s,omitempty"`
