@@ -1,6 +1,6 @@
 // nodedata-fleet — 巡视台：把几十上百台 nodedata 的 USE 五行汇到一块屏上轮播。
 //
-//	nodedata-fleet -hosts host.list -listen 0.0.0.0
+//	nodedata-fleet -hosts host.list -listen 0.0.0.0 -port 8888
 //
 // 一个二进制加一份 host.list。没有数据库、不存历史：历史在各台自己那里，
 // 大屏只回答"现在哪台不对、从什么时候开始"。
@@ -11,6 +11,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -32,7 +33,7 @@ func main() {
 	fs := flag.NewFlagSet("nodedata-fleet", flag.ExitOnError)
 	hostsPath := fs.String("hosts", "host.list", "主机清单文件；改了会自动重读，不用重启")
 	listen := fs.String("listen", "127.0.0.1", "监听地址；默认仅本机。给 iPad 看要设成 0.0.0.0，并用防火墙限制来源")
-	port := fs.String("port", "19990", "HTTP 端口")
+	port := fs.String("port", "8888", "HTTP 端口；本机也跑着 nodedata（默认也是 8888）时要换一个")
 	interval := fs.Duration("interval", 15*time.Second, "多久拉一轮")
 	timeout := fs.Duration("timeout", 5*time.Second, "单台拉取超时")
 	lostAfter := fs.Duration("lost-after", 0, "多久没拉到算失联；0 = 3 轮")
@@ -122,6 +123,9 @@ func main() {
 	fmt.Fprintf(os.Stderr, "nodedata-fleet %s：%d 台，每 %s 拉一轮，http://%s/\n", version, len(cur.Hosts), *interval, addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintln(os.Stderr, "nodedata-fleet:", err)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			fmt.Fprintf(os.Stderr, "端口 %s 已被占用：本机是不是也在跑 nodedata（默认同样是 8888）？用 -port 换一个，例如 -port 8890\n", *port)
+		}
 		os.Exit(1)
 	}
 }
@@ -151,9 +155,16 @@ func healthLine(st stateOut, now time.Time) string {
 	ok, lost, bad, dev := st.Counts()
 	status := "ok"
 	var why []string
-	if st.RoundAt == 0 || now.Unix()-st.RoundAt > int64(3*st.Interval) {
+	// 刚启动、第一轮还没拉完不算停了（清单里有连不上的机器时，第一轮要等到超时）
+	lastProgress := st.RoundAt
+	if lastProgress == 0 {
+		lastProgress = st.Started
+	}
+	if now.Unix()-lastProgress > int64(3*st.Interval) {
 		status = "crit"
 		why = append(why, "拉取停了")
+	} else if st.RoundAt == 0 {
+		status = "starting"
 	}
 	if len(st.Inventory.Errors) > 0 {
 		if status == "ok" {

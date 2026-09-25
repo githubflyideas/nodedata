@@ -277,6 +277,15 @@ func TestHealthLine(t *testing.T) {
 	if l := healthLine(st, now); !strings.HasPrefix(l, "crit") || !strings.Contains(l, "拉取停了") {
 		t.Errorf("超过 3 轮没拉完应 crit：%s", l)
 	}
+	// 刚启动、第一轮还没拉完：不是 crit
+	st2 := stateOut{Interval: 15, Started: 998}
+	if l := healthLine(st2, now); !strings.HasPrefix(l, "starting") {
+		t.Errorf("启动 2 秒、第一轮未完成应是 starting：%s", l)
+	}
+	st2.Started = 900
+	if l := healthLine(st2, now); !strings.HasPrefix(l, "crit") {
+		t.Errorf("启动 100 秒还没拉完一轮应 crit：%s", l)
+	}
 	st.RoundAt = 990
 	st.Inventory.Errors = []string{"x"}
 	if l := healthLine(st, now); !strings.HasPrefix(l, "warn") {
