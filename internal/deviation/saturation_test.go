@@ -200,3 +200,27 @@ func TestDurationNameUneven(t *testing.T) {
 		}
 	}
 }
+
+// 缓冲复用不能串味：同一份 Scratch 先算一个大指标、再算一个小指标，
+// 结果必须跟各自用新缓冲算的逐位相同（上一个指标的 Δ 不能残留在桶里）。
+func TestScratchReuseMatchesFresh(t *testing.T) {
+	mk := func(n int, seed float64) []Sample {
+		t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+		out := make([]Sample, n)
+		for i := range out {
+			out[i] = Sample{TS: t0.Add(time.Duration(i) * 10 * time.Second),
+				Value: seed + math.Sin(float64(i)*0.37)*seed*0.1 + float64(i%13)}
+		}
+		return out
+	}
+	big, small := mk(8640, 1000), mk(900, 5)
+	var sc Scratch
+	for _, lag := range LagSeconds[:4] {
+		ComputeSigmaLagInto(lag, big, time.Time{}, &sc) // 先把缓冲撑大、填满
+		got := ComputeSigmaLagInto(lag, small, time.Time{}, &sc)
+		want := ComputeSigmaLagExcluding(lag, small, time.Time{})
+		if got != want {
+			t.Fatalf("lag %ds：复用缓冲的结果与新缓冲不同", lag)
+		}
+	}
+}

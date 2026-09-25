@@ -40,7 +40,18 @@ type netPrev struct {
 }
 
 // 每个设备的序列 ID 只在首次见到时拼一次。
-type diskIDs struct{ riops, wiops, rbytes, wbytes, awaitR, awaitW, util, inflight string }
+type diskIDs struct {
+	riops, wiops, rbytes, wbytes, awaitR, awaitW, util, inflight string
+	kind                                                         string // DiskHDD / DiskSSD / ...，发现时读一次
+}
+
+// DiskInfo 是给页面和报告用的盘信息快照。
+type DiskInfo struct {
+	// Busiest 是本轮 util 最高的叶子盘（整机 disk.util 就是它的值），BusiestKind 是它的类型。
+	Busiest     string            `json:"busiest"`
+	BusiestKind string            `json:"busiest_kind"`
+	Kinds       map[string]string `json:"kinds"` // 盘名 → 类型
+}
 type netIDs struct{ rx, tx, rxDrop, txDrop, rxErrs, txErrs string }
 
 // IsWholeDisk 判断 /proc/diskstats 里的名字是否是整盘（而非分区或伪设备）。
@@ -105,6 +116,7 @@ func (c *Collector) parseDiskstats(data []byte, now time.Time, dt float64, hasPr
 	var (
 		aRio, aWio, aRt, aWt, aRsect, aWsect, aMerged, aInflight, maxUtil float64
 		nLeaf, nDisks                                                     int
+		busiest                                                           string
 	)
 	for len(data) > 0 {
 		var line []byte
@@ -177,8 +189,9 @@ func (c *Collector) parseDiskstats(data []byte, now time.Time, dt float64, hasPr
 			aRsect += udiff(cur.rsect, prev.rsect)
 			aWsect += udiff(cur.wsect, prev.wsect)
 			aMerged += udiff(cur.rmerge, prev.rmerge) + udiff(cur.wmerge, prev.wmerge)
-			if util > maxUtil {
+			if util > maxUtil || busiest == "" {
 				maxUtil = util
+				busiest = name
 			}
 		}
 	}
@@ -193,6 +206,7 @@ func (c *Collector) parseDiskstats(data []byte, now time.Time, dt float64, hasPr
 		Sample{MetricID: "disk.merged", TS: now, Value: aMerged / dt},
 		Sample{MetricID: "disk.inflight", TS: now, Value: aInflight},
 		Sample{MetricID: "disk.util", TS: now, Value: maxUtil}) // 最忙那块盘
+	c.noteBusiest(busiest)
 	if aRio > 0 {
 		*out = append(*out, Sample{MetricID: "disk.await_r", TS: now, Value: aRt / aRio})
 	}
@@ -210,10 +224,36 @@ func (c *Collector) diskID(name string) *diskIDs {
 		rbytes: "disk.rbytes@" + name, wbytes: "disk.wbytes@" + name,
 		awaitR: "disk.await_r@" + name, awaitW: "disk.await_w@" + name,
 		util: "disk.util@" + name, inflight: "disk.inflight@" + name,
+		kind: DiskKind(c.cfg.SysRoot, name, c.virt), // 新盘才走到这里：每块盘只读一次 sysfs
 	}
 	c.diskIDMap[name] = ids
+	c.disksChanged = true
 	return ids
 }
+
+// noteBusiest 发布盘信息快照。只在"最忙的盘换了"或"发现了新盘"时才重建，
+// 其余轮次零分配。
+func (c *Collector) noteBusiest(name string) {
+	if name == c.busiestDisk && !c.disksChanged {
+		return
+	}
+	c.busiestDisk, c.disksChanged = name, false
+	di := DiskInfo{Busiest: name, Kinds: make(map[string]string, len(c.diskIDMap))}
+	for n, ids := range c.diskIDMap {
+		di.Kinds[n] = ids.kind
+	}
+	di.BusiestKind = di.Kinds[name]
+	c.diskSnap.Store(di)
+}
+
+// Disks 返回最近一次的盘信息。
+func (c *Collector) Disks() DiskInfo {
+	v, _ := c.diskSnap.Load().(DiskInfo)
+	return v
+}
+
+// Virt 返回虚拟化类型，物理机为 ""。启动时测一次。
+func (c *Collector) Virt() string { return c.virt }
 
 func (c *Collector) netID(name string) *netIDs {
 	if ids, ok := c.netIDMap[name]; ok {

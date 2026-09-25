@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -207,6 +208,14 @@ func runServe() {
 	diagnoser := NewDiagnoser(dataDir, series, builder)
 	diagnoser.procs = procsFromCollector(col, svcLog)
 	diagnoser.l0Fn = l0.GetLatest
+	diagnoser.disks = col.Disks
+	// GC 触发点从默认的 2 倍降到 1.5 倍（v5.20）：两层数据是长寿的、复用的，
+	// 每轮分配很少，GC 多跑几次几乎不花 CPU；换来常驻内存上限 ≈ 1.5 × 实际数据。
+	// 用户显式设了 GOGC 就听用户的。
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(50)
+	}
+	diagnoser.cores = runtime.NumCPU()
 	go sigmaLoop(builder, diagnoser, stop)
 
 	// ── 事故留证：后台每 15 秒跑一次 L4，出现带归因的结论就把现场存下来（不依赖页面打开）
@@ -226,7 +235,7 @@ func runServe() {
 
 	// 首轮：先采一次、算一次、落一次盘，避免页面开局吃到 404/空文件
 	if samples, err := col.CollectGlobal(*procRoot, time.Now()); err == nil {
-		persist(hist, series.Add(samples), time.Now())
+		persist(hist, series.Add(samples), series.TakePeaks(), time.Now())
 	} else {
 		fmt.Fprintf(os.Stderr, "warn: initial collect: %v\n", err)
 	}
@@ -461,7 +470,8 @@ func collectLoop(col *collector.Collector, s *Series, hist *History, procRoot st
 			if samples, err := col.CollectProcs(procRoot, now); err == nil {
 				batch = append(batch, samples...)
 			}
-			persist(hist, s.Add(batch), now)
+			kept := s.Add(batch)
+			persist(hist, kept, s.TakePeaks(), now)
 		}
 	}
 }
@@ -472,23 +482,29 @@ func collectLoop(col *collector.Collector, s *Series, hist *History, procRoot st
 // 不能来一批写一批：新出现的指标（进程名一直在变）会立刻开一个长期层点并单独落一行，
 // 实测本该 5 分钟一行的文件，每个周期写了 4~6 行、每行几十到一百个指标。
 // 合并之后写入次数降到 1/5，而且一行就是一个完整的时刻切面，读回时也更整齐。
-func persist(hist *History, kept []collector.Sample, now time.Time) {
+func persist(hist *History, kept []collector.Sample, peaks []Peak, now time.Time) {
 	if hist == nil {
 		return
 	}
 	histMu.Lock()
 	histPend = append(histPend, kept...)
+	histPeaks = append(histPeaks, peaks...)
 	// 对齐到长期层周期边界，避免"攒够时长才写"导致最后一批一直不落盘
 	if now.Unix()/int64(coarseStep/time.Second) == histSlot || len(histPend) == 0 {
 		histMu.Unlock()
 		return
 	}
 	histSlot = now.Unix() / int64(coarseStep/time.Second)
-	batch := histPend
-	histPend = nil
+	batch, pk := histPend, histPeaks
+	histPend, histPeaks = nil, nil
 	histMu.Unlock()
 
-	if err := hist.Append(batch); err != nil && histWarned.CompareAndSwap(false, true) {
+	err := hist.Append(batch)
+	// 峰值行跟在同一轮之后写：它们属于刚结束的那个桶
+	if e := hist.AppendPeaks(pk, now); err == nil {
+		err = e
+	}
+	if err != nil && histWarned.CompareAndSwap(false, true) {
 		fmt.Fprintf(os.Stderr, "warn: 历史落盘失败（后续不再提示）: %v\n", err)
 	}
 }
@@ -499,17 +515,19 @@ func flushHistory(hist *History) {
 		return
 	}
 	histMu.Lock()
-	batch := histPend
-	histPend = nil
+	batch, pk := histPend, histPeaks
+	histPend, histPeaks = nil, nil
 	histMu.Unlock()
 	if len(batch) > 0 {
 		_ = hist.Append(batch)
 	}
+	_ = hist.AppendPeaks(pk, time.Now())
 }
 
 var (
 	histWarned atomic.Bool
 	histMu     sync.Mutex
+	histPeaks  []Peak
 	histPend   []collector.Sample
 	histSlot   int64
 )

@@ -21,7 +21,10 @@ package main
 import (
 	"math"
 	"sort"
+	"strconv"
 	"time"
+
+	"github.com/githubflyideas/nodedata/internal/collector"
 )
 
 // UseFact 是一条带基线的观测。Base 为 nil 表示历史还不够，说不出"平时多少"。
@@ -34,6 +37,8 @@ type UseFact struct {
 	Base  *float64 `json:"base,omitempty"`
 	// Z 是该指标此刻最大的 |z|（已排除低置信档）。0 表示没有就绪的档位。
 	Z float64 `json:"z,omitempty"`
+	// Note 是读这个数之前必须知道的前提，例如"vda 是虚拟盘，util 满不等于盘满"。
+	Note string `json:"note,omitempty"`
 }
 
 // UseCheck 是 L0 里越线的一条判定。它决定 State，UseFact 不决定。
@@ -109,12 +114,15 @@ var useResources = []struct {
 	{
 		Name: "磁盘", MoverGroup: "磁盘",
 		Metrics: []useMetric{
-			{"U", "最忙盘 util", "disk.util", false},
+			// 主指标是 IO 压力，不是 util（v5.20）：util 统计的是"有请求在处理的时间占比"，
+			// SSD/NVMe 能并行处理请求，显示 100% 时可能才用了一小部分能力——iostat 手册自己写着。
+			// 也不是写等待：整机写等待只在这一轮有写的时候才有值，空闲的盘会被误报成"采不到"。
+			{"S", "IO 压力", "psi.io.some10", false},
+			{"S", "写等待", "disk.await_w", true},
+			{"U", "最忙盘 util", "disk.util", true}, // 两套都显示，附上盘的类型
 			{"U", "根分区可用", "fs.avail", false},
-			{"S", "写等待", "disk.await_w", false},
 			{"S", "读等待", "disk.await_r", false},
 			{"S", "在途 I/O", "disk.inflight", false},
-			{"S", "IO 压力", "psi.io.some10", false},
 			{"S", "阻塞进程", "procs_blocked", false},
 		},
 		// 实测确认的一个坑，值得写在脸上：子进程被 wait() 回收时，内核把它的
@@ -253,6 +261,7 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 			}
 			haveAny = true
 			f.Z = zBy[m.id]
+			f.Note = d.noteFor(m.id, now)
 			notable := math.Abs(f.Z) >= useZThreshold
 			if notable && level < 1 {
 				level = 1
@@ -337,4 +346,38 @@ func worstUse(rows []UseRow) int {
 		}
 	}
 	return w
+}
+
+// noteFor 给个别指标附上读数的前提。只写事实，不写结论。
+func (d *Diagnoser) noteFor(id string, now time.Time) string {
+	switch id {
+	case "disk.util":
+		if d.disks == nil {
+			return ""
+		}
+		di := d.disks()
+		if di.Busiest == "" {
+			return ""
+		}
+		if di.BusiestKind == collector.DiskHDD {
+			return di.Busiest + " 是机械盘"
+		}
+		return di.Busiest + " 是" + collector.DiskKindName(di.BusiestKind) + "：util 满不等于盘满，仅供参考"
+	case "loadavg.1m":
+		// Linux 的负载把在等 IO 的进程（D 状态）也算进去了：负载高不一定是 CPU 忙
+		note := ""
+		if d.cores > 0 {
+			note = "本机 " + strconv.Itoa(d.cores) + " 核"
+		}
+		if d.series != nil {
+			if p, ok := d.series.Last("procs_blocked"); ok && now.Sub(p.TS) <= 2*time.Minute && p.V >= 1 {
+				if note != "" {
+					note += "；"
+				}
+				note += "其中 " + strconv.Itoa(int(p.V+0.5)) + " 个是在等 IO 的进程，不是 CPU 忙"
+			}
+		}
+		return note
+	}
+	return ""
 }

@@ -115,17 +115,15 @@ func NewHeatmapBuilder(s *Series) *HeatmapBuilder {
 // 长期层每天每小时均匀贡献 12 个样本、覆盖 14 天，σ 反映的是"很多天的这个时段"，
 // 而不是被最近 24 小时的密集原始点主导；也不会因为重启而清零。
 func (b *HeatmapBuilder) RefreshSigma() {
-	toSamples := func(pts []point) []deviation.Sample {
-		hist := make([]deviation.Sample, len(pts))
-		for i, p := range pts {
-			hist[i] = deviation.Sample{TS: p.TS, Value: p.V}
-		}
-		return hist
-	}
+	// 指标一个接一个顺序算：两份样本缓冲和一份 σ 工作缓冲从头用到尾（v5.20）。
+	// 不复用时 150 条序列一轮分配约 370MB 短命内存，常驻内存被 GC 节奏顶到 70MB 以上。
+	var rawBuf, coarseBuf []deviation.Sample
+	var sc deviation.Scratch
 	for _, id := range b.series.MetricIDs() {
 		// 两层各自已按点数/保留期封顶，这里整层取出，不再按墙钟截。
-		raw := toSamples(b.series.RawRange(id, time.Time{}, farFuture))
-		coarse := toSamples(b.series.CoarseRange(id, time.Time{}, farFuture))
+		rawBuf = b.series.appendRawSamples(id, rawBuf[:0])
+		coarseBuf = b.series.appendCoarseSamples(id, coarseBuf[:0])
+		raw, coarse := rawBuf, coarseBuf
 		rawSpan := spanOf(raw)
 		for lagIdx, lagSec := range deviation.LagSeconds {
 			hist := raw
@@ -147,7 +145,7 @@ func (b *HeatmapBuilder) RefreshSigma() {
 			if len(hist) < 2 {
 				continue
 			}
-			all := deviation.ComputeSigmaLagExcluding(lagSec, hist, b.anomalySince(id))
+			all := deviation.ComputeSigmaLagInto(lagSec, hist, b.anomalySince(id), &sc)
 			for hour := 0; hour < 24; hour++ {
 				b.sigma.Set(id, lagIdx, hour, all[hour])
 			}

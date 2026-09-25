@@ -10,8 +10,11 @@
 package main
 
 import (
+	"math"
 	"strings"
 	"time"
+
+	"github.com/githubflyideas/nodedata/internal/metrics"
 )
 
 // keyChartPoints 每条曲线的点数上限。240 个点在 1000px 宽度上已经密到看不出间断，
@@ -27,6 +30,14 @@ type chartSeries struct {
 	// Values 缺样本处为 nil → JSON null。必须用指针：encoding/json 不能编码 NaN，
 	// 写成 float64 时整个响应编码失败（200 但空 body）。
 	Values []*float64 `json:"v"`
+	// Worst 是每一步里"最坏到过哪"（v5.20），只在跟 Values 差得够大时给，其余为 null。
+	//
+	// 曲线每一步只取一个点：24 小时窗口一步 6 分钟，等于 36 个原始点里取 1 个，
+	// 一次 40 秒的打满大概率被跳过——原始数据明明在内存里，图上却看不到。
+	// 页面在这一步画一根竖线，从取到的点连到最坏值。
+	// 只给单一来源的曲线：合成的（CPU 忙碌 = 各项相加再除核数）各项的最坏值不在同一时刻，
+	// 硬加起来会画出一个从没发生过的数。
+	Worst []*float64 `json:"w,omitempty"`
 }
 
 type chartGroup struct {
@@ -83,7 +94,15 @@ func (b *HeatmapBuilder) KeySeries(win string, d time.Duration, now time.Time) *
 			// 只写 def.ids[0] 会让放大图标题显示成 "cpu.user"，看的人以为只统计了用户态。
 			s := chartSeries{Label: def.label, Unit: def.unit, Bad: def.bad,
 				ID: strings.Join(def.ids, " + ")}
-			any := false
+			any, anyWorst := false, false
+			single := len(def.ids) == 1
+			floor := 0.0
+			if single {
+				floor = metrics.Lookup(def.ids[0]).MinDelta
+				if def.f != nil { // 门槛也按同样的换算走，否则跟换算后的值比不上口径
+					floor = math.Abs(def.f([]float64{floor}) - def.f([]float64{0}))
+				}
+			}
 			for ts := from; !ts.After(now); ts = ts.Add(step) {
 				t := tol
 				if rawStart.IsZero() || ts.Before(rawStart) {
@@ -93,6 +112,22 @@ func (b *HeatmapBuilder) KeySeries(win string, d time.Duration, now time.Time) *
 				s.TS = append(s.TS, ts.Unix())
 				s.Values = append(s.Values, v)
 				any = any || v != nil
+				var w *float64
+				if single && v != nil {
+					if x, ok := b.series.Worst(def.ids[0], ts.Add(-step/2), ts.Add(step/2)); ok {
+						if def.f != nil {
+							x = def.f([]float64{x})
+						}
+						if math.Abs(x-*v) >= floor && floor > 0 {
+							w = &x
+							anyWorst = true
+						}
+					}
+				}
+				s.Worst = append(s.Worst, w)
+			}
+			if !anyWorst {
+				s.Worst = nil // 整条都没有值得画的尖峰：不传
 			}
 			if any { // 本机没有这项指标时整条不输出
 				grp.Series = append(grp.Series, s)

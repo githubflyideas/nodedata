@@ -203,6 +203,8 @@ h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .item summary{cursor:pointer;color:var(--accent)}
 .item details ul{margin:5px 0 0 16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .notes{font-size:12px;color:var(--dim);margin-top:9px;padding-top:8px;border-top:1px dotted var(--line)}
+/* ---- 曲线里的尖峰竖线 ---- */
+svg line.pk{stroke:var(--bad);stroke-width:1.6;opacity:.75;stroke-linecap:round}
 /* ---- 逐核实时 ---- */
 .cores{display:flex;flex-wrap:wrap;gap:3px;margin:4px 0 6px}
 .core{width:22px;display:flex;flex-direction:column;align-items:center;font-size:9.5px;
@@ -229,6 +231,7 @@ h3.procs-h span{font-weight:400;color:var(--dim);margin-left:8px;font-size:12px}
 .use-f .chk{color:var(--bad)}
 .use-f .who{color:var(--cool)}
 .use-f i{font-style:normal;color:#98a1ad}
+.use-f i.note{color:var(--warn)}
 .use-blind{font-size:11.5px;color:var(--dim);margin-top:9px;padding-top:8px;
   border-top:1px dotted var(--line);line-height:1.7}
 .use-blind b{color:var(--warn);font-weight:600}
@@ -1101,8 +1104,10 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape") closeChartM
 function buildSVG(s,from,to,ch){
   if(!ch) ch=CH;
   var n=s.v.length, vals=s.v.filter(function(v){return v!==null&&isFinite(v);});
+  // 尖峰也要进纵轴范围，否则竖线会画出图外
+  var wv=(s.w||[]).filter(function(v){return v!==null&&isFinite(v);});
   if(!vals.length) return '<text class="flat" x="'+ch.l+'" y="'+(ch.h/2)+'">这段时间没有数据</text>';
-  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
+  var mn=Math.min.apply(null,vals.concat(wv)), mx=Math.max.apply(null,vals.concat(wv));
   if(mx===mn){ mx=mn+(Math.abs(mn)||1)*0.05; mn=mn-(Math.abs(mn)||1)*0.05; }
   else { var pad=(mx-mn)*0.12; mx+=pad; mn-=pad; }
   if(mn>0&&mn<(mx-mn)) mn=0;
@@ -1116,6 +1121,15 @@ function buildSVG(s,from,to,ch){
   }
   if(cur.length)segs.push(cur);
   var line=segs.map(function(g){return '<path class="ln" d="M'+g.join("L")+'"/>';}).join("");
+  // 曲线每一步只取一个点，短尖峰会被跳过：在这一步画一根竖线，从取到的点连到这一步里的最坏值
+  var pk="";
+  (s.w||[]).forEach(function(w,i){
+    var v=s.v[i];
+    if(w===null||v===null||!isFinite(w)||!isFinite(v)) return;
+    var xx=x(i).toFixed(1);
+    pk+='<line class="pk" x1="'+xx+'" y1="'+y(v).toFixed(1)+'" x2="'+xx+'" y2="'+y(w).toFixed(1)+'">'+
+      '<title>这一步里最坏到过 '+esc(fmt(w,s.unit))+'（曲线上取到的是 '+esc(fmt(v,s.unit))+'）</title></line>';
+  });
   var area=segs.filter(function(g){return g.length>1;}).map(function(g){
     var a=g[0].split(",")[0], b=g[g.length-1].split(",")[0], base=y(Math.max(mn,0)).toFixed(1);
     return '<path class="ar" d="M'+a+','+base+'L'+g.join("L")+'L'+b+','+base+'Z"/>';}).join("");
@@ -1143,7 +1157,7 @@ function buildSVG(s,from,to,ch){
   // 把 y 映射挂到 svg 上，悬停时的圆点才能落在线上
   var sv=document.getElementById("cmsvg");
   if(sv&&ch===MCH) sv._yOf=y;
-  return gl+area+line+xl;
+  return gl+area+line+pk+xl;
 }
 (function(){
   var a=document.getElementById("zhelp"); if(!a) return;
@@ -1343,6 +1357,7 @@ function useFactHTML(f){
   if(f.base!=null) ex.push("平时 "+esc(fmt(f.base,f.unit)));
   if(f.z!=null&&Math.abs(f.z)>=3) ex.push("z="+f.z.toFixed(1));
   if(ex.length) s+=' <i>('+ex.join("，")+')</i>';
+  if(f.note) s+=' <i class="note">'+esc(f.note)+'</i>';
   return s;
 }
 

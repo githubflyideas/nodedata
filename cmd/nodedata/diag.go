@@ -24,6 +24,10 @@ type Diagnoser struct {
 	procs func() []diagnosis.Proc
 	// l0Fn 提供内存中的 L0 结果；nil 时回落到读 check.json。
 	l0Fn func() check.FullResult
+	// disks 提供盘的类型和本轮最忙的盘；nil 时 util 不附说明。
+	disks func() collector.DiskInfo
+	// cores 是本机核数，给"负载"附上"本机 N 核"。
+	cores int
 }
 
 func NewDiagnoser(dataDir string, s *Series, b *HeatmapBuilder) *Diagnoser {

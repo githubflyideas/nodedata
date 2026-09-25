@@ -64,9 +64,13 @@ type Collector struct {
 	corePrev         []coreTicks             // 上一轮逐核节拍
 	coreStats        []CoreStat              // 本轮逐核占用的工作缓冲
 	coreSnap         atomic.Value            // []CoreStat，给页面的只读快照
-	bootTS           int64                   // 开机时刻，unix 秒（缓存）
-	ctMax            int64                   // conntrack 上限，负数表示读过但不可用
-	devNames         map[string]string       // 设备/接口名驻留，避免每轮分配
+	virt             string                  // 虚拟化类型，物理机为 ""（hostinfo.go）
+	diskSnap         atomic.Value            // DiskInfo
+	busiestDisk      string
+	disksChanged     bool
+	bootTS           int64             // 开机时刻，unix 秒（缓存）
+	ctMax            int64             // conntrack 上限，负数表示读过但不可用
+	devNames         map[string]string // 设备/接口名驻留，避免每轮分配
 	diskIDMap        map[string]*diskIDs
 	netIDMap         map[string]*netIDs
 	ifaceClass       map[string]bool
@@ -135,6 +139,8 @@ func New(cfg Config) *Collector {
 		f.Close()
 		atomic.StoreInt32(&c.psiAvailable, 1)
 	}
+	// 盘类型要先知道是不是虚拟机：虚拟机里的 sda 也可能报 rotational=1
+	c.virt = DetectVirt(procRootOr(cfg.ProcRoot), cfg.SysRoot)
 	return c
 }
 
@@ -948,4 +954,11 @@ func parseHexUint64(b []byte) (uint64, error) {
 		}
 	}
 	return n, nil
+}
+
+func procRootOr(p string) string {
+	if p == "" {
+		return "/proc"
+	}
+	return p
 }

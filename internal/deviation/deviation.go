@@ -170,6 +170,26 @@ const MaxExcludedFrac = 0.25
 // 用"最多排除 1/4 历史"这个界，既挡住了几天量级的故障被学成正常，
 // 又保证真的长期变化最终会被接受。excludeFrom 为零值时行为与 ComputeSigmaLag 完全一致。
 func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Time) [24]LagSigma {
+	return ComputeSigmaLagInto(lagSeconds, hist, excludeFrom, nil)
+}
+
+// Scratch 是 σ 重算的工作缓冲（v5.20）。
+//
+// σ 每 5 分钟按指标顺序重算一遍，每个（指标, 档位, 小时）原来都要新分配 Δ 列表、
+// 一份排序副本和一份偏差副本：150 条序列一轮分配约 370MB 短命内存，
+// 进程常驻内存因此被 GC 的节奏顶到 70MB 以上。顺序计算用一份缓冲反复写就够了。
+// 零值可用；不能并发共享。
+type Scratch struct {
+	diffs  [24][]float64
+	sorted []float64
+	devs   []float64
+}
+
+// ComputeSigmaLagInto 与 ComputeSigmaLagExcluding 结果逐位相同，sc 非空时复用其缓冲。
+func ComputeSigmaLagInto(lagSeconds int, hist []Sample, excludeFrom time.Time, sc *Scratch) [24]LagSigma {
+	if sc == nil {
+		sc = &Scratch{}
+	}
 	var out [24]LagSigma
 	for h := range out {
 		out[h] = LagSigma{Sigma: 1e-9}
@@ -209,7 +229,10 @@ func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Ti
 	spanOK := span >= H && span >= MinBaselineSpan
 	cutoff := end.Add(-28 * 24 * time.Hour)
 
-	var diffs [24][]float64
+	diffs := &sc.diffs
+	for h := range diffs {
+		diffs[h] = diffs[h][:0]
+	}
 	j := 0 // hist[j] 是第一个 TS >= t-H 的点
 	for i := range hist {
 		s := hist[i]
@@ -237,7 +260,7 @@ func ComputeSigmaLagExcluding(lagSeconds int, hist []Sample, excludeFrom time.Ti
 		diffs[h] = append(diffs[h], s.Value-hist[best].Value)
 	}
 	for h := range out {
-		out[h] = summarizeDiffs(diffs[h], spanOK)
+		out[h] = summarizeDiffsInto(diffs[h], spanOK, sc)
 	}
 	return out
 }
@@ -264,6 +287,10 @@ func enoughAfterExclusion(hist []Sample, excludeFrom time.Time) bool {
 
 // summarizeDiffs 把一个小时桶的 Δ 样本归纳成 LagSigma。
 func summarizeDiffs(diffs []float64, spanOK bool) LagSigma {
+	return summarizeDiffsInto(diffs, spanOK, &Scratch{})
+}
+
+func summarizeDiffsInto(diffs []float64, spanOK bool, sc *Scratch) LagSigma {
 	ls := LagSigma{N: len(diffs)}
 	ls.Ready = spanOK && len(diffs) >= MinDiffsForZ
 	ls.Low = ls.N < HighConfN
@@ -273,19 +300,27 @@ func summarizeDiffs(diffs []float64, spanOK bool) LagSigma {
 	}
 	// 只排一次序：中位数、分位差、分辨率都从同一份有序副本上取。
 	// 早期每个桶要把同一批 Δ 排 5 次序外加一个 map，σ 重算一半时间花在 sort 上。
-	sorted := make([]float64, len(diffs))
-	copy(sorted, diffs)
+	sc.sorted = append(sc.sorted[:0], diffs...)
+	sorted := sc.sorted
 	sort.Float64s(sorted)
 	ls.Center = medianSorted(sorted)
 	ls.Quantum = resolutionSorted(sorted)
 	ls.ZeroFrac = zeroFraction(diffs)
-	ls.Sigma = robustScaleSorted(sorted, ls.Center, ls.Quantum)
+	ls.Sigma = robustScaleSortedInto(sorted, ls.Center, ls.Quantum, &sc.devs)
 	return ls
 }
 
 // robustScaleSorted 与 robustScale 语义完全相同，输入须已升序。
 func robustScaleSorted(sorted []float64, center, resolution float64) float64 {
-	devs := make([]float64, len(sorted))
+	var buf []float64
+	return robustScaleSortedInto(sorted, center, resolution, &buf)
+}
+
+func robustScaleSortedInto(sorted []float64, center, resolution float64, buf *[]float64) float64 {
+	if cap(*buf) < len(sorted) {
+		*buf = make([]float64, len(sorted))
+	}
+	devs := (*buf)[:len(sorted)]
 	med := medianSorted(sorted)
 	for i, v := range sorted {
 		devs[i] = math.Abs(v - med)

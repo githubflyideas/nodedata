@@ -254,3 +254,64 @@ func TestUseBusiestCoreAlwaysShown(t *testing.T) {
 	}
 	t.Fatal("没有 CPU 行")
 }
+
+// 磁盘行：util 旁边写明是哪块盘、什么类型。SSD/虚拟盘上 util 满不等于盘满。
+func TestUseUtilCarriesDiskKind(t *testing.T) {
+	for _, c := range []struct {
+		kind, want string
+	}{
+		{collector.DiskVirtual, "vda 是虚拟盘：util 满不等于盘满"},
+		{collector.DiskHDD, "vda 是机械盘"},
+	} {
+		d, s := newUseFixture(t, check.FullResult{})
+		d.disks = func() collector.DiskInfo { return collector.DiskInfo{Busiest: "vda", BusiestKind: c.kind} }
+		now := time.Now()
+		feed(s, now, "psi.io.some10", 0.3)
+		feed(s, now, "disk.util", 96)
+		found := false
+		for _, r := range d.Use(now) {
+			for _, f := range r.Facts {
+				if f.ID == "disk.util" {
+					found = true
+					if !strings.Contains(f.Note, c.want) {
+						t.Errorf("%s 盘的 util 说明应含 %q，实得 %q", c.kind, c.want, f.Note)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Errorf("util 应始终显示")
+		}
+	}
+}
+
+// 负载：Linux 把等 IO 的进程也算进去。旁边写明本机几核、其中几个在等 IO。
+func TestUseLoadNoteExplainsIOWait(t *testing.T) {
+	d, s := newUseFixture(t, check.FullResult{})
+	d.cores = 16
+	now := time.Now()
+	feed(s, now, "cpu.busy_pct", 20)
+	feed(s, now, "procs_blocked", 6)
+	if got := d.noteFor("loadavg.1m", now); !strings.Contains(got, "16 核") || !strings.Contains(got, "6 个是在等 IO") {
+		t.Errorf("负载说明不对：%q", got)
+	}
+}
+
+// 空闲的盘没有写，整机写等待这一轮就没有值——不能因此把磁盘报成"采不到"。
+func TestUseIdleDiskNotBlind(t *testing.T) {
+	d, s := newUseFixture(t, check.FullResult{})
+	now := time.Now()
+	feed(s, now, "psi.io.some10", 0.1) // 有 IO 压力数据，但没有写等待
+	for _, r := range d.Use(now) {
+		if r.Resource == "磁盘" {
+			for _, b := range r.Blind {
+				if strings.Contains(b, "写等待") {
+					t.Errorf("空闲盘被误报成看不到：%v", r.Blind)
+				}
+			}
+			if r.State == "无数据" {
+				t.Error("有 IO 压力数据，磁盘不该是无数据")
+			}
+		}
+	}
+}

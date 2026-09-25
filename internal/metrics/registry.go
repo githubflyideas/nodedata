@@ -102,7 +102,9 @@ var known = map[string]Info{
 	// intr
 	"intr": {Unit: "count", EvidenceOnly: true},
 	// loadavg
-	"loadavg.1m": {Unit: "load", Primary: true, Class: ClassCPU, Family: "CPU 压力"},
+	// 负载只作旁证（v5.20）：Linux 把在等 IO 的进程（D 状态）也算进负载，
+	// 单凭它领头会把磁盘卡住说成 CPU 劣化。它照常显示，只是不单独成为一条线索。
+	"loadavg.1m": {Unit: "load", Primary: true, Class: ClassCPU, Family: "CPU 压力", EvidenceOnly: true},
 	// mem
 	"mem.available": {Unit: "bytes", Primary: true, Class: ClassMem, LowerIsBad: true, Family: "内存余量"},
 	"mem.buffers":   {Unit: "bytes", Primary: true, Class: ClassMem, EvidenceOnly: true},

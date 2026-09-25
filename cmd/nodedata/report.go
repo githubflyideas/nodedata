@@ -113,6 +113,9 @@ func factLine(f UseFact) string {
 	if len(extra) > 0 {
 		s += " (" + strings.Join(extra, ", ") + ")"
 	}
+	if f.Note != "" {
+		s += " —— " + f.Note
+	}
 	return s
 }
 
