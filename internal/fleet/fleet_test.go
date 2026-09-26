@@ -42,6 +42,12 @@ k-02   ftp://10.0.1.16
 	if strings.Contains(hs[2].Addr, "secret") || strings.Contains(hs[2].Addr, "ops") {
 		t.Errorf("显示地址不能带用户名密码：%s", hs[2].Addr)
 	}
+	if hs[0].Link != "http://10.0.1.11:19999/" || hs[2].Link != "https://proxy.example/nd-px-01/" {
+		t.Errorf("点击链接不对：%q %q", hs[0].Link, hs[2].Link)
+	}
+	if strings.Contains(hs[2].Link, "secret") {
+		t.Errorf("链接不能带密码：%s", hs[2].Link)
+	}
 	want := []string{"第 6 行", "第 7 行", "第 8 行", "第 9 行", "第 10 行"}
 	if len(errs) != len(want) {
 		t.Fatalf("应有 %d 条错误，实得 %d：%v", len(want), len(errs), errs)

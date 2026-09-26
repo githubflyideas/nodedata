@@ -97,6 +97,11 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
 /* 主机页 */
 .hwrap{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:22px;align-items:start}
 .hid h2{margin:0 0 6px;font-family:var(--mono);font-size:30px;font-weight:500;word-break:break-all}
+.alink{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
+.copy{font:inherit;font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 7px;margin-left:6px;vertical-align:1px;cursor:pointer;background:transparent}
+.copy:hover,.copy:focus-visible{color:var(--text);border-color:var(--accent)}
+.copy.done{color:var(--ok);border-color:var(--ok)}
+.alink:hover,.alink:focus-visible{color:var(--accent)}
 .hid .addr{font-family:var(--mono);color:var(--dim);margin-bottom:14px}
 .hid dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:14px}
 .hid dt{color:var(--dim)} .hid dd{margin:0}
@@ -394,6 +399,22 @@ function poll(){
   }).catch(function(e){clearTimeout(t);fetchErr=e&&e.name==="AbortError"?"请求超时":e&&e.name==="TypeError"?"连不上（网络断了，或巡视台进程没在跑）":String(e&&e.message||e)});
 }
 
+
+// 地址：可点（在新标签页打开那台的 nodedata 页面——需要你的电脑能直接连到它）+ 复制按钮（到处都能用）
+function addrHTML(h){
+  var a=esc(h.addr),s=h.link?'<a class="alink" href="'+esc(h.link)+'" target="_blank" rel="noopener" title="在新标签页打开这台的 nodedata 页面（需要你的电脑能直接连到它）">'+a+' ↗</a>':a;
+  return s+' <button type="button" class="copy" data-copy="'+a+'" title="复制地址">复制</button>';
+}
+// 内网多半是 http：剪贴板接口只在 https/本机可用，退回到选中再复制
+function copyText(t,done){
+  function old(){var ta=document.createElement("textarea");ta.value=t;ta.setAttribute("readonly","");ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();ta.setSelectionRange(0,t.length);var ok=false;try{ok=document.execCommand("copy")}catch(e){}document.body.removeChild(ta);done(ok)}
+  if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(function(){done(true)},old)}else old();
+}
+document.addEventListener("click",function(e){
+  var b=e.target.closest&&e.target.closest("button.copy");if(!b)return;
+  e.stopPropagation();
+  copyText(b.dataset.copy,function(ok){var o=b.textContent;b.textContent=ok?"已复制":"复制失败，请长按选中";b.classList.toggle("done",ok);setTimeout(function(){b.textContent=o;b.classList.remove("done")},1600)});
+},true);
 function hostSev(h){return h.status==="lost"?"lost":h.sev||"none"}
 function pageSev(p){var w="ok";p.hosts.forEach(function(h){var v=hostSev(h);if(SEV[v]>SEV[w])w=v});return w}
 function rowOf(h,res){var rs=h.rows||[];for(var i=0;i<rs.length;i++)if(rs[i].resource===res)return rs[i];return null}
@@ -481,7 +502,7 @@ function rowHTML(h,res){
 
 function renderHost(p){
   var x=p.hosts[0];
-  var h='<div class="hwrap"><div class="hid"><h2>'+esc(x.name)+'</h2><div class="addr">'+esc(x.addr)+'</div><dl>'+
+  var h='<div class="hwrap"><div class="hid"><h2>'+esc(x.name)+'</h2><div class="addr">'+addrHTML(x)+'</div><dl>'+
     '<dt>机房</dt><dd>'+esc(x.dc||"—")+'</dd><dt>机柜</dt><dd>'+esc(x.rack||"—")+'</dd><dt>产品线</dt><dd>'+esc(x.product||"—")+'</dd><dt>主机组</dt><dd>'+esc(x.group||"—")+'</dd>'+
     '<dt>标签</dt><dd>'+(x.tags&&x.tags.length?x.tags.map(function(t){return '<span class="tag">'+esc(t)+'</span>'}).join(""):"—")+'</dd></dl>';
   h+='<div class="seen">'+(x.last_ok?"最近拉到 "+hm(x.last_ok):"")+(x.agent?" · nodedata "+esc(x.agent):"")+'</div>';
@@ -579,7 +600,7 @@ function drawerFill(){
   document.getElementById("invErrs").innerHTML=inv.errors&&inv.errors.length?'<ul>'+inv.errors.map(function(e){return "<li>"+esc(e)+"</li>"}).join("")+'</ul>':"";
   var bad=hosts.filter(function(h){return h.status==="lost"||h.err});
   document.getElementById("pulls").innerHTML=bad.length?'<table><thead><tr><th>主机</th><th>地址</th><th>情况</th></tr></thead><tbody>'+bad.map(function(h){
-    return '<tr><td class="nm">'+esc(h.name)+'</td><td class="nm">'+esc(h.addr)+'</td><td>'+(h.status==="lost"?(h.never?"从没拉到过":"失联 "+agoSec(h.last_ok)):"偶尔失败")+(h.err?"："+esc(h.err):"")+'</td></tr>'}).join("")+'</tbody></table>':'<div class="empty" style="padding:16px">全部拉取正常。</div>';
+    return '<tr><td class="nm">'+esc(h.name)+'</td><td class="nm">'+addrHTML(h)+'</td><td>'+(h.status==="lost"?(h.never?"从没拉到过":"失联 "+agoSec(h.last_ok)):"偶尔失败")+(h.err?"："+esc(h.err):"")+'</td></tr>'}).join("")+'</tbody></table>':'<div class="empty" style="padding:16px">全部拉取正常。</div>';
 }
 document.getElementById("invBtn").addEventListener("click",openDrawer);
 document.getElementById("invClose").addEventListener("click",function(){drawer.hidden=true});
@@ -962,7 +983,7 @@ function renderCard(name){
   if(name){
     var h=hostByName(name);if(!h){skycard.innerHTML="";return}
     var sev=hostSev(h),w=SK.pos[name],tw=w?SK.towers[w.t]:null;
-    var html='<div class="ttl">巡检报告 · '+esc(dimLabelOf(skyDim()))+' '+esc(tw?tw.key:"")+'</div><div class="hn">'+esc(h.name)+' '+pill(sev)+'</div><div class="meta">'+esc(h.addr)+(h.group?" · "+esc(h.group):"")+(h.product?" · "+esc(h.product):"")+'</div>';
+    var html='<div class="ttl">巡检报告 · '+esc(dimLabelOf(skyDim()))+' '+esc(tw?tw.key:"")+'</div><div class="hn">'+esc(h.name)+' '+pill(sev)+'</div><div class="meta">'+addrHTML(h)+(h.group?" · "+esc(h.group):"")+(h.product?" · "+esc(h.product):"")+'</div>';
     if(h.status==="lost")html+='<div class="ev">'+(h.never?"巡视台启动以来一次都没拉到这台":"已经 "+agoSec(h.last_ok)+"没拉到")+(h.err?"：<b>"+esc(h.err)+"</b>":"")+'</div>';
     else R.forEach(function(res){var r=rowOf(h,res)||{st:"none"},f=(r.facts||[])[0],v="";
       if(f)v=esc(f.label)+' <b>'+esc(fmt(f.value,f.unit))+'</b>'+(f.base!=null?' <span class="u">平时 '+esc(fmt(f.base,f.unit))+'</span>':'');

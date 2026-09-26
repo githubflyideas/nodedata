@@ -27,6 +27,7 @@ type Host struct {
 	Name    string   `json:"name"`
 	URL     string   `json:"-"`    // 拉取用，可能带基本认证
 	Addr    string   `json:"addr"` // 给页面看的，去掉了认证信息
+	Link    string   `json:"link"` // 这台 nodedata 自己的页面，点地址直接打开；同样去掉了认证信息
 	DC      string   `json:"dc,omitempty"`
 	Rack    string   `json:"rack,omitempty"`
 	Product string   `json:"product,omitempty"`
@@ -70,12 +71,12 @@ func ParseInventory(r io.Reader) (hosts []Host, errs []string) {
 			bad("主机名 %s 跟第 %d 行重复", f[0], prev)
 			continue
 		}
-		u, show, err := normalizeAddr(f[1])
+		u, show, link, err := normalizeAddr(f[1])
 		if err != nil {
 			bad("地址 %q 不对：%v", f[1], err)
 			continue
 		}
-		h := Host{Name: f[0], URL: u, Addr: show}
+		h := Host{Name: f[0], URL: u, Addr: show, Link: link}
 		ok := true
 		for _, kv := range f[2:] {
 			k, v, found := strings.Cut(kv, "=")
@@ -121,23 +122,23 @@ func ParseInventory(r io.Reader) (hosts []Host, errs []string) {
 
 // normalizeAddr 把 10.1.0.5 / 10.1.0.5:8888 / http://… 统一成拉取用的 URL 根，
 // 同时给出一份去掉用户名密码的显示用地址——密码不能跟着状态发到 iPad 上。
-func normalizeAddr(s string) (fetch, show string, err error) {
+func normalizeAddr(s string) (fetch, show, link string, err error) {
 	bare := !strings.Contains(s, "://")
 	if bare {
 		s = "http://" + s
 	}
 	u, err := url.Parse(s)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", "", fmt.Errorf("只支持 http/https")
+		return "", "", "", fmt.Errorf("只支持 http/https")
 	}
 	if u.Hostname() == "" {
-		return "", "", fmt.Errorf("没有主机部分")
+		return "", "", "", fmt.Errorf("没有主机部分")
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		return "", "", fmt.Errorf("不要带 ? 或 #")
+		return "", "", "", fmt.Errorf("不要带 ? 或 #")
 	}
 	// 只写了 IP/主机名就补 nodedata 的默认端口；写成完整 URL 的（反代、https）照原样用。
 	if bare && u.Port() == "" {
@@ -146,8 +147,9 @@ func normalizeAddr(s string) (fetch, show string, err error) {
 	u.Path = strings.TrimRight(u.Path, "/")
 	fetch = u.String()
 	u.User = nil
+	link = u.String() + "/"
 	show = strings.TrimPrefix(u.String(), "http://")
-	return fetch, show, nil
+	return fetch, show, link, nil
 }
 
 // Inventory 是当前在用的清单及其来历。
