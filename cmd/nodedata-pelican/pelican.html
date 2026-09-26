@@ -187,11 +187,15 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
 #scene .banner.bad .bannerCloth{fill:#f6d9d3;stroke:#c9574c} #scene .banner.dev .bannerCloth{fill:#f5e6c4;stroke:#c89a3a}
 #scene .banner.lost .bannerCloth{fill:#e2def0;stroke:#8b80b3}
 #scene .pel .body,#scene .pel .head{fill:#f1eee6;stroke:#9aa3ab;stroke-width:1.3}
-#scene .pel .neck{fill:#f1eee6;stroke:#9aa3ab;stroke-width:1.2}
-#scene .pel .wingFar{fill:#b9b5ab;stroke:#8e979f;stroke-width:1}
-#scene .pel .wingNear{fill:#e8e4da;stroke:#8e979f;stroke-width:1.2}
-#scene .pel .tips{fill:#3b4046}
-#scene .pel .tail{fill:#d9d5cb;stroke:#9aa3ab;stroke-width:1}
+#scene .pel .neck{fill:#f1eee6;stroke:#9aa3ab;stroke-width:1}
+#scene .pel .wNF{fill:#2b2f35;stroke:#15181b;stroke-width:.8;stroke-linejoin:round}
+#scene .pel .wNC{fill:#f4f1ea;stroke:#8e979f;stroke-width:.8;stroke-linejoin:round}
+#scene .pel .wFF{fill:#1a1d21} #scene .pel .wFC{fill:#cfcbc2}
+#scene .pel .crest{stroke:#9aa3ab;stroke-width:1.6;stroke-linecap:round;fill:none}
+#scene .pel .glint{fill:#fff}
+#scene .pel .legs{stroke:#e7a53c;stroke-width:3;stroke-linecap:round;fill:none;display:none}
+#scene .pel.sleep .legs{display:inline} #scene .pel.sleep .feet,#scene .pel.sleep .glint{display:none}
+#scene .pel .tail{fill:#dcd8cf;stroke:#9aa3ab;stroke-width:1}
 #scene .pel .bill{fill:#e7a53c;stroke:#b57a20;stroke-width:1}
 #scene .pel .pouch{fill:#f0bd6e;stroke:#b57a20;stroke-width:1}
 #scene .pel .feet{stroke:#e7a53c;stroke-width:3;stroke-linecap:round;fill:none}
@@ -279,19 +283,23 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
       <g id="spotG"></g>
       <g id="bannerG" class="banner"><path class="rope" id="rope" d=""/><g id="bannerBody"><rect class="bannerCloth" id="bannerCloth" x="0" y="-14" width="120" height="28" rx="3"/><text class="bannerText" id="bannerText" x="12" y="1"></text></g></g>
       <g id="pel" class="pel">
-        <g id="wingFar"><path class="wingFar" d="M-4,-6 C-24,-38 -60,-52 -98,-46 C-84,-38 -64,-28 -46,-18 C-30,-10 -18,-2 -8,4 Z"/></g>
-        <path class="tail" d="M-36,-4 L-58,-12 L-60,2 L-38,6 Z"/>
-        <ellipse class="body" cx="-2" cy="0" rx="38" ry="15"/>
-        <path class="feet" d="M-20,12 L-40,16 M-16,13 L-36,19"/>
-        <path class="neck" d="M18,-8 C26,-16 22,-24 30,-26 L38,-20 C34,-14 32,-4 24,4 Z"/>
-        <circle class="head" cx="34" cy="-24" r="10"/>
-        <path class="pouch" d="M40,-20 Q72,4 104,-10 L40,-16 Z"/>
-        <path class="bill" d="M40,-27 L108,-12 L40,-17 Z"/>
-        <circle class="eye" cx="37" cy="-27" r="2.1"/>
-        <line class="shut" x1="34" y1="-26" x2="40" y2="-26"/>
-        <g id="wingNear"><path class="wingNear" d="M-2,-4 C-22,-46 -72,-66 -126,-58 C-110,-50 -92,-42 -74,-32 C-54,-20 -30,-8 -6,6 Z"/><path class="tips" d="M-126,-58 C-116,-54 -106,-50 -96,-44 L-100,-52 L-108,-52 L-112,-57 Z"/></g>
-        <text class="qm" x="20" y="-42">?</text>
-        <g class="zz"><text x="44" y="-36">z</text><text x="54" y="-48">z</text><text x="66" y="-60">Z</text></g>
+        <g id="pelBody">
+          <path id="wFF" class="wFF"/><path id="wFC" class="wFC"/>
+          <path class="tail" d="M-40,0 L-64,-8 L-66,4 L-60,10 L-40,8 Z"/>
+          <path class="body" d="M-44,2 C-32,-14 8,-17 28,-10 C40,-6 42,6 30,12 C10,18 -30,15 -44,6 Z"/>
+          <path class="feet" d="M-26,12 L-50,13 M-24,13 L-48,17"/>
+          <path class="legs" d="M-8,14 L-6,34 L2,36 M2,14 L4,34 L12,36"/>
+          <path class="neck" d="M22,-8 C28,-14 30,-18 36,-18 L40,-8 C36,-2 30,4 24,6 Z"/>
+          <circle class="head" cx="36" cy="-14" r="9"/>
+          <path class="crest" d="M30,-21 L24,-26 M33,-22 L30,-28"/>
+          <path class="pouch" d="M42,-11 Q72,12 106,-1 L42,-7 Z"/>
+          <path class="bill" d="M42,-17 L110,-4 Q112,-1 108,0 L42,-9 Z"/>
+          <circle class="eye" cx="39" cy="-16" r="2.2"/><circle class="glint" cx="39.7" cy="-16.7" r=".7"/>
+          <line class="shut" x1="35" y1="-16" x2="42" y2="-16"/>
+          <path id="wNF" class="wNF"/><path id="wNC" class="wNC"/>
+          <text class="qm" x="22" y="-34">?</text>
+          <g class="zz"><text x="44" y="-30">z</text><text x="54" y="-42">z</text><text x="66" y="-54">Z</text></g>
+        </g>
       </g>
     </svg>
     <div class="skycard" id="skycard"></div>
@@ -630,6 +638,53 @@ var lock=null;
 function wake(){if(lock||!("wakeLock" in navigator))return;navigator.wakeLock.request("screen").then(function(l){lock=l;l.addEventListener("release",function(){lock=null})}).catch(function(){})}
 document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"){wake();poll()}});
 
+/* ---------- 鹈鹕的飞行骨架 ----------
+   翅膀是两节：肩→腕（臂）、腕→翼尖（手）。在三维里算（x 向前、y 向上、z 朝观众），再按 3/4 视角投影，
+   所以拍翅时近侧/远侧翅膀的长短、角度会变，而不是一张贴图在转。
+   白鹈鹕：覆羽白、飞羽黑；翼尖五根初级飞羽分开，像手指。
+   上挑时手腕折起、翼尖后收（减阻），下拍时整片展开；身体随下拍被托起。 */
+var BIRD_KX=.36,BIRD_KY=.50;
+function bproj(p){return [p[0]+p[2]*BIRD_KX,-p[1]+p[2]*BIRD_KY]}
+function blerp(a,b,t){return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]}
+function badd(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]}
+function bpath(pts){var s="";for(var i=0;i<pts.length;i++){var q=bproj(pts[i]);s+=(i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1)}return s+"Z"}
+// e：肩的抬角（弧度，向上为正）；fold：0 全展 … 1 全收；spread：翼展方向的伸出程度（收拢栖息时很小）；side：+1 近侧 / -1 远侧
+function wingGeom(e,fold,spread,side){
+  var S=[6,4,0],La=50*spread,Lh=74*(1-.42*fold)*Math.max(.35,spread);
+  var W=[S[0]-4-10*fold,S[1]+La*Math.sin(e),side*La*Math.cos(e)];
+  var eh=e*1.25-fold*.55,hx=-.16-fold*1.0,hy=Math.sin(eh),hz=Math.cos(eh)*spread,hn=Math.hypot(hx,hy,hz);
+  var T=[W[0]+Lh*hx/hn,W[1]+Lh*hy/hn,W[2]+side*Lh*hz/hn];
+  var Sb=[S[0]-50,S[1]-3,0],Wb=badd(W,[-46+10*fold,-1,0]);
+  // 后缘：翼尖 → 五根初级飞羽（分叉）→ 次级飞羽的扇贝边 → 回到身体
+  var trail=[T],n=5;
+  for(var k=n;k>=1;k--){
+    var a=(k-.35)/n,base=blerp(W,T,a),len=(30+14*a)*(1-.45*fold);
+    trail.push(badd(base,[-len,-1.5*a,0]));                 // 羽尖
+    trail.push(badd(blerp(W,T,(k-.95)/n),[-len*.45,0,0]));   // 羽根之间的缺口
+  }
+  for(var j=1;j<=4;j++){var q=blerp(Wb,Sb,j/5);trail.push(badd(q,[j%2?-3:0,0,0]))}
+  trail.push(Sb);
+  var bulge=badd(blerp(W,T,.45),[7,1.5,0]),bulge2=badd(blerp(S,W,.5),[4,1,0]);
+  var full=[S,bulge2,W,bulge,T].concat(trail);
+  // 覆羽（白）：前缘到约一半弦长
+  var cT=blerp(W,T,.7),cov=[S,bulge2,W,bulge,cT,badd(cT,[-18*(1-.4*fold),0,0]),badd(W,[-27,0,0]),badd(S,[-32,-2,0])];
+  return {full:bpath(full),cov:bpath(cov)};
+}
+// 一帧：给定相位与状态，写入四条翅膀路径，返回身体起伏量
+function drawBird(els,st){
+  var e,fold,spread=1;
+  if(st.mode==="perch"){e=-.15;fold=1;spread=.18}
+  else{
+    var ph=st.phase,amp=st.amp;
+    e=amp*Math.sin(ph)+.14;                          // 略带上反角
+    fold=Math.min(1,(amp>.3?.95:.2)*Math.max(0,Math.cos(ph))); // 上挑（相位导数为正）时收手腕
+  }
+  var nw=wingGeom(e,fold,spread,1),fw=wingGeom(e*.92,fold,spread,-1);
+  els.nf.setAttribute("d",nw.full);els.nc.setAttribute("d",nw.cov);
+  els.ff.setAttribute("d",fw.full);els.fc.setAttribute("d",fw.cov);
+  return st.mode==="perch"?0:3.2*st.amp*Math.cos(st.phase);
+}
+
 /* ════════════════ 鹈鹕巡检：天空视图 ════════════════
    整个机群是一座城：一栋楼 = 一个机柜（或主机组 / 产品线……），一扇窗 = 一台主机，机房是城区。
    鹈鹕在城市上空飞，它的航线就是巡检顺序：有问题的机器按严重程度排好，一台一台飞过去、
@@ -637,13 +692,13 @@ document.addEventListener("visibilitychange",function(){if(document.visibilitySt
    拖着横幅"全部 N 台正常"。
    规矩跟列表视图一样：它只去已经亮红/亮黄/变黑的窗，不推断任何原因。 */
 var skyEl=document.getElementById("sky"),scene=document.getElementById("scene"),cityG=document.getElementById("city"),
-    spotG=document.getElementById("spotG"),pelG=document.getElementById("pel"),wingN=document.getElementById("wingNear"),
-    wingF=document.getElementById("wingFar"),ropeEl=document.getElementById("rope"),bannerG=document.getElementById("bannerG"),
+    spotG=document.getElementById("spotG"),pelG=document.getElementById("pel"),pelBody=document.getElementById("pelBody"),
+    birdEls={nf:document.getElementById("wNF"),nc:document.getElementById("wNC"),ff:document.getElementById("wFF"),fc:document.getElementById("wFC")},ropeEl=document.getElementById("rope"),bannerG=document.getElementById("bannerG"),
     bannerBody=document.getElementById("bannerBody"),bannerCloth=document.getElementById("bannerCloth"),bannerText=document.getElementById("bannerText"),
     skycard=document.getElementById("skycard"),skytick=document.getElementById("skytick"),appEl=document.getElementById("app");
 var reduceMotion=!!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches);
 var SK={view:store("fleet.view")||"sky",built:"",W:0,H:0,ground:0,towers:[],pos:{},
-  p:{x:-160,y:140,vx:90,vy:0,face:1,phase:0,glide:0},b:{x:-300,y:150},
+  p:{x:-160,y:140,vx:90,vy:0,face:1,phase:0,glide:0,amp:.6},b:{x:-300,y:150},
   route:[],ri:0,arrived:0,probSig:"",lastT:0,cardKey:"",bannerMsg:"",bannerSev:""};
 if(HASH.indexOf("list")>=0)SK.view="list";
 if(HASH.indexOf("sky")>=0)SK.view="sky";
@@ -830,15 +885,26 @@ function skyFrame(t){
   // 朝向、姿态、翅膀
   if(hover&&tg&&tg.face)p.face=tg.face;else if(Math.abs(p.vx)>12)p.face=p.vx>0?1:-1;
   var watching=!!(st&&st.kind==="host"&&SK.arrived);
-  var tilt=Math.max(-22,Math.min(22,Math.atan2(p.vy,Math.abs(p.vx)+30)*57));
-  if(!hover&&!off){p.glide+=dt;var cyc=p.glide%3.4;flap=cyc<1.3?1:.12;if(watching)flap=.12}
-  if(reduceMotion)flap=0;
-  p.phase+=dt*rate*(flap>.5?1:.25);
-  var wa=flap?Math.sin(p.phase)*34*flap-(flap<.5?14:0):(off?0:-14);
-  var sc=SK.W<700?.62:.8;
+  // 飞行节奏：鹈鹕是慢而深的几下拍翅 + 长滑翔。悬停（异常/失联）快而大；盘旋（偏离）以滑翔为主；睡觉收翅栖息。
+  var perched=pelPose==="sleep";
+  var targetAmp,rateHz;
+  if(perched){targetAmp=0;rateHz=0}
+  else if(hover){targetAmp=.85;rateHz=2.6}
+  else{
+    p.glide+=dt;var cyc=p.glide%(watching?5.5:4.2),flapping=cyc<(watching?.8:1.5);
+    targetAmp=flapping?.66:.1;rateHz=flapping?1.5:.35;
+  }
+  if(reduceMotion){targetAmp=.1;rateHz=0}
+  p.amp+=(targetAmp-p.amp)*Math.min(1,dt*2.5);
+  p.phase+=dt*rateHz*2*Math.PI;
+  var bob=drawBird(birdEls,{mode:perched?"perch":"fly",phase:p.phase,amp:p.amp});
+  pelBody.setAttribute("transform","translate(0,"+bob.toFixed(2)+")");
+  // 姿态：俯冲时低头，爬升时抬头；悬停时身体上扬
+  var tilt=Math.max(-24,Math.min(24,Math.atan2(p.vy,Math.abs(p.vx)+40)*57));
+  if(hover)tilt=-14+Math.sin(p.phase)*3;
+  if(perched)tilt=0;
+  var sc=SK.W<700?.6:.78;
   pelG.setAttribute("transform","translate("+p.x.toFixed(1)+","+p.y.toFixed(1)+") scale("+(p.face*sc)+","+sc+") rotate("+tilt.toFixed(1)+")");
-  if(pelPose==="sleep"){wingN.setAttribute("transform","translate(-10,2) scale(.42,.3)");wingF.setAttribute("transform","translate(-10,2) scale(.4,.28)")}
-  else{wingN.setAttribute("transform","rotate("+(-wa).toFixed(1)+" -2 -4)");wingF.setAttribute("transform","rotate("+(-wa*.8+6).toFixed(1)+" -4 -6)")}
   drawSpot(st,tg,watching,sc);
   drawBanner(st,watching,off,sc,dt,t,hover);
   if(st&&st.kind==="host"&&watching){if(SK.cardKey!==st.name)renderCard(st.name)}
@@ -846,7 +912,7 @@ function skyFrame(t){
 }
 function drawSpot(st,tg,hover,sc){
   if(!(st&&st.kind==="host"&&hover&&tg&&tg.win)){if(spotG.__on){spotG.innerHTML="";spotG.__on=false}return}
-  var w=tg.win,p=SK.p,ex=p.x+p.face*37*sc,ey=p.y-27*sc;
+  var w=tg.win,p=SK.p,ex=p.x+p.face*39*sc,ey=p.y-16*sc; // 眼睛
   var cs=[[w.x-5,w.y-5],[w.x+w.s+5,w.y-5],[w.x+w.s+5,w.y+w.s+5],[w.x-5,w.y+w.s+5]];
   var ang=cs.map(function(c){return Math.atan2(c[1]-ey,c[0]-ex)}),lo=0,hi=0;
   for(var i=1;i<4;i++){if(ang[i]<ang[lo])lo=i;if(ang[i]>ang[hi])hi=i}
@@ -874,7 +940,7 @@ function drawBanner(st,watching,off,sc,dt,t,hover){
   if(bm.m!==SK.bannerMsg){SK.bannerMsg=bm.m;var txt=bm.m.length>46?bm.m.slice(0,45)+"…":bm.m;bannerText.textContent=txt;
     var w=24;try{w=bannerText.getComputedTextLength()+24}catch(e){w=txt.length*14+24}bannerCloth.setAttribute("width",Math.max(80,w).toFixed(0));SK.bw=Math.max(80,w)}
   if(bm.s!==SK.bannerSev){SK.bannerSev=bm.s;bannerG.setAttribute("class","banner "+bm.s)}
-  var p=SK.p,bw=SK.bw||120,tailX=p.x-p.face*48*sc,tailY=p.y+2*sc;
+  var p=SK.p,bw=SK.bw||120,tailX=p.x-p.face*62*sc,tailY=p.y+2*sc; // 尾巴
   // 横幅挂在身后；悬停时垂下来。横幅本身不镜像，字总是正的。
   var tx,ty;
   if(pelPose==="sleep"){tx=p.x-bw/2;ty=p.y+48}
