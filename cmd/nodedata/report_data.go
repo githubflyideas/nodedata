@@ -216,7 +216,7 @@ func (d *Diagnoser) timeline(rows []UseRow, now time.Time) []tlEvent {
 			continue
 		}
 		for _, f := range r.Facts {
-			if math.Abs(f.Z) >= useZThreshold && !seen[f.ID] {
+			if f.Notable && !seen[f.ID] {
 				seen[f.ID] = true
 				cands = append(cands, cand{f.ID, f.Label})
 			}

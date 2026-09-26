@@ -30,6 +30,9 @@ type Fact struct {
 	Base  *float64 `json:"base,omitempty"`
 	Z     float64  `json:"z,omitempty"`
 	Note  string   `json:"note,omitempty"`
+	// v5.25：Notable=这条读数构成偏离；Change=显著但不是问题（"高于平时"/"低于平时"）。旧版 nodedata 没有这两个字段。
+	Notable bool   `json:"notable,omitempty"`
+	Change  string `json:"change,omitempty"`
 }
 
 type Check struct {

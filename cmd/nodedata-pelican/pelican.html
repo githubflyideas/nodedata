@@ -181,7 +181,6 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
 #scene .cloud{fill:#1c2a38;opacity:.55}
 #scene .spot{mix-blend-mode:screen;pointer-events:none}
 #scene .halo{fill:none;stroke-width:2;pointer-events:none;animation:halo 1.4s ease-out infinite}
-#scene .trail{fill:none;stroke:#8fb8d6;stroke-opacity:.28;stroke-width:1.5;stroke-dasharray:2 6;stroke-linecap:round}
 #scene .rope{fill:none;stroke:#8795a0;stroke-width:1.2}
 #scene .bannerCloth{fill:#efe6d2;stroke:#b9ac90;stroke-width:1}
 #scene .bannerText{font:600 14px var(--sans);fill:#2a2118;dominant-baseline:middle}
@@ -202,7 +201,15 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
 #scene .pel.sleep .eye{display:none} #scene .pel.sleep .shut,#scene .pel.sleep .zz{display:inline}
 #scene .pel.puzzle .qm{display:inline}
 #scene .pel.sleep .zz{animation:zz 3s ease-in-out infinite}
-.sky.dusk #skyRect{fill:url(#skyNight)}
+/* 昼夜 */
+.sky.day #skyRect{fill:url(#skyBlue)} .sky.dusk #skyRect{fill:url(#skyDusk)}
+.app.offline .sky #skyRect{fill:url(#skyNight)}
+.sky.day #stars,.sky.day #moon{display:none} .sky.dusk #stars{opacity:.35} .sky.dusk #moon{display:none}
+.sky.night #sun{display:none} .sky.dusk #sun{opacity:.9}
+.sky.day #scene .cloud{fill:#ffffff;opacity:.85} .sky.dusk #scene .cloud{fill:#f3c6b0;opacity:.45}
+.sky.day #scene .tower{fill:#26323f;stroke:#3a4a5a} .sky.day #scene .groundTop{fill:#3a4a58} .sky.day #scene .groundFill{fill:#1b252e}
+.sky.day #scene .pel .body,.sky.day #scene .pel .head,.sky.day #scene .pel .neck{stroke:#5f6b75}
+.sky.day #scene .dlabel{fill:#8a97a2}
 .skycard{position:absolute;left:16px;top:14px;width:min(380px,calc(100% - 32px));background:rgba(20,28,35,.86);border:1px solid var(--line);border-radius:10px;padding:10px 14px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-size:14px;line-height:1.5;z-index:2}
 .skycard .ttl{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12px;letter-spacing:.12em;margin-bottom:4px}
 .skycard .hn{font-family:var(--mono);font-size:22px;color:var(--text);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -254,6 +261,8 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
       <defs>
         <linearGradient id="skyDay" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a1320"/><stop offset=".62" stop-color="#15263a"/><stop offset="1" stop-color="#27405a"/></linearGradient>
         <linearGradient id="skyNight" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05080d"/><stop offset="1" stop-color="#101820"/></linearGradient>
+        <linearGradient id="skyBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5d9fd6"/><stop offset=".7" stop-color="#9ccbee"/><stop offset="1" stop-color="#d4ebfa"/></linearGradient>
+        <linearGradient id="skyDusk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3a64"/><stop offset=".55" stop-color="#b8687a"/><stop offset="1" stop-color="#f2a66a"/></linearGradient>
         <radialGradient id="moonG"><stop offset="0" stop-color="#f3efe2"/><stop offset="1" stop-color="#cfc8b4"/></radialGradient>
         <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         <radialGradient id="spotBad"><stop offset="0" stop-color="#ff6a5e" stop-opacity=".55"/><stop offset="1" stop-color="#ff6a5e" stop-opacity=".08"/></radialGradient>
@@ -263,10 +272,10 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px sol
       </defs>
       <rect id="skyRect" x="0" y="0" width="100%" height="100%" fill="url(#skyDay)"/>
       <g id="stars"></g>
+      <g id="sun"><circle cx="0" cy="0" r="46" fill="#fff3c4" opacity=".25"/><circle cx="0" cy="0" r="26" fill="#ffd76a"/></g>
       <g id="moon"><circle cx="0" cy="0" r="26" fill="url(#moonG)"/><circle cx="10" cy="-6" r="23" fill="#0f1b2a" opacity=".92"/></g>
       <g id="clouds"></g>
       <g id="city"></g>
-      <polyline id="trail" class="trail" points=""/>
       <g id="spotG"></g>
       <g id="bannerG" class="banner"><path class="rope" id="rope" d=""/><g id="bannerBody"><rect class="bannerCloth" id="bannerCloth" x="0" y="-14" width="120" height="28" rx="3"/><text class="bannerText" id="bannerText" x="12" y="1"></text></g></g>
       <g id="pel" class="pel">
@@ -442,7 +451,8 @@ function renderGroup(p){
 function factHTML(f){
   var s=esc(f.label)+' <span class="num">'+esc(fmt(f.value,f.unit))+'</span>', ex=[];
   if(f.base!=null)ex.push("平时 "+esc(fmt(f.base,f.unit)));
-  if(f.z!=null&&Math.abs(f.z)>=3)ex.push("z="+f.z.toFixed(1));
+  if(f.notable&&f.z!=null)ex.push("z="+f.z.toFixed(1));
+  else if(f.change)ex.push(esc(f.change));
   if(ex.length)s+=' <span class="u">('+ex.join(", ")+')</span>';
   if(f.note)s+=' <span class="note">'+esc(f.note)+'</span>';
   return s;
@@ -639,6 +649,15 @@ if(HASH.indexOf("list")>=0)SK.view="list";
 if(HASH.indexOf("sky")>=0)SK.view="sky";
 if(DEMO)document.getElementById("demoBadge").hidden=false;
 
+/* 昼夜跟 iPad 的本地时间走：白天 7–17 点、傍晚/清晨是霞光、其余是夜。#day/#dusk/#night 可强制。 */
+function skyPhase(){
+  var f=HASH.filter(function(x){return x==="day"||x==="dusk"||x==="night"})[0];
+  if(f)return f;
+  var h=new Date().getHours();
+  return h>=7&&h<17?"day":(h>=5&&h<7)||(h>=17&&h<19)?"dusk":"night";
+}
+function applyPhase(){var ph=skyPhase();skyEl.classList.remove("day","dusk","night");skyEl.classList.add(ph)}
+applyPhase();setInterval(applyPhase,60000);
 function setView(v){
   SK.view=v;store("fleet.view",v);appEl.classList.toggle("view-sky",v==="sky");
   Array.prototype.forEach.call(document.querySelectorAll("#views button"),function(b){b.setAttribute("aria-pressed",b.dataset.v===v?"true":"false")});
@@ -664,6 +683,7 @@ function buildSkyDecor(W,H){
   var st="";for(var i=0;i<70;i++){st+='<circle class="star" cx="'+(rnd()*W).toFixed(0)+'" cy="'+(rnd()*H*.45).toFixed(0)+'" r="'+(rnd()*1.1+.3).toFixed(2)+'" opacity="'+(rnd()*.6+.2).toFixed(2)+'"/>'}
   document.getElementById("stars").innerHTML=st;
   document.getElementById("moon").setAttribute("transform","translate("+(W*.84)+","+(H*.14)+")");
+  document.getElementById("sun").setAttribute("transform","translate("+(W*.86)+","+(H*.15)+")");
   var cl="";for(var j=0;j<4;j++){var y=H*(.08+j*.09),sc=.7+rnd()*.8,dur=(90+rnd()*80).toFixed(0),delay=(-rnd()*150).toFixed(0);
     cl+='<g class="cloudG" style="animation-duration:'+dur+'s;animation-delay:'+delay+'s"><g transform="translate(0,'+y.toFixed(0)+') scale('+sc.toFixed(2)+')"><ellipse class="cloud" cx="0" cy="0" rx="70" ry="14"/><ellipse class="cloud" cx="30" cy="-9" rx="40" ry="13"/><ellipse class="cloud" cx="-28" cy="-6" rx="30" ry="10"/></g></g>'}
   document.getElementById("clouds").innerHTML=cl;
@@ -738,7 +758,7 @@ function planRoute(){
   var prob=[];
   SK.towers.forEach(function(t,ti){t.names.forEach(function(n){if(seen[n])return;var v=sevOfName(n);if(v==="bad"||v==="dev"||v==="lost"){seen[n]=1;prob.push({n:n,v:v,ti:ti})}})});
   prob.sort(function(a,b){return SEV[b.v]-SEV[a.v]||a.ti-b.ti});
-  prob.slice(0,16).forEach(function(p){stops.push({kind:"host",name:p.n,sev:p.v,dwell:p.v==="bad"?9000:6500})});
+  prob.slice(0,16).forEach(function(p){stops.push({kind:"host",name:p.n,sev:p.v,dwell:p.v==="bad"?9000:p.v==="dev"?12000:7000})});
   if(!stops.length){
     var order=SK.towers.map(function(t,i){return i});
     if(SK.p.x>SK.W/2)order.reverse();
@@ -747,14 +767,24 @@ function planRoute(){
   SK.route=stops;SK.ri=0;SK.arrived=0;
 }
 function nextStop(){SK.ri++;SK.arrived=0;if(SK.ri>=SK.route.length)planRoute()}
-function stopTarget(st){
+// 高度就是信号：全部正常时在高空巡航（远离楼顶），有问题才下来。
+//  异常：俯冲下去，贴着那扇窗悬停、快速拍翅，探照灯实心；
+//  偏离：下到楼顶上空，绕着那栋楼慢慢盘旋，一直盯着那扇窗；
+//  失联：贴窗悬停，头顶问号。
+function cruiseY(i){return Math.max(250,SK.H*.33)+(i%3)*16} // 在巡检报告卡片下方，仍远高于楼顶
+function stopTarget(st,t){
   if(st.kind==="host"){
     var w=SK.pos[st.name];if(!w)return null;
-    var left=w.x-118>40,tx=left?w.x-118:w.x+w.s+118,ty=Math.max(80,w.y-48);
+    if(st.sev==="dev"){
+      var tw=SK.towers[w.t],cx=w.x+w.s/2,cy=Math.max(90,(tw?tw.top:w.y)-95),ang=t/2600;
+      var ccx=Math.max(170,Math.min(SK.W-170,cx)); // 靠边的楼：盘旋圈整体挪进屏幕
+      return {x:ccx+Math.cos(ang)*95,y:cy+Math.sin(ang)*30,face:0,win:w,loiter:true,cx:ccx,cy:cy};
+    }
+    var left=w.x-104>40,tx=left?w.x-104:w.x+w.s+104,ty=Math.max(70,w.y-18);
     return {x:tx,y:ty,face:left?1:-1,win:w};
   }
-  var t=SK.towers[st.ti];if(!t)return null;
-  return {x:t.cx,y:Math.max(60,t.top-70-(st.ti%2)*20),face:0};
+  var tt=SK.towers[st.ti];if(!tt)return null;
+  return {x:tt.cx,y:cruiseY(st.ti),face:0};
 }
 
 /* ---------- 飞行 ---------- */
@@ -779,27 +809,29 @@ function skyFrame(t){
     if(d0<4){p.x=tg.x;p.y=tg.y;p.vx=p.vy=0;flap=0;setPelPose("sleep")}else setPelPose("");
   }else{
     if(!SK.route.length)planRoute();
-    st=SK.route[SK.ri];tg=st&&stopTarget(st);
+    st=SK.route[SK.ri];tg=st&&stopTarget(st,t);
     if(!tg){nextStop()}
     else{
-      var cruise=st.kind==="tower"?120:260;
-      var d=reduceMotion?0:flyTo(tg.x,tg.y+(st.kind==="host"?Math.sin(t/420)*4:0),dt,cruise);
+      var cruise=st.kind==="tower"?120:st.sev==="bad"?340:220;
+      var d=reduceMotion?0:flyTo(tg.x,tg.y+(st.kind==="host"&&!tg.loiter?Math.sin(t/420)*4:0),dt,cruise);
       if(reduceMotion){p.x=tg.x;p.y=tg.y;p.vx=p.vy=0}
       if(st.kind==="host"){
-        if(d<14){
-          if(!SK.arrived)SK.arrived=now;hover=true;rate=11;
+        if(d<(tg.loiter?60:14)||SK.arrived){
+          if(!SK.arrived)SK.arrived=now;hover=!tg.loiter;SK.watching=true;rate=st.sev==="bad"?14:9;
           // 飞到了才发现已经恢复：不停留
           if(sevOfName(st.name)==="ok"){nextStop()}
           else if(now-SK.arrived>st.dwell)nextStop();
         }
       }else if(d<60)nextStop();
+      if(st.kind!=="host")SK.watching=false;
       setPelPose(st.kind==="host"&&hover&&st.sev==="lost"?"puzzle":"");
     }
   }
   // 朝向、姿态、翅膀
   if(hover&&tg&&tg.face)p.face=tg.face;else if(Math.abs(p.vx)>12)p.face=p.vx>0?1:-1;
+  var watching=!!(st&&st.kind==="host"&&SK.arrived);
   var tilt=Math.max(-22,Math.min(22,Math.atan2(p.vy,Math.abs(p.vx)+30)*57));
-  if(!hover&&!off){p.glide+=dt;var cyc=p.glide%3.4;flap=cyc<1.3?1:.12}
+  if(!hover&&!off){p.glide+=dt;var cyc=p.glide%3.4;flap=cyc<1.3?1:.12;if(watching)flap=.12}
   if(reduceMotion)flap=0;
   p.phase+=dt*rate*(flap>.5?1:.25);
   var wa=flap?Math.sin(p.phase)*34*flap-(flap<.5?14:0):(off?0:-14);
@@ -807,18 +839,10 @@ function skyFrame(t){
   pelG.setAttribute("transform","translate("+p.x.toFixed(1)+","+p.y.toFixed(1)+") scale("+(p.face*sc)+","+sc+") rotate("+tilt.toFixed(1)+")");
   if(pelPose==="sleep"){wingN.setAttribute("transform","translate(-10,2) scale(.42,.3)");wingF.setAttribute("transform","translate(-10,2) scale(.4,.28)")}
   else{wingN.setAttribute("transform","rotate("+(-wa).toFixed(1)+" -2 -4)");wingF.setAttribute("transform","rotate("+(-wa*.8+6).toFixed(1)+" -4 -6)")}
-  drawSpot(st,tg,hover,sc);
-  trail(t);
-  drawBanner(st,hover,off,sc,dt,t);
-  if(st&&st.kind==="host"&&hover){if(SK.cardKey!==st.name)renderCard(st.name)}
+  drawSpot(st,tg,watching,sc);
+  drawBanner(st,watching,off,sc,dt,t,hover);
+  if(st&&st.kind==="host"&&watching){if(SK.cardKey!==st.name)renderCard(st.name)}
   else if(SK.cardKey!==""&&!(st&&st.kind==="host"))renderCard();
-}
-var trailPts=[],trailAt=0,trailEl=null;
-function trail(t){
-  if(!trailEl){trailEl=document.getElementById("trail");if(!trailEl)return}
-  if(t-trailAt<120)return;trailAt=t;
-  trailPts.push(SK.p.x.toFixed(0)+","+(SK.p.y+6).toFixed(0));if(trailPts.length>70)trailPts.shift();
-  trailEl.setAttribute("points",trailPts.join(" "));
 }
 function drawSpot(st,tg,hover,sc){
   if(!(st&&st.kind==="host"&&hover&&tg&&tg.win)){if(spotG.__on){spotG.innerHTML="";spotG.__on=false}return}
@@ -826,6 +850,7 @@ function drawSpot(st,tg,hover,sc){
   var cs=[[w.x-5,w.y-5],[w.x+w.s+5,w.y-5],[w.x+w.s+5,w.y+w.s+5],[w.x-5,w.y+w.s+5]];
   var ang=cs.map(function(c){return Math.atan2(c[1]-ey,c[0]-ex)}),lo=0,hi=0;
   for(var i=1;i<4;i++){if(ang[i]<ang[lo])lo=i;if(ang[i]>ang[hi])hi=i}
+  spotG.style.opacity=st.sev==="dev"?".55":"1";
   var grad=st.sev==="bad"?"beamBad":st.sev==="lost"?"beamLost":"beamDev",col=st.sev==="bad"?"#ff5a4e":st.sev==="lost"?"#8b80b3":"#d8a33f";
   var poly=ex.toFixed(1)+","+ey.toFixed(1)+" "+cs[lo][0].toFixed(1)+","+cs[lo][1].toFixed(1)+" "+cs[hi][0].toFixed(1)+","+cs[hi][1].toFixed(1);
   var html='<polygon class="spot" points="'+poly+'" fill="url(#'+grad+')"/><rect class="halo" x="'+(w.x-5)+'" y="'+(w.y-5)+'" width="'+(w.s+10)+'" height="'+(w.s+10)+'" rx="3" stroke="'+col+'"/>';
@@ -844,8 +869,8 @@ function bannerMessage(st,hover,off){
   return {m:"需要看："+[c.bad?"异常 "+c.bad:"",c.lost?"失联 "+c.lost:"",c.dev?"偏离 "+c.dev:""].filter(Boolean).join(" · "),s:c.bad?"bad":c.lost?"lost":"dev"};
 }
 function countSev(){var c={bad:0,dev:0,lost:0};hosts.forEach(function(h){var v=hostSev(h);if(v in c)c[v]++});return c}
-function drawBanner(st,hover,off,sc,dt,t){
-  var bm=bannerMessage(st,hover,off);
+function drawBanner(st,watching,off,sc,dt,t,hover){
+  var bm=bannerMessage(st,watching,off);
   if(bm.m!==SK.bannerMsg){SK.bannerMsg=bm.m;var txt=bm.m.length>46?bm.m.slice(0,45)+"…":bm.m;bannerText.textContent=txt;
     var w=24;try{w=bannerText.getComputedTextLength()+24}catch(e){w=txt.length*14+24}bannerCloth.setAttribute("width",Math.max(80,w).toFixed(0));SK.bw=Math.max(80,w)}
   if(bm.s!==SK.bannerSev){SK.bannerSev=bm.s;bannerG.setAttribute("class","banner "+bm.s)}

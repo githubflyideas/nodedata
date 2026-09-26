@@ -311,7 +311,8 @@ function renderGroup(p){
 function factHTML(f){
   var s=esc(f.label)+' <span class="num">'+esc(fmt(f.value,f.unit))+'</span>', ex=[];
   if(f.base!=null)ex.push("平时 "+esc(fmt(f.base,f.unit)));
-  if(f.z!=null&&Math.abs(f.z)>=3)ex.push("z="+f.z.toFixed(1));
+  if(f.notable&&f.z!=null)ex.push("z="+f.z.toFixed(1));
+  else if(f.change)ex.push(esc(f.change));
   if(ex.length)s+=' <span class="u">('+ex.join(", ")+')</span>';
   if(f.note)s+=' <span class="note">'+esc(f.note)+'</span>';
   return s;

@@ -209,8 +209,10 @@ func factLine(f UseFact) string {
 	if f.Base != nil {
 		extra = append(extra, "平时 "+fmtUnit(*f.Base, f.Unit))
 	}
-	if math.Abs(f.Z) >= useZThreshold {
+	if f.Notable {
 		extra = append(extra, "z="+strconv.FormatFloat(f.Z, 'f', 1, 64))
+	} else if f.Change != "" {
+		extra = append(extra, f.Change) // 显著但不是问题：只说方向，不给 z，免得读的人（或模型）当成告警
 	}
 	if len(extra) > 0 {
 		s += " (" + strings.Join(extra, ", ") + ")"
