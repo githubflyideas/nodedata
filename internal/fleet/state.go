@@ -1,4 +1,4 @@
-package main
+package fleet
 
 import (
 	"math"
@@ -40,6 +40,7 @@ type stateOut struct {
 	Inventory Inventory `json:"inventory"`
 	LoadedAt  int64     `json:"inventory_loaded_at,omitempty"`
 	Hosts     []hostOut `json:"hosts"`
+	Events    []Event   `json:"events,omitempty"` // 最近的状态变化，旧的在前
 	Version   string    `json:"version"`
 }
 
@@ -61,6 +62,7 @@ func (p *Poller) Snapshot(now time.Time, interval, lostAfter time.Duration, inv 
 	if !inv.LoadedAt.IsZero() {
 		out.LoadedAt = inv.LoadedAt.Unix()
 	}
+	out.Events = p.recentEventsLocked()
 	if !p.roundAt.IsZero() {
 		out.RoundAt, out.RoundMS = p.roundAt.Unix(), p.roundTook.Milliseconds()
 	}

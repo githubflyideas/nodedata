@@ -27,6 +27,7 @@ import (
 	"github.com/githubflyideas/nodedata/internal/collector"
 	"github.com/githubflyideas/nodedata/internal/deviation"
 	"github.com/githubflyideas/nodedata/internal/diagnosis"
+	"github.com/githubflyideas/nodedata/internal/metrics"
 )
 
 // UseFact 是一条带基线的观测。Base 为 nil 表示历史还不够，说不出"平时多少"。
@@ -42,8 +43,12 @@ type UseFact struct {
 	// Note 是读这个数之前必须知道的前提，例如"vda 是虚拟盘，util 满不等于盘满"。
 	Note string `json:"note,omitempty"`
 	// 来源（v5.21）：页面悬停时说清"平时"和 z 是怎么来的。
-	BaseN int    `json:"base_n,omitempty"` // "平时"用了多少个点（过去 24 小时，不含最近 10 分钟）
-	ZLag  string `json:"z_lag,omitempty"`  // |z| 最大的那一档："1小时"= 跟 1 小时前比
+	BaseN int `json:"base_n,omitempty"` // "平时"用了多少个点（过去 24 小时，不含最近 10 分钟）
+	// v5.25：Notable=这条读数让这一行变成"偏离"（坏方向 + 显著 + 持续落在瓶颈区间，见 concern.go）。
+	// Change 是不改变状态的变化："高于平时"/"低于平时"——显著，但往好的方向，或还没到可能成为瓶颈的程度。
+	Notable bool   `json:"notable,omitempty"`
+	Change  string `json:"change,omitempty"`
+	ZLag    string `json:"z_lag,omitempty"` // |z| 最大的那一档："1小时"= 跟 1 小时前比
 }
 
 // UseCheck 是 L0 里越线的一条判定。它决定 State，UseFact 不决定。
@@ -264,6 +269,7 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 		ids = d.series.MetricIDs()
 	}
 
+	cctx := d.concernCtx()
 	out := make([]UseRow, 0, len(useResources))
 	for _, res := range useResources {
 		row := UseRow{Resource: res.Name, Blind: append([]string(nil), res.Blind...)}
@@ -282,15 +288,31 @@ func (d *Diagnoser) Use(now time.Time) []UseRow {
 			}
 			haveAny = true
 			f.Z = zBy[m.id]
-			if math.Abs(f.Z) >= useZThreshold {
-				f.ZLag = zLag[m.id]
-			}
 			f.Note = d.noteFor(m.id, now)
-			notable := math.Abs(f.Z) >= useZThreshold
+			// 显著 ≠ 有问题：往坏的方向、且过去 60 秒一直落在可能成为瓶颈的区间，才算偏离。
+			significant := math.Abs(f.Z) >= useZThreshold
+			notable := significant && f.Z*metrics.Lookup(m.id).Direction() > 0 &&
+				d.sustainedConcern(m.id, f.Value, now, cctx)
+			if notable {
+				f.Notable, f.ZLag = true, zLag[m.id]
+			} else if why := d.sustainedHard(m.id, f.Value, now, cctx); why != "" {
+				// 绝对线：不看历史。z 不重要，写清楚是哪条线
+				notable, f.Notable = true, true
+				if f.Note != "" {
+					f.Note += "；"
+				}
+				f.Note += why + "（绝对线，持续 1 分钟）"
+			} else if significant {
+				f.Change = "低于平时"
+				if f.Z > 0 {
+					f.Change = "高于平时"
+				}
+			}
 			if notable && level < 1 {
 				level = 1
 			}
-			if i == 0 || m.always || notable {
+			// 显著的变化照样展示（这是展示工具），只是不改变这一行的状态。
+			if i == 0 || m.always || notable || f.Change != "" {
 				row.Facts = append(row.Facts, f)
 			} else {
 				row.Checked = append(row.Checked, m.label)
@@ -422,4 +444,63 @@ func (d *Diagnoser) noteFor(id string, now time.Time) string {
 		return note
 	}
 	return ""
+}
+
+// concernCtx 收集判断"是不是瓶颈"要用的机器背景。
+func (d *Diagnoser) concernCtx() concernCtx {
+	c := concernCtx{cores: d.cores, last: func(id string) (float64, bool) {
+		if d.series == nil {
+			return 0, false
+		}
+		p, ok := d.series.Last(id)
+		return p.V, ok && !math.IsNaN(p.V)
+	}}
+	if d.disks != nil {
+		c.diskKind = d.disks().BusiestKind
+	}
+	return c
+}
+
+// concernHold 是"落在瓶颈区间"要持续多久才算数：一闪而过的尖峰不点亮墙上的方块。
+// 按数据判断（过去这段时间的原始点全部在区间里），不靠调用之间记状态——结果可重复、可测。
+const concernHold = 60 * time.Second
+
+func (d *Diagnoser) sustainedConcern(id string, cur float64, now time.Time, c concernCtx) bool {
+	if in, known := inConcern(id, cur, c); !known || !in {
+		return false
+	}
+	if d.series == nil {
+		return false
+	}
+	pts := d.series.RawRange(id, now.Add(-concernHold), now)
+	if len(pts) < 2 {
+		return false // 刚开始采：没有 60 秒的依据，先不报
+	}
+	if now.Sub(pts[0].TS) < concernHold*3/4 {
+		return false // 窗口里的点没覆盖够 60 秒（中间断过采）
+	}
+	for _, p := range pts {
+		if in, _ := inConcern(id, p.V, c); !in {
+			return false
+		}
+	}
+	return true
+}
+
+// sustainedHard：过去 60 秒一直在绝对线以上，返回那条线的说明；否则返回空。
+func (d *Diagnoser) sustainedHard(id string, cur float64, now time.Time, c concernCtx) string {
+	in, why := hardLine(id, cur, c)
+	if !in || d.series == nil {
+		return ""
+	}
+	pts := d.series.RawRange(id, now.Add(-concernHold), now)
+	if len(pts) < 2 || now.Sub(pts[0].TS) < concernHold*3/4 {
+		return ""
+	}
+	for _, p := range pts {
+		if ok, _ := hardLine(id, p.V, c); !ok {
+			return ""
+		}
+	}
+	return why
 }

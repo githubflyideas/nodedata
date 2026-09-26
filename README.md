@@ -1,39 +1,63 @@
-# nodedata — 单机性能展示与排查工具
+# nodedata — 单机性能展示与百台巡视
 
-**nodedata 首先是一个性能展示工具。**它把一台机器的现状、历史对比、服务变化摆在一屏里，
-让人自己看出问题。它也会给出"线索"（哪个指标偏了、谁在用资源），但那部分标着**测试中**，
-是"先看哪儿"的提示，不是结论——**给出错的推理不如不给推理**。
+把一台 Linux 机器的现状、跟平时比的变化、谁在用资源摆在一屏里，让人自己看出问题。
+**给出错的推理不如不给推理**：它只摆事实和"先看哪儿"，不替你下结论。
 
-一个静态二进制.
-## 运行：一行命令、发现问题
+三个程序，都是单个静态二进制，零依赖，只读 `/proc` 和 `/sys`：
+
+| 程序 | 跑在哪 | 默认端口 | 干什么 |
+|---|---|---|---|
+| `nodedata` | 每台被看的机器 | 8888 | 采集、判定、单机页面 |
+| `nodedata-fleet` | 一台巡视台机器 | 8888 | 拉各台的状态，方块轮播大屏 |
+| `nodedata-pelican` | 一台巡视台机器 | 8776 | 同上，天空视图：机群是一座城，鹈鹕飞过去照住出问题的机器 |
+
+更细的设计和取舍见 [DESIGN.md](DESIGN.md)，每版改了什么见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## 1. 装
+
+从 GitHub Releases 下载 `nodedata-vX.Y.Z-linux.tar.gz`，解压出来是一个同名目录（**不会覆盖当前目录里的文件**）：
 
 ```bash
-GOMAXPROCS=1 ./nodedata serve --listen 0.0.0.0 --data-dir ./data
+tar xzf nodedata-v5.25.1-linux.tar.gz
+cd nodedata-v5.25.1
+sha256sum -c SHA256SUMS                          # 校验
+sudo install -m 755 nodedata-linux-amd64 /usr/local/bin/nodedata          # ARM 用 -arm64
+sudo install -m 755 nodedata-fleet-linux-amd64 /usr/local/bin/nodedata-fleet
+sudo install -m 755 nodedata-pelican-linux-amd64 /usr/local/bin/nodedata-pelican
+nodedata version
 ```
 
-（带资源硬上限，停掉或重启机器即消失）：
+## 2. 单机：nodedata
 
 ```bash
-sudo systemd-run --unit=nodedata -p CPUQuota=20% -p MemoryMax=300M -p Nice=10 -p IOSchedulingClass=idle -p Restart=always --setenv=GOMAXPROCS=1 --setenv=GOMEMLIMIT=200MiB /usr/local/bin/nodedata serve --port 8888 --data-dir /var/lib/nodedata
+# 先试：只本机能看，前台跑，Ctrl-C 停
+nodedata serve --data-dir ./data
+# 浏览器开 http://127.0.0.1:8888/
+
+# 给别人/巡视台看：对内网开放（记得用防火墙只放行该放行的来源）
+nodedata serve --listen 0.0.0.0 --port 8888 --data-dir /var/lib/nodedata
+
+# 带资源硬上限跑（CPU 最多 0.2 核、内存 300M、IO 让路；重启机器后消失）
+sudo systemd-run --unit=nodedata -p CPUQuota=20% -p MemoryMax=300M -p Nice=10 \
+  -p IOSchedulingClass=idle -p Restart=always --setenv=GOMAXPROCS=1 --setenv=GOMEMLIMIT=200MiB \
+  /usr/local/bin/nodedata serve --listen 0.0.0.0 --data-dir /var/lib/nodedata
+
+systemctl status nodedata            # 状态
+journalctl -u nodedata -f            # 日志
+sudo systemctl stop nodedata         # 停
 ```
 
-看状态 / 日志 / 停止：
-
-```bash
-systemctl status nodedata ; journalctl -u nodedata -f ; sudo systemctl stop nodedata
-```
-
-开机自启：把下面这段存成 `/etc/systemd/system/nodedata.service`，然后
-`systemctl daemon-reload && systemctl enable --now nodedata`。
-（仓库里只有 Go 与 HTML，不提供安装脚本；这段与上面那一行命令的限制完全相同。）
+开机自启：存成 `/etc/systemd/system/nodedata.service`，再 `sudo systemctl daemon-reload && sudo systemctl enable --now nodedata`。
 
 ```ini
 [Unit]
-Description=nodedata — single-host deviation monitor
+Description=nodedata
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/nodedata serve --port 8888 --data-dir /var/lib/nodedata
+ExecStart=/usr/local/bin/nodedata serve --listen 0.0.0.0 --port 8888 --data-dir /var/lib/nodedata
 Restart=always
 RestartSec=5
 CPUQuota=20%
@@ -47,204 +71,169 @@ Environment=GOMEMLIMIT=200MiB
 WantedBy=multi-user.target
 ```
 
+CentOS 7/8（cgroup v1）上 `MemoryMax` 不生效，换成 `MemoryLimit=300M`。
 
-
-### 为什么是这些限制
-
-| 设置 | 理由 |
-|---|---|
-| `CPUQuota=20%` | 正常开销约 2% 核（按实测外推：85 条序列、1000 个进程）；20% 是给页面访问留的余量，同时是硬上限 —— v3.0.8 那种 bug 再出现也只能用到 0.2 核而不是 1.5 核 |
-| `GOMAXPROCS=1` | Go 1.24 及以前不感知 cgroup CPU 配额，多核机上会开满 P，突发后被 CFS 节流卡住 |
-| `MemoryMax=300M` + `GOMEMLIMIT=200MiB` | 满 24h 原始层 + 56 天长期层、85 条序列约 72MiB；GOMEMLIMIT 让 GC 在内核 OOM 之前先收紧 |
-| `Nice=10`、`IOSchedulingClass=idle` | 和业务抢资源时让路 |
-
-cgroup v1 的机器（CentOS 7/8 默认）上 `MemoryMax` 不生效，改用 `-p MemoryLimit=300M`。
-
-## 参数
+**参数**
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--listen` | `127.0.0.1` | 监听地址。设为 `0.0.0.0` 前请确认有防火墙或反代鉴权 |
-| `--port` | `8888` | 监听端口 |
-| `--data-dir` | `./data` | 转储 `*.json`、`baseline.json`、`history/` |
-| `--history-dir` | `<data-dir>/history` | 长期层落盘目录 |
-| `--rootfs` | `/` | 要监控容量的挂载点 |
-| `--interval` | `5s` | 采集与 L0 巡检周期 |
-| `--dump-interval` | `30s` | 页面数据转储周期 |
-| `--proc` / `--sys` | `/proc` / `/sys` | 测试用的替代根 |
-| `--web-root` | 空 | 从磁盘读 `index.html` 覆盖内置页面（前端开发用） |
+| `--listen` | `127.0.0.1` | 监听地址。页面里有进程名和 PID，开放前先想好谁能访问 |
+| `--port` | `8888` | |
+| `--data-dir` | `./data` | 历史（`history/`）、事故留证（`incidents/`）、人工基线都在这里；升级、重启不会丢 |
+| `--history-dir` | `<data-dir>/history` | 长期历史：5 分钟一点，保留 14 天 |
+| `--interval` | `10s` | 采集周期 |
+| `--rootfs` | `/` | 要看容量的挂载点 |
+| `--dump-interval` | `0` | 把页面数据转储成文件；0 = 不转储 |
 
-## 数据怎么存
-
-- **原始层**：每个采集周期一点，内存里保留 24 小时。5 分钟到 1 小时这几档用它。
-- **采集维度**：CPU / 内存 / 磁盘（含容量）/ 网络（含 UDP 缓冲区溢出）/ 套接字（TCP 状态分布、conntrack 水位）
-  + 每块整盘（`disk.util@nvme0n1` 等）+ 每个网卡（`net.rx_drop@eth1` 等）
-  + 每个进程（CPU、块设备读写、主缺页、RSS 与 1 小时增长、状态）。整机磁盘汇总不重复计 dm/md，
-  整机网络只汇总物理/virtio 网卡（不重复计 bond 与 VLAN）。
-- **长期层**：每 5 分钟从原始点里抽一个（不求平均，保证 Δ 的分布不变），保留 14 天，
-  追加写到 `history/YYYY-MM-DD.jsonl`（每天约 0.7MB，14 天约 9MB），重启时读回。
-  6 小时到 7 天这几档、以及对比表和服务表的"14天前"一列用它。
-- **一套时间点，全页面共用**：5分钟 · 10分钟 · 30分钟 · 1小时 · 6小时 · 12小时 · 1天 · 3天 · 7天 · 14天。
-  对比表（原始数值）和服务表（在不在）用全部 10 个；变化幅度用前 9 个——它要判断"这个变化平时有多大"，
-  一档需要 2 倍的历史（往回够 H，再估计这一档平时的波动），14 天保留期最多撑到 7 天。
-  首次部署后，"和 1 天前比"约 2 天后可用，"和 7 天前比"约 14 天后可用。
-
-## 它会告诉你什么
-
-L4 把偏离按症状归成 CPU / IO / 内存 / 网络四类，每类一条结论，写明**责任方**和**下一步命令**：
-
-```
-CPU 劣化：cpu.user 上升 6.0σ — 责任方 burner（PID 4242）
-  责任方 burner PID 4242  占 150% 核，占整机忙碌的 41%；在这次变化开始之后才出现，是首要嫌疑
-  下一步 top -H -p 4242 · pidstat -u -t -p 4242 1 5 · cat /proc/4242/status · perf top -p 4242
-```
-
-- 责任方排序：自身序列也偏离的进程 > 变化开始后才出现的进程 > 此刻用得最多的进程（会注明"未必是原因"）。
-  常年 200% 的数据库不会因为一直最大就被指认。
-- IO 同时给出设备（按盘的 util/延迟）和进程（/proc/PID/io 块层读写），并列出 D 状态进程。
-- 内存看 1 小时 RSS 增长、主缺页；slab 领头时指认内核而不是进程。
-- 虚机上 `cpu.steal` 领头时指认宿主机，不冤枉本机进程。
-- 网络只到接口（按进程拆流量需要 eBPF，未做）。
-- 责任方是 nodedata 自己时会明说。
-- 结论要求偏离在最近 3 个采样点（15 秒）持续，单点噪声不下结论。
-
-## 事故留证
-
-后台每 15 秒跑一次 L4（不需要打开页面）。出现带责任方的结论时，把现场存到
-`<data-dir>/incidents/<时间>-<类别>.json`：结论与完整诊断链、|z|≥2 的指标、进程快照、
-责任进程的线程级 CPU（1 秒采样）与 wchan/内核栈、全部 D 状态进程及其栈、最近 100 条内核日志、
-原始 pressure/meminfo/vmstat/diskstats/net 文件。同一责任方 30 分钟内只留一次，保留最近 100 份。
-不采集进程命令行（参数里常有密码）。页面上可以"立即留证"。
-
-## 故障语料库
-
-- **回放**（每次 CI）：`go test -run TestFaultCorpus -v ./cmd/nodedata`。8 个物理机/虚机场景
-  （新失控进程、老进程变异、nodedata 自身、单盘写入、3 小时内存泄漏、网卡丢包、虚机 steal、安静的一天），
-  断言类别与责任方，报告出结论耗时和误报率。
-- **真实注入**（实验机）：`./faultlab --url http://127.0.0.1:8888 --scenarios cpu,io,mem`，
-  nodedata 需先运行约 10 分钟。网卡丢包：`sudo ./faultlab --scenarios net --iface eth0`（需要 tc 和该口上的 TCP 流量）。
-
-## 页面
-
-绝对判定（L0）固定在最上面，其余分四个标签页：
-
-| 标签页 | 内容 |
-|---|---|
-| 关键指标 | 25 条曲线（1h/6h/24h/7d/14d 可选）+ 诊断链 + 事故留证 |
-| OS 指标 | 全部采集项：CPU / 内存 / 磁盘 / 网络 / 套接字 / 进程 |
-| 整体偏离度和占用 | z 热力图 + 此刻谁在用资源（带下一步命令） |
-| 服务对比 | 服务清单与历史在否 |
-
-## 服务
-
-页面上单独一个"服务"区块，回答"这台机器上跑着什么、各自什么时候起来的、昨天那个还在不在"。
-
-识别**只读 /proc**：可执行文件名查表 → java 命令行（区分 ELK / Kafka / Tomcat）→
-监听端口反查 → 都不认就显示可执行文件名。不连服务、不读配置、不执行任何命令。
-把 mysqld 改名部署也能靠 3306 认出来。内置表覆盖 Nginx / Apache / Caddy / HAProxy /
-MySQL / MariaDB / PostgreSQL / MongoDB / Redis / Memcached / ClickHouse / etcd /
-Elasticsearch / Kibana / Logstash / Kafka / ZooKeeper / RabbitMQ / Docker / containerd /
-BIND / CoreDNS / PHP-FPM 等。
-
-每行给出：服务名与监听端口、进程名、PID、实例数、启动时间、已运行时长、CPU、内存，
-以及 1h / 6h / 12h / 1d / 3d / 7d / 14d 前在不在（`✓` 在 / `—` 不在 / `?` 当时 nodedata 没在跑 /
-`重启` 那时在但之后换过一次）。**消失的服务留在表里标灰**，不会凭空不见。
-
-服务变化只呈现、不告警：我们分不清"挂了"和"运维手动停的"，分不清就不该报警。
-
-## 给监控系统的接口
-
-`GET /health.txt` 一行文本，关键字打头，主机名在同一行：
-
-```
-NODEDATA host=jp02-dns-01 status=WARN cpu=182% load=9.14 mem_avail=1.2GiB disk_util=96 \
-  culprit=fl-io/236 reason="IO 劣化：disk.await_w 上升 6.0σ" ts=2026-09-12T03:10:51Z
-```
+**不开浏览器也能看**
 
 ```bash
-curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' || 告警
+curl -s localhost:8888/health.txt         # 一行，给监控 grep
+curl -s localhost:8888/api/report         # 纯文本简报，可以直接贴给大模型
+curl -s localhost:8888/api/use            # USE 五行（JSON）
+curl -s localhost:8888/api/fleet          # 巡视台拉的就是这个
+curl -s localhost:8888/api/cores          # 逐核 CPU
 ```
 
-`status` 取 L0 绝对判定与 L4 归因结论中较严重者：`DOWN`（L0 有 fail）、
-`WARN`（L0 有 warn，或 L4 给出了带责任方的结论）、`NORMAL`。异常时 `reason=` 说明原因，
-`culprit=` 直接给出进程名/PID，派单时不用再登机器。
-自由文本里的 `NODEDATA`、`status=`、换行与引号都会被中和 —— 进程名是攻击者可控的，
-否则一个叫 `NODEDATA status=NORMAL` 的进程就能让监控的 grep 在真告警时匹配成功。
+**接进现有监控**
 
-## 巡视台：nodedata-fleet
-
-几十上百台机器的轮播大屏，给挂墙的 iPad 用。另一个二进制，加一份 `host.list`：
-
-```
-nodedata-fleet -hosts host.list -listen 0.0.0.0 -port 8888
+```bash
+curl -s http://127.0.0.1:8888/health.txt | grep -q '^NODEDATA .*status=NORMAL' || echo 告警
+# NODEDATA host=db-01 status=WARN cpu=182% load=9.14 ... culprit=rsync/4411 reason="IO 劣化：..."
 ```
 
-启动参数：
+`status` 是 `NORMAL` / `WARN` / `DOWN`，异常时带 `reason=` 和 `culprit=`（进程名/PID）。
+
+## 3. 状态怎么判
+
+每台机器按 CPU / 内存 / 磁盘 / 网络 / 系统 五行给状态。**大部分时间机器是正常的**，所以第一目标是正常的机器不亮黄。
+
+| 状态 | 什么时候 |
+|---|---|
+| **异常**（红） | 绝对判定没过：只读挂载、分区满、OOM…… |
+| **偏离**（黄） | ① 往**坏的方向**变 + 变化显著 + 读数落在**可能是瓶颈的区间**，并持续 60 秒；或 ② 过了**绝对线**，持续 60 秒（不看历史） |
+| 正常 | 其余。变化显著但不是问题的（比如变闲了）只标"高于/低于平时"，不变色 |
+| 无数据 | 采不到，绝不当正常 |
+
+| 资源 | 瓶颈区间 | 绝对线 |
+|---|---|---|
+| CPU | 整机 ≥50%，单核 ≥60%，排队 > 核数，CPU 压力 ≥5%，被偷 ≥5% | 单核 ≥95%，CPU 压力 ≥20%，排队 > 2×核数 |
+| 内存 | 已用 ≥80%，换页 ≥1MB/s，内存压力 ≥5%，主缺页 ≥100/s | 内存压力 ≥10%，换出 ≥10MB/s |
+| 磁盘 | IO 压力 ≥5%；延迟：机械盘 50ms / SSD 10ms / 虚拟盘 20ms | IO 压力 ≥20% |
+| 网络 | 丢包/错包 ≥1/s，TCP 重传 ≥10/s | 持续丢包/错包 |
+
+数字的来历写在 `cmd/nodedata/concern.go`，要调就改那里。
+
+## 4. 巡视台：nodedata-fleet
+
+一台机器跑巡视台，去各台拉状态（只拉不推，各台不用知道巡视台在哪），iPad 挂墙轮播。
+
+```bash
+cp host.list.example host.list        # 改成你的机器
+nodedata-fleet -hosts host.list -listen 0.0.0.0
+# iPad 打开 http://巡视台地址:8888/#rack
+
+# 巡视台这台机器上也跑着 nodedata（同样 8888）时换个端口
+nodedata-fleet -hosts host.list -listen 0.0.0.0 -port 8890
+
+# 看拉取情况
+curl -s localhost:8888/health.txt     # ok hosts=100 ok=93 dev=4 bad=1 lost=2 last_round=3s
+curl -s localhost:8888/api/state | head -c 500
+```
+
+各台要做的只有：`nodedata serve --listen 0.0.0.0`，防火墙只放行巡视台的 IP。
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `-hosts` | `host.list` | 主机清单文件，改了自动重读 |
-| `-listen` | `127.0.0.1` | 监听地址；给 iPad 看要设 `0.0.0.0`，并用防火墙限制来源 |
-| `-port` | `8888` | 页面端口。**巡视台所在机器如果也跑着 nodedata（默认同样是 8888），两者必须错开**，比如 `-port 8890`；撞了启动会直接报"端口已被占用"并提示 |
-| `-interval` | `15s` | 多久拉一轮（最小 5s） |
-| `-timeout` | `5s` | 单台拉取超时（不超过间隔的一半） |
+| `-hosts` | `host.list` | 主机清单，改了自动重读 |
+| `-listen` | `127.0.0.1` | 给 iPad 看要设 `0.0.0.0` |
+| `-port` | `8888` | |
+| `-interval` | `15s` | 多久拉一轮 |
+| `-timeout` | `5s` | 单台超时 |
 | `-lost-after` | 3 轮 | 多久没拉到算失联 |
-| `-parallel` | `32` | 同时拉几台 |
 
-iPad 打开 `http://巡视台地址:8888/#rack`（`#` 后面是开机默认按什么翻：host / group / product / rack / dc / tags）。
+### host.list 格式
 
-- **只拉不推。** 巡视台每 15 秒并发去各台拉一次 `/api/fleet`（USE 五行，判断已经在各台用各自的基线做完了）。
-  各台不需要知道巡视台在哪，也不往外发任何东西。各台要做的只有：`nodedata serve --listen 0.0.0.0`，
-  防火墙只放行巡视台的 IP。v5.21 及更早的 nodedata 没有 `/api/fleet`，巡视台会退回 `/api/use`，照样能看。
-- **没有数据库、不存历史。** 历史在各台自己那里；大屏只回答"现在哪台不对、从什么时候开始"。点方块进主机页。
-- **按什么翻页**：主机 / 主机组 / 产品线 / 机柜 / 机房 / 标签，来自 host.list（格式见
-  `cmd/nodedata-fleet/host.list.example`）。左右滑动或点边缘箭头翻页；箭头下的数字是那一边还有几页不正常。
-  默认每页 15 秒自动轮播，手一碰暂停 60 秒。页面地址加 `#rack`、`#host` 等可以指定开机默认按什么翻。
-- **改 host.list 不用重启**，每轮开始前检查。新文件有一处写错就整份不采用、继续用上一版，大屏顶部提示哪一行错了——
-  一个笔误不能让一台机器从墙上悄悄消失。
-- **宁可说不知道，也不画假绿：**
-  - 超过 3 轮（默认 45 秒）没拉到 = 失联，不带上一次的读数；从没拉到过的单独标出来；
-  - 对方少报一行或状态认不出 = 无数据，不当正常；
-  - 巡视台之前就已经不正常的，起点写"巡视台 hh:mm 开始看时已是这样"，不编时间；
-  - iPad 连不上巡视台、或巡视台停止拉取，整屏变灰并写明最后一次更新时间；
-  - "同时发生"（同一资源 3 分钟内 ≥2 台变坏）只列事实，并提示时钟偏差超过 5 秒的机器。
-- **拉取状况**（右上角）：没拉到的机器和原因，常见原因会翻译成部署时该查什么
-  （连接被拒绝多半是对方只监听了 127.0.0.1）。
-- `/health.txt` 一行文本给现有监控：`ok hosts=100 ok=93 dev=4 bad=1 lost=2 last_round=3s`，
-  拉取停了是 `crit`，清单有错是 `warn`。
-- iPad：Safari 打开上面的地址后"添加到主屏幕"（全屏、无地址栏），设置里自动锁定设为"永不"，
-  再开"引导式访问"锁在这个页面上。页面不从外网加载任何东西，机房 iPad 上不了外网也能用。
+一台一行：`名字  地址  键=值 …`，`#` 后面是注释。
 
-## 监听与访问控制
+- 地址：`10.1.0.11`（补默认端口 8888）、`10.1.0.11:9100`，或完整 URL（反代、https、基本认证；密码不会显示在屏上）。
+- 键：`dc`（机房）、`rack`（机柜）、`product`（产品线）、`group`（主机组）、`tags`（逗号分隔，可多个）。值里不能有空格。
+- 改完保存就生效。**写错一处，整份不采用**，继续用上一版，屏幕顶部提示哪一行错了。
 
-默认只监听 `127.0.0.1`。页面会列出进程名、PID 与主机负载水位，是内网侦察的现成材料，
-所以要给别人看必须显式 `--listen 0.0.0.0`，并自行用防火墙限制来源或放在带鉴权的反代之后
-（程序本身不做鉴权）。绑非回环地址时启动会打印一行警告。
+**例子**
 
-## API
+```
+# 名字        地址                                   分组
+pay-db-01     10.1.0.11:8888   dc=tokyo1 rack=A03 product=支付 group=mysql-主 tags=核心,SSD
+pay-java-01   10.1.0.21        dc=tokyo1 rack=A03 product=支付 group=java-app tags=核心
+ord-redis-01  10.1.0.31        dc=tokyo1 rack=A04 product=订单 group=redis    tags=SSD
+log-kafka-01  10.2.0.41        dc=osaka1 rack=B01 product=日志平台 group=kafka  # 没有标签
+edge-01       https://ops:secret@gw.example.com/nd/edge-01   dc=osaka1 product=基础设施
+test-01       10.9.0.5         # 什么都不写也行：只在"主机"那一层出现，其他层归到"(未填)"
+```
 
-| 路径 | 说明 |
-|---|---|
-| `/` | 页面 |
-| `/data/{1h,6h,24h,7d,30d}.json` | 窗口数据（含 `procs` 进程快照） |
-| `/data/health.json` | 采集器自检，含 `self.cpu_pct`、`self.rss_mb` |
-| `/api/check` | L0 绝对判定 |
-| `/api/diagnosis?z=3` | L4 诊断链 |
-| `/health.txt` | 一行文本，给监控 grep |
-| `/api/services` | 服务清单与历史在否 |
-| `/api/keyseries?win=6h` | 关键指标曲线数据（`w` 为每步最坏值） |
-| `/api/use` | USE 五行：读数、已查项、谁干的、下一步命令 |
-| `/api/fleet` | 给巡视台拉的：USE 五行外加版本号、主机名、本机时间（跨机器契约，只加字段不改字段） |
-| `/api/report` | 纯文本简报（机器、先后、最近变化、各资源、看不到），可直接贴给大模型 |
-| `/api/context` | 机器底子：核数、内存、盘类型、虚拟化、开机时长 |
-| `/api/cores` | 逐核 CPU（仅当前） |
-| `/api/baseline` | GET / POST / DELETE 人工基线 |
-| `/api/incidents` | GET 留证列表；POST 立即留证 |
-| `/api/incidents/<id>` | 一份证据 |
+### 屏上怎么用
 
-## 编译
+- 顶部选按什么翻页：主机 / 主机组 / 产品线 / 机柜 / 机房 / 标签。
+- 左右滑动或点边缘箭头翻页，箭头下的数字 = 那一边还有几页不正常。默认 15 秒一页，手一碰暂停 60 秒。
+- 点方块进主机页。右上角"拉取状况"列出没拉到的机器和原因（比如"对方只监听了 127.0.0.1"）。
+- 巡视台自己断了，整屏变灰并写明最后更新时间——绝不留着一屏旧的绿。
+
+## 5. 鹈鹕巡检：nodedata-pelican
+
+同一份 host.list、同一套拉取和判断，换成天空视图：**一栋楼 = 一个机柜，一扇窗 = 一台主机**，窗的颜色就是状态。
 
 ```bash
-CGO_ENABLED=0 go build -ldflags "-X main.version=$(git describe --tags --always)" -o nodedata ./cmd/nodedata
-CGO_ENABLED=0 go build -ldflags "-X main.version=$(git describe --tags --always)" -o nodedata-fleet ./cmd/nodedata-fleet
+nodedata-pelican -hosts host.list -listen 0.0.0.0              # http://巡视台地址:8776/
+nodedata-pelican -hosts host.list -listen 0.0.0.0 -port 9000   # 换端口
+
+# 跟方块版并排跑，比一比哪个在墙上好用
+nodedata-fleet   -hosts host.list -listen 0.0.0.0 &            # :8888
+nodedata-pelican -hosts host.list -listen 0.0.0.0 &            # :8776
 ```
+
+| 情况 | 鹈鹕 |
+|---|---|
+| 全部正常 | 高空巡航，拍几下滑一阵，拖着横幅"全部 N 台正常" |
+| 异常 | 俯冲下来，贴着那扇窗快速拍翅悬停，探照灯照住它 |
+| 偏离 | 在那栋楼上空盘旋，盯着那扇窗 |
+| 失联 | 贴窗悬停，头顶问号 |
+| 巡视台断开 | 落在楼顶收翅睡觉，城市变灰 |
+
+停下时左上角"巡检报告"显示这台的 USE 五行。它只去已经亮红、亮黄、变黑的窗，不推断原因。
+点楼进这一组，点窗进这台主机；顶部"天空 / 列表"随时切换（列表就是 nodedata-fleet 的页面）。
+
+地址 `#` 后面可以组合，用 `-` 连接：
+
+```
+http://巡视台:8776/#rack            按机柜分楼（默认）
+http://巡视台:8776/#group           按主机组分楼
+http://巡视台:8776/#product-list    按产品线、打开就是列表视图
+http://巡视台:8776/#rack-night      强制夜景（默认天色跟 iPad 本地时间：白天/霞光/夜）
+http://巡视台:8776/#demo            演示模式：不连任何机器，100 台假数据，顶部挂"演示数据"
+```
+
+## 6. iPad 挂墙
+
+1. Safari 打开巡视台地址 → 分享 → **添加到主屏幕**（全屏、无地址栏）。
+2. 设置 → 显示与亮度 → 自动锁定 → **永不**。
+3. 设置 → 辅助功能 → **引导式访问** 打开；进页面后连按三下顶部按钮（有主屏幕按钮的机型按主屏幕按钮）锁定。
+4. 页面不从外网加载任何东西，机房 iPad 上不了外网也能用。
+
+## 7. 从源码编译
+
+```bash
+git clone https://github.com/githubflyideas/nodedata && cd nodedata
+V=$(git describe --tags --always)
+for c in nodedata nodedata-fleet nodedata-pelican; do
+  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$V" -o $c ./cmd/$c
+done
+go test ./...                          # 含 8 天历史回放和故障语料，约 1 分钟
+go test -short ./...                   # 跳过回放，几秒
+```
+
+## 8. 安全
+
+- 默认只监听 `127.0.0.1`。页面里有进程名、PID、负载，开放给内网前先用防火墙限制来源，或放在带鉴权的反代后面（程序本身不做鉴权）。
+- 只读 `/proc`、`/sys`；不连服务、不读配置、不执行命令；不采集进程命令行（参数里常有密码）。
+- 页面给的"下一步命令"只填 PID、不拼进程名，只给诊断命令，nodedata 自己从不执行它们。

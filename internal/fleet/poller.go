@@ -3,7 +3,7 @@
 // 只拉不推：各台不需要知道中心在哪，也不主动往外发东西。
 // 判断在各台已经用各自的基线做完了，这里只收"判完的状态"，不收原始曲线，
 // 所以 100 台一轮也就几百 KB，中心和各台都不会因为巡视而变慢。
-package main
+package fleet
 
 import (
 	"context"
@@ -30,6 +30,9 @@ type Fact struct {
 	Base  *float64 `json:"base,omitempty"`
 	Z     float64  `json:"z,omitempty"`
 	Note  string   `json:"note,omitempty"`
+	// v5.25：Notable=这条读数构成偏离；Change=显著但不是问题（"高于平时"/"低于平时"）。旧版 nodedata 没有这两个字段。
+	Notable bool   `json:"notable,omitempty"`
+	Change  string `json:"change,omitempty"`
 }
 
 type Check struct {
@@ -91,6 +94,7 @@ type hostState struct {
 	since      map[string]time.Time
 	sinceKnown map[string]bool
 	prev       map[string]string
+	lostMarked bool // 已经记过一条 lost 事件，等拉到了再记 back
 }
 
 // Poller 持有所有主机的最新状态。
@@ -106,6 +110,9 @@ type Poller struct {
 	started   time.Time
 	roundAt   time.Time
 	roundTook time.Duration
+
+	lostAfter time.Duration // 用于记 lost 事件；0 = 不记
+	events    []Event
 }
 
 func NewPoller(timeout time.Duration, parallel int, ua string) *Poller {
@@ -166,6 +173,7 @@ func (p *Poller) Round(ctx context.Context) {
 	wg.Wait()
 	p.mu.Lock()
 	p.roundAt, p.roundTook = time.Now(), time.Since(start)
+	p.markLostLocked(p.roundAt)
 	p.mu.Unlock()
 }
 
@@ -183,6 +191,10 @@ func (p *Poller) record(name string, doc agentDoc, err error, t0, t1 time.Time) 
 	}
 	s.err = ""
 	firstOK := s.lastOK.IsZero()
+	if s.lostMarked {
+		s.lostMarked = false
+		p.addEventLocked(Event{At: t1.Unix(), Host: name, Kind: "back"})
+	}
 	s.lastOK = t1
 	s.doc = doc
 	s.skew = 0
@@ -194,6 +206,9 @@ func (p *Poller) record(name string, doc agentDoc, err error, t0, t1 time.Time) 
 	for _, r := range doc.Rows {
 		code := stCode(r.State)
 		cur[r.Resource] = true
+		if old, had := s.prev[r.Resource]; had && !firstOK && old != code {
+			p.addEventLocked(Event{At: t1.Unix(), Host: name, Kind: "state", Res: r.Resource, From: old, To: code})
+		}
 		if code == "ok" {
 			delete(s.since, r.Resource)
 			delete(s.sinceKnown, r.Resource)

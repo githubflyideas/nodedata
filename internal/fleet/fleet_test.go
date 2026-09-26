@@ -1,4 +1,4 @@
-package main
+package fleet
 
 import (
 	"context"
@@ -277,25 +277,19 @@ func TestHealthLine(t *testing.T) {
 	if l := healthLine(st, now); !strings.HasPrefix(l, "crit") || !strings.Contains(l, "拉取停了") {
 		t.Errorf("超过 3 轮没拉完应 crit：%s", l)
 	}
+	// 刚启动、第一轮还没拉完：不是 crit
+	st2 := stateOut{Interval: 15, Started: 998}
+	if l := healthLine(st2, now); !strings.HasPrefix(l, "starting") {
+		t.Errorf("启动 2 秒、第一轮未完成应是 starting：%s", l)
+	}
+	st2.Started = 900
+	if l := healthLine(st2, now); !strings.HasPrefix(l, "crit") {
+		t.Errorf("启动 100 秒还没拉完一轮应 crit：%s", l)
+	}
 	st.RoundAt = 990
 	st.Inventory.Errors = []string{"x"}
 	if l := healthLine(st, now); !strings.HasPrefix(l, "warn") {
 		t.Errorf("清单有错应 warn：%s", l)
-	}
-}
-
-// 页面里不能留原型的模拟数据，也不能从外网加载任何东西（机房 iPad 多半上不了外网）。
-func TestPageIsSelfContained(t *testing.T) {
-	s := string(pageHTML)
-	for _, bad := range []string{"sampleInventory", "tickSim", "示例数据", "https://", "http://"} {
-		if strings.Contains(s, bad) {
-			t.Errorf("页面里不应出现 %q", bad)
-		}
-	}
-	for _, need := range []string{"api/state", "巡视台断开", "不代表正常"} {
-		if !strings.Contains(s, need) {
-			t.Errorf("页面里应有 %q", need)
-		}
 	}
 }
 
@@ -326,15 +320,75 @@ func TestDecodeRealAgentOutput(t *testing.T) {
 	}
 }
 
-// 仓库里给的样例清单必须能原样读通。
-func TestExampleInventoryParses(t *testing.T) {
-	f, err := os.Open("host.list.example")
+// README 里 host.list 的例子必须能原样读通：文档和代码不能各说各的。
+func TestReadmeInventoryExampleParses(t *testing.T) {
+	b, err := os.ReadFile("../../README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	hs, errs := ParseInventory(f)
-	if len(errs) > 0 || len(hs) != 5 {
-		t.Fatalf("hosts=%d errs=%v", len(hs), errs)
+	s := string(b)
+	i := strings.Index(s, "### host.list 格式")
+	if i < 0 {
+		t.Fatal("README 里找不到 host.list 格式一节")
+	}
+	s = s[i:]
+	j := strings.Index(s, "**例子**")
+	if j < 0 {
+		t.Fatal("找不到例子")
+	}
+	s = s[j:]
+	a := strings.Index(s, "```\n") + 4
+	e := strings.Index(s[a:], "```")
+	hs, errs := ParseInventory(strings.NewReader(s[a : a+e]))
+	if len(errs) > 0 || len(hs) != 6 {
+		t.Fatalf("README 例子应读到 6 台且无错误：hosts=%d errs=%v", len(hs), errs)
+	}
+	if hs[3].Group != "kafka" || len(hs[3].Tags) != 0 || hs[5].URL != "http://10.9.0.5:8888" {
+		t.Errorf("README 例子解析结果不对：%+v / %+v", hs[3], hs[5])
+	}
+	if strings.Contains(hs[4].Addr, "secret") {
+		t.Errorf("显示地址不能带密码：%s", hs[4].Addr)
+	}
+}
+
+// 巡检日记：只记亲眼看到的变化。启动时就不正常的不算；失联、回来各一条；从没拉到过的不记。
+func TestEvents(t *testing.T) {
+	a := newFakeAgent(t, false)
+	a.set("磁盘", "偏离") // 启动前就偏离：不是事件
+	hosts, _ := ParseInventory(strings.NewReader("a " + a.srv.URL + "\nnever 127.0.0.1:1\n"))
+	p := NewPoller(time.Second, 2, "t")
+	p.lostAfter = 50 * time.Millisecond
+	p.SetHosts(hosts)
+	ctx := context.Background()
+	p.Round(ctx)
+	ev := func() []Event { return p.Snapshot(time.Now(), time.Second, p.lostAfter, Inventory{}).Events }
+	if e := ev(); len(e) != 0 {
+		t.Fatalf("首轮不应有事件：%+v", e)
+	}
+	a.set("CPU", "异常")
+	a.set("磁盘", "正常")
+	p.Round(ctx)
+	e := ev()
+	if len(e) != 2 || e[0].Res != "CPU" || e[0].From != "ok" || e[0].To != "bad" || e[1].Res != "磁盘" || e[1].From != "dev" || e[1].To != "ok" {
+		t.Fatalf("应有 CPU ok→bad、磁盘 dev→ok 两条：%+v", e)
+	}
+	a.down.Store(true)
+	time.Sleep(60 * time.Millisecond)
+	p.Round(ctx)
+	p.Round(ctx) // 第二轮不重复记 lost
+	e = ev()
+	if len(e) != 3 || e[2].Kind != "lost" || e[2].Host != "a" {
+		t.Fatalf("应多一条 a 的 lost（且只一条）：%+v", e)
+	}
+	a.down.Store(false)
+	p.Round(ctx)
+	e = ev()
+	if len(e) != 4 || e[3].Kind != "back" {
+		t.Fatalf("回来应记 back：%+v", e)
+	}
+	for _, x := range e {
+		if x.Host == "never" {
+			t.Errorf("从没拉到过的机器不应有事件：%+v", x)
+		}
 	}
 }

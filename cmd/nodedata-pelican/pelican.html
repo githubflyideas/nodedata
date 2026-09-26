@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>鹈鹕巡检</title>
+<style>
+:root{
+  color-scheme:dark;
+  --ground:#0d1318; --panel:#141c23; --panel2:#1a242d; --line:#25313b;
+  --text:#d6dfe5; --dim:#7b8a95; --faint:#4b5863; --accent:#8fb8d6;
+  --ok:#3f9b79; --ok-bg:#15291f; --dev:#d8a33f; --dev-bg:#2e2512;
+  --bad:#e2544b; --bad-bg:#351715; --lost:#8b80b3; --lost-bg:#211e2e; --none:#46525c;
+  --sans:"IBM Plex Sans Condensed","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","SF Mono",Menlo,Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--ground);color:var(--text);font-family:var(--sans);font-size:15px;overflow:hidden;-webkit-tap-highlight-color:transparent}
+.app{height:100%;display:flex;flex-direction:column}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* 顶栏 */
+.top{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font-weight:600;letter-spacing:.04em;font-size:15px;white-space:nowrap}
+.brand small{color:var(--dim);font-weight:400;margin-left:6px}
+.dims{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;gap:2px;overflow-x:auto;max-width:100%}
+.dims button{padding:7px 14px;border-radius:6px;color:var(--dim);white-space:nowrap;font-size:15px}
+.dims button[aria-pressed="true"]{background:var(--panel2);color:var(--text);box-shadow:inset 0 0 0 1px var(--line)}
+.top .sp{flex:1}
+.sample{font-size:12px;color:var(--dev);border:1px solid #5a4620;border-radius:4px;padding:2px 7px;letter-spacing:.06em}
+.clock{font-family:var(--mono);font-size:20px;font-variant-numeric:tabular-nums;color:var(--text)}
+.tool{color:var(--dim);font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--line)}
+
+/* 轮播 */
+.stage{position:relative;flex:1;min-height:0}
+.track{display:flex;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain}
+.track::-webkit-scrollbar{display:none}
+.page{flex:0 0 100%;height:100%;scroll-snap-align:start;scroll-snap-stop:always;overflow-y:auto;padding:18px 64px 24px}
+.track.fade{opacity:0;transition:opacity .18s}
+.track{transition:opacity .25s}
+
+.edge{position:absolute;top:0;bottom:0;width:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;opacity:.28;transition:opacity .2s;z-index:2}
+.edge:hover,.edge:active,.stage.touched .edge{opacity:.95}
+.edge.l{left:0;background:linear-gradient(90deg,rgba(13,19,24,.9),transparent)}
+.edge.r{right:0;background:linear-gradient(270deg,rgba(13,19,24,.9),transparent)}
+.edge svg{width:26px;height:26px;stroke:var(--text);fill:none;stroke-width:2.2}
+.edge .cnt{font-family:var(--mono);font-size:12px;min-width:22px;text-align:center;padding:1px 5px;border-radius:9px;color:#111}
+.edge .cnt.bad{background:var(--bad)} .edge .cnt.dev{background:var(--dev)} .edge .cnt.lost{background:var(--lost)}
+
+/* 底栏 */
+.foot{display:flex;align-items:center;gap:14px;padding:8px 16px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);font-size:14px;color:var(--dim);flex-wrap:wrap}
+.foot .pos{font-family:var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
+.bar{flex:1;min-width:120px;height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent)}
+.bar.paused i{background:var(--faint)}
+.foot select{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font:inherit;font-size:13px}
+.back{color:var(--accent);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:14px}
+
+/* 通用状态 */
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:5px;padding:2px 9px;font-size:14px;font-weight:500;white-space:nowrap}
+.pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.dev{background:var(--dev-bg);color:var(--dev)}
+.pill.bad{background:var(--bad-bg);color:var(--bad)} .pill.lost{background:var(--lost-bg);color:var(--lost)}
+.pill.none{background:var(--panel2);color:var(--dim)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* 分组页 */
+.ghead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.ghead .kind{color:var(--dim);font-size:14px;letter-spacing:.08em}
+.ghead h2{margin:0;font-size:34px;font-weight:600;line-height:1.1;text-wrap:balance}
+.ghead .counts{display:flex;gap:8px;flex-wrap:wrap}
+.facts{margin:0 0 14px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:8px;display:grid;gap:4px;font-size:15px}
+.facts .lbl{color:var(--dim);font-size:12px;letter-spacing:.1em}
+.facts .f b{font-weight:600}
+.facts .f .who{color:var(--dim)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.tiles.dense{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px}
+.tile{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:9px 10px;display:grid;gap:7px;position:relative}
+.tile::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:transparent}
+.tile.dev::before{background:var(--dev)} .tile.bad::before{background:var(--bad)} .tile.lost::before{background:var(--lost)}
+.tile.bad{background:#1e1719} .tile.lost{background:repeating-linear-gradient(135deg,var(--panel) 0 8px,#1b1a24 8px 16px)}
+.tile .nm{font-family:var(--mono);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tiles.dense .tile{padding:7px 8px;gap:5px} .tiles.dense .nm{font-size:12.5px}
+.segs{display:grid;grid-template-columns:repeat(5,1fr);gap:3px}
+.segs span{height:14px;border-radius:2px;background:var(--ok);opacity:.55;font-size:10px;line-height:14px;text-align:center;color:#0d1318;font-weight:600}
+.tiles.dense .segs span{height:10px;line-height:10px;font-size:0}
+.segs .dev{background:var(--dev);opacity:1} .segs .bad{background:var(--bad);opacity:1} .segs .none{background:var(--none);opacity:.7}
+.tile .sub{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1em}
+.tiles.dense .sub{display:none}
+.legend{margin-top:12px;color:var(--faint);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+
+/* 主机页 */
+.hwrap{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:22px;align-items:start}
+.hid h2{margin:0 0 6px;font-family:var(--mono);font-size:30px;font-weight:500;word-break:break-all}
+.hid .addr{font-family:var(--mono);color:var(--dim);margin-bottom:14px}
+.hid dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:14px}
+.hid dt{color:var(--dim)} .hid dd{margin:0}
+.hid .tag{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 6px;margin:0 4px 4px 0;font-size:13px}
+.hid .seen{margin-top:14px;font-size:13px;color:var(--dim)}
+.use{display:grid;gap:8px}
+.urow{display:grid;grid-template-columns:64px 78px 1fr;gap:12px;align-items:start;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.urow .res{font-weight:600;font-size:18px}
+.urow .rd{font-size:16px;line-height:1.55}
+.urow .rd .u{color:var(--dim);font-size:14px}
+.urow .rd .who{display:block;color:var(--accent);font-size:14px;margin-top:2px}
+.urow .rd .ck{display:block;color:var(--faint);font-size:13px;margin-top:2px}
+.urow.bad{border-color:#5a2724} .urow.dev{border-color:#4e3d1c}
+.lostbox{grid-column:1/-1;background:var(--lost-bg);border:1px solid #3d3656;border-radius:8px;padding:12px 14px;color:var(--lost);font-size:16px}
+
+/* 清单抽屉 */
+.drawer{position:fixed;inset:0;background:rgba(5,8,11,.72);display:flex;justify-content:flex-end;z-index:10}
+.drawer .in{width:min(640px,100%);height:100%;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;gap:10px;padding:16px}
+.drawer h3{margin:0;font-size:18px}
+.drawer p{margin:0;color:var(--dim);font-size:13px;line-height:1.6}
+.drawer textarea{flex:1;background:var(--ground);color:var(--text);border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:12.5px;line-height:1.5;padding:10px;resize:none;white-space:pre;overflow:auto}
+.drawer .row{display:flex;gap:10px;align-items:center}
+.drawer .go{background:var(--accent);color:#0d1318;border-radius:6px;padding:7px 16px;font-weight:600}
+.drawer .err{color:var(--bad);font-size:13px}
+
+@media (max-width:760px){
+  .page{padding:14px 44px 18px}
+  .hwrap{grid-template-columns:1fr}
+  .urow{grid-template-columns:52px 1fr}
+  .urow .pill{grid-column:2}
+  .urow .rd{grid-column:1/-1}
+  .ghead h2{font-size:26px}
+  .edge{width:38px}
+  .clock{font-size:16px}
+}
+@media (prefers-reduced-motion:reduce){.track,.edge{transition:none}}
+
+.banner{padding:7px 16px;background:var(--dev-bg);color:var(--dev);font-size:14px;border-bottom:1px solid #4e3d1c}
+.banner button{color:var(--dev);text-decoration:underline;padding:0 4px}
+.app.offline .stage,.app.offline .foot{filter:grayscale(1);opacity:.35}
+.offmsg{position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 26px;text-align:center;max-width:calc(100% - 32px)}
+.offmsg b{display:block;font-size:26px;margin-bottom:6px;color:var(--text)}
+.offmsg span{color:var(--dim)}
+.empty{padding:40px 0;color:var(--dim);font-size:18px;line-height:1.7}
+.urow .rd .chk{display:block;color:var(--bad);font-size:14px}
+.urow .rd .chk.warn{color:var(--dev)}
+.urow .rd .note{color:var(--dev);font-size:13px}
+.hid .warn{margin-top:10px;font-size:13px;color:var(--dev);line-height:1.5}
+.pulls{overflow:auto;flex:1;border:1px solid var(--line);border-radius:6px}
+.pulls table{border-collapse:collapse;width:100%;font-size:13px}
+.pulls th,.pulls td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.pulls th{color:var(--dim);font-weight:500;position:sticky;top:0;background:var(--panel)}
+.pulls td.nm{font-family:var(--mono);white-space:nowrap}
+.drawer ul{margin:0;padding-left:18px;color:var(--dev);font-size:13px;line-height:1.6}
+.meta{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.meta dt{color:var(--dim)} .meta dd{margin:0;font-family:var(--mono);word-break:break-all}
+
+/* ════════ 鹈鹕巡检：天空视图 ════════ */
+.views{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;gap:2px}
+.views button{padding:7px 14px;border-radius:6px;color:var(--dim);font-size:15px}
+.views button[aria-pressed="true"]{background:var(--accent);color:#0d1318;font-weight:600}
+.demo{font-size:12px;color:var(--dev);border:1px solid #5a4620;border-radius:4px;padding:2px 7px;letter-spacing:.06em}
+.sky{position:relative;flex:1;min-height:0;overflow:hidden;display:none;background:#0a1019}
+.app.view-sky .sky{display:block}
+.app.view-sky .stage,.app.view-sky .foot{display:none}
+#scene{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:manipulation}
+#scene .tower{fill:#161f29;stroke:#27323e;stroke-width:1;cursor:pointer}
+#scene .tower.sel{stroke:var(--accent);stroke-width:1.5}
+#scene .roof{stroke:#3a4754;stroke-width:2;stroke-linecap:round}
+#scene .win{cursor:pointer;transition:fill .6s}
+#scene .win.ok{fill:#2c6b56} #scene .win.none{fill:#28313a}
+#scene .win.dev{fill:#d8a33f} #scene .win.bad{fill:#ff5a4e;filter:url(#glow);animation:winpulse 1.6s ease-in-out infinite}
+#scene .win.lost{fill:#15131d;stroke:#6f6596;stroke-width:1;stroke-dasharray:2 2}
+#scene .beacon{fill:transparent} #scene .beacon.bad{fill:#ff5a4e;animation:blink 1s steps(2) infinite}
+#scene .beacon.dev{fill:#d8a33f;animation:blink 2s steps(2) infinite} #scene .beacon.lost{fill:#8b80b3;animation:blink 2.4s steps(2) infinite}
+#scene .tlabel{font:500 12px var(--sans);fill:#7b8a95;text-anchor:middle;cursor:pointer}
+#scene .tlabel.hot{fill:#e2e8ec}
+#scene .dlabel{font:600 12px var(--sans);fill:#56646f;text-anchor:middle;letter-spacing:.2em}
+#scene .dline{stroke:#2a3642;stroke-width:1}
+#scene .groundTop{fill:#1b2631} #scene .groundFill{fill:#0c131a}
+#scene .star{fill:#cfd8df}
+#scene .cloud{fill:#1c2a38;opacity:.55}
+#scene .spot{mix-blend-mode:screen;pointer-events:none}
+#scene .halo{fill:none;stroke-width:2;pointer-events:none;animation:halo 1.4s ease-out infinite}
+#scene .rope{fill:none;stroke:#8795a0;stroke-width:1.2}
+#scene .bannerCloth{fill:#efe6d2;stroke:#b9ac90;stroke-width:1}
+#scene .bannerText{font:600 14px var(--sans);fill:#2a2118;dominant-baseline:middle}
+#scene .banner.bad .bannerCloth{fill:#f6d9d3;stroke:#c9574c} #scene .banner.dev .bannerCloth{fill:#f5e6c4;stroke:#c89a3a}
+#scene .banner.lost .bannerCloth{fill:#e2def0;stroke:#8b80b3}
+#scene .pel .body,#scene .pel .head{fill:#f1eee6;stroke:#9aa3ab;stroke-width:1.3}
+#scene .pel .neck{fill:#f1eee6;stroke:#9aa3ab;stroke-width:1}
+#scene .pel .wNF{fill:#2b2f35;stroke:#15181b;stroke-width:.8;stroke-linejoin:round}
+#scene .pel .wNC{fill:#f4f1ea;stroke:#8e979f;stroke-width:.8;stroke-linejoin:round}
+#scene .pel .wFF{fill:#1a1d21} #scene .pel .wFC{fill:#cfcbc2}
+#scene .pel .crest{stroke:#9aa3ab;stroke-width:1.6;stroke-linecap:round;fill:none}
+#scene .pel .glint{fill:#fff}
+#scene .pel .legs{stroke:#e7a53c;stroke-width:3;stroke-linecap:round;fill:none;display:none}
+#scene .pel.sleep .legs{display:inline} #scene .pel.sleep .feet,#scene .pel.sleep .glint{display:none}
+#scene .pel .tail{fill:#dcd8cf;stroke:#9aa3ab;stroke-width:1}
+#scene .pel .bill{fill:#e7a53c;stroke:#b57a20;stroke-width:1}
+#scene .pel .pouch{fill:#f0bd6e;stroke:#b57a20;stroke-width:1}
+#scene .pel .feet{stroke:#e7a53c;stroke-width:3;stroke-linecap:round;fill:none}
+#scene .pel .eye{fill:#141a20} #scene .pel .shut{stroke:#141a20;stroke-width:1.8;stroke-linecap:round;display:none}
+#scene .pel .qm{font:700 30px var(--sans);fill:#b7aee0;display:none}
+#scene .pel .zz{font:600 15px var(--sans);fill:#9fb0bd;display:none}
+#scene .pel.sleep .eye{display:none} #scene .pel.sleep .shut,#scene .pel.sleep .zz{display:inline}
+#scene .pel.puzzle .qm{display:inline}
+#scene .pel.sleep .zz{animation:zz 3s ease-in-out infinite}
+/* 昼夜 */
+.sky.day #skyRect{fill:url(#skyBlue)} .sky.dusk #skyRect{fill:url(#skyDusk)}
+.app.offline .sky #skyRect{fill:url(#skyNight)}
+.sky.day #stars,.sky.day #moon{display:none} .sky.dusk #stars{opacity:.35} .sky.dusk #moon{display:none}
+.sky.night #sun{display:none} .sky.dusk #sun{opacity:.9}
+.sky.day #scene .cloud{fill:#ffffff;opacity:.85} .sky.dusk #scene .cloud{fill:#f3c6b0;opacity:.45}
+.sky.day #scene .tower{fill:#26323f;stroke:#3a4a5a} .sky.day #scene .groundTop{fill:#3a4a58} .sky.day #scene .groundFill{fill:#1b252e}
+.sky.day #scene .pel .body,.sky.day #scene .pel .head,.sky.day #scene .pel .neck{stroke:#5f6b75}
+.sky.day #scene .dlabel{fill:#8a97a2}
+.skycard{position:absolute;left:16px;top:14px;width:min(380px,calc(100% - 32px));background:rgba(20,28,35,.86);border:1px solid var(--line);border-radius:10px;padding:10px 14px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-size:14px;line-height:1.5;z-index:2}
+.skycard .ttl{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12px;letter-spacing:.12em;margin-bottom:4px}
+.skycard .hn{font-family:var(--mono);font-size:22px;color:var(--text);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.skycard .meta{color:var(--dim);font-size:13px;margin-bottom:6px}
+.skycard .r{display:grid;grid-template-columns:44px 52px 1fr;gap:6px;align-items:baseline;padding:2px 0}
+.skycard .r .res{font-weight:600}
+.skycard .r .pill{font-size:12px;padding:0 6px;justify-self:start}
+.skycard .r .v{color:var(--text);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skycard .r .v .u{color:var(--dim)}
+.skycard .sum{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 6px}
+.skycard .ev{font-size:13px;color:var(--dim)} .skycard .ev b{color:var(--text);font-weight:500}
+.skycard .hint{font-size:12px;color:var(--faint);margin-top:6px}
+.skytick{position:absolute;left:16px;right:16px;bottom:8px;font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:2;pointer-events:none}
+.skytick b{color:var(--faint);font-weight:500;letter-spacing:.1em;margin-right:10px}
+.skytick .e{margin-right:18px}
+.e.bad{color:var(--bad)} .e.dev{color:var(--dev)} .e.ok{color:var(--ok)} .e.lost{color:var(--lost)}
+.skylegend{position:absolute;right:16px;top:14px;display:flex;gap:12px;font-size:12px;color:var(--dim);z-index:2;background:rgba(13,19,24,.6);padding:5px 10px;border-radius:6px}
+.skylegend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.app.offline .sky #city{filter:grayscale(1);opacity:.45}
+.app.offline .sky{filter:none;opacity:1}
+.evlog{max-height:36%;overflow:auto;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.evlog div{padding:5px 8px;border-bottom:1px solid var(--line)}
+.evlog .t{font-family:var(--mono);color:var(--dim);margin-right:10px}
+@keyframes winpulse{0%,100%{opacity:1}50%{opacity:.55}}
+@keyframes blink{50%{opacity:0}}
+@keyframes halo{0%{opacity:.9}100%{opacity:.2}}
+@keyframes zz{0%{opacity:0;transform:translate(0,4px)}30%{opacity:1}100%{opacity:0;transform:translate(10px,-16px)}}
+@keyframes drift{from{transform:translateX(-30%)}to{transform:translateX(130%)}}
+#scene .cloudG{animation:drift linear infinite}
+@media (max-width:760px){.skycard{font-size:13px}.skycard .hn{font-size:18px}.skylegend{display:none}}
+@media (prefers-reduced-motion:reduce){#scene *{animation:none!important}}
+</style></head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand">鹈鹕巡检<small id="cnt"></small></div>
+    <nav class="views" id="views" aria-label="视图"><button type="button" data-v="sky" aria-pressed="true">天空</button><button type="button" data-v="list" aria-pressed="false">列表</button></nav>
+    <nav class="dims" id="dims" aria-label="按什么翻页"></nav>
+    <span class="sp"></span>
+    <span class="demo" id="demoBadge" hidden>演示数据</span>
+    <button class="tool" id="invBtn" type="button">巡检日记</button>
+    <span class="clock" id="clock">--:--:--</span>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+
+
+  <section class="sky" id="sky" aria-label="天空视图">
+    <svg id="scene" aria-hidden="false">
+      <defs>
+        <linearGradient id="skyDay" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a1320"/><stop offset=".62" stop-color="#15263a"/><stop offset="1" stop-color="#27405a"/></linearGradient>
+        <linearGradient id="skyNight" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05080d"/><stop offset="1" stop-color="#101820"/></linearGradient>
+        <linearGradient id="skyBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5d9fd6"/><stop offset=".7" stop-color="#9ccbee"/><stop offset="1" stop-color="#d4ebfa"/></linearGradient>
+        <linearGradient id="skyDusk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3a64"/><stop offset=".55" stop-color="#b8687a"/><stop offset="1" stop-color="#f2a66a"/></linearGradient>
+        <radialGradient id="moonG"><stop offset="0" stop-color="#f3efe2"/><stop offset="1" stop-color="#cfc8b4"/></radialGradient>
+        <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <radialGradient id="spotBad"><stop offset="0" stop-color="#ff6a5e" stop-opacity=".55"/><stop offset="1" stop-color="#ff6a5e" stop-opacity=".08"/></radialGradient>
+        <linearGradient id="beamBad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb3a8" stop-opacity=".05"/><stop offset="1" stop-color="#ff5a4e" stop-opacity=".32"/></linearGradient>
+        <linearGradient id="beamDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe0a0" stop-opacity=".05"/><stop offset="1" stop-color="#d8a33f" stop-opacity=".30"/></linearGradient>
+        <linearGradient id="beamLost" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9d2ff" stop-opacity=".05"/><stop offset="1" stop-color="#8b80b3" stop-opacity=".30"/></linearGradient>
+      </defs>
+      <rect id="skyRect" x="0" y="0" width="100%" height="100%" fill="url(#skyDay)"/>
+      <g id="stars"></g>
+      <g id="sun"><circle cx="0" cy="0" r="46" fill="#fff3c4" opacity=".25"/><circle cx="0" cy="0" r="26" fill="#ffd76a"/></g>
+      <g id="moon"><circle cx="0" cy="0" r="26" fill="url(#moonG)"/><circle cx="10" cy="-6" r="23" fill="#0f1b2a" opacity=".92"/></g>
+      <g id="clouds"></g>
+      <g id="city"></g>
+      <g id="spotG"></g>
+      <g id="bannerG" class="banner"><path class="rope" id="rope" d=""/><g id="bannerBody"><rect class="bannerCloth" id="bannerCloth" x="0" y="-14" width="120" height="28" rx="3"/><text class="bannerText" id="bannerText" x="12" y="1"></text></g></g>
+      <g id="pel" class="pel">
+        <g id="pelBody">
+          <path id="wFF" class="wFF"/><path id="wFC" class="wFC"/>
+          <path class="tail" d="M-40,0 L-64,-8 L-66,4 L-60,10 L-40,8 Z"/>
+          <path class="body" d="M-44,2 C-32,-14 8,-17 28,-10 C40,-6 42,6 30,12 C10,18 -30,15 -44,6 Z"/>
+          <path class="feet" d="M-26,12 L-50,13 M-24,13 L-48,17"/>
+          <path class="legs" d="M-8,14 L-6,34 L2,36 M2,14 L4,34 L12,36"/>
+          <path class="neck" d="M22,-8 C28,-14 30,-18 36,-18 L40,-8 C36,-2 30,4 24,6 Z"/>
+          <circle class="head" cx="36" cy="-14" r="9"/>
+          <path class="crest" d="M30,-21 L24,-26 M33,-22 L30,-28"/>
+          <path class="pouch" d="M42,-11 Q72,12 106,-1 L42,-7 Z"/>
+          <path class="bill" d="M42,-17 L110,-4 Q112,-1 108,0 L42,-9 Z"/>
+          <circle class="eye" cx="39" cy="-16" r="2.2"/><circle class="glint" cx="39.7" cy="-16.7" r=".7"/>
+          <line class="shut" x1="35" y1="-16" x2="42" y2="-16"/>
+          <path id="wNF" class="wNF"/><path id="wNC" class="wNC"/>
+          <text class="qm" x="22" y="-34">?</text>
+          <g class="zz"><text x="44" y="-30">z</text><text x="54" y="-42">z</text><text x="66" y="-54">Z</text></g>
+        </g>
+      </g>
+    </svg>
+    <div class="skycard" id="skycard"></div>
+    <div class="skylegend" aria-hidden="true"><span><i style="background:#2c6b56"></i>正常</span><span><i style="background:#d8a33f"></i>偏离</span><span><i style="background:#ff5a4e"></i>异常</span><span><i style="background:#15131d;outline:1px dashed #6f6596"></i>失联</span></div>
+    <div class="skytick" id="skytick"></div>
+  </section>
+  <main class="stage" id="stage">
+    <button class="edge l" id="prev" type="button" aria-label="上一页"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg><span class="cnt" id="lc" hidden></span></button>
+    <div class="track" id="track"><section class="page"><div class="empty">正在连接巡视台…</div></section></div>
+    <button class="edge r" id="next" type="button" aria-label="下一页"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg><span class="cnt" id="rc" hidden></span></button>
+  </main>
+
+  <footer class="foot">
+    <button class="back" id="back" type="button" hidden></button>
+    <span class="pos" id="pos">– / –</span>
+    <span id="pname"></span>
+    <div class="bar" id="bar"><i id="barFill"></i></div>
+    <span id="pstate">轮播中</span>
+    <label>每页 <select id="dwell"><option value="10">10 秒</option><option value="15" selected>15 秒</option><option value="30">30 秒</option><option value="60">60 秒</option></select></label>
+    <button class="tool" id="hold" type="button">暂停</button>
+  </footer>
+</div>
+<div class="offmsg" id="offmsg" hidden></div>
+
+<div class="drawer" id="drawer" hidden>
+  <div class="in">
+    <h3>巡检日记</h3>
+    <p>巡视台亲眼看到的状态变化，新的在上。启动前就不正常的不算变化；只记什么时候变的，不猜为什么。</p>
+    <div class="evlog" id="evlog"></div>
+    <h3>拉取状况</h3>
+    <dl class="meta" id="meta"></dl>
+    <div id="invErrs"></div>
+    <p>下面是没拉到、或最近一次拉取失败的主机。改 host.list 不用重启，巡视台每轮开始前会检查文件有没有变。</p>
+    <div class="pulls" id="pulls"></div>
+    <div class="row"><button class="go" id="invClose" type="button">关闭</button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var R=["CPU","内存","磁盘","网络","系统"], RS=["C","M","D","N","S"];
+var DIMS=[{id:"host",label:"主机"},{id:"group",label:"主机组"},{id:"product",label:"产品线"},{id:"rack",label:"机柜"},{id:"dc",label:"机房"},{id:"tags",label:"标签"}];
+var STATE_TXT={ok:"正常",dev:"偏离",bad:"异常",lost:"失联",none:"无数据"};
+var SEV={ok:0,none:1,dev:2,lost:3,bad:4};
+var POLL=5000;
+
+function pad(n,w){n=String(n);while(n.length<w)n="0"+n;return n}
+function hm(sec){var d=new Date(sec*1000);return pad(d.getHours(),2)+":"+pad(d.getMinutes(),2)}
+function hms(ms){var d=new Date(ms);return pad(d.getHours(),2)+":"+pad(d.getMinutes(),2)+":"+pad(d.getSeconds(),2)}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
+function pill(v){return '<span class="pill '+v+'">'+STATE_TXT[v]+'</span>'}
+function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+
+// 时长按中心的时间算：iPad 的钟可能不准
+function agoSec(sec){if(!S||!sec)return "";var m=Math.max(0,Math.round((S.at-sec)/60));return m<1?"不到 1 分钟":m<60?m+" 分钟":m<1440?Math.floor(m/60)+" 小时 "+(m%60)+" 分":Math.floor(m/1440)+" 天"}
+
+function fmt(v,unit){
+  if(v==null||!isFinite(v))return "—";
+  if(unit==="bytes"){var u=["B","KiB","MiB","GiB","TiB"],i=0,x=Math.abs(v);while(x>=1024&&i<u.length-1){x/=1024;i++}return (v<0?"-":"")+x.toFixed(x<10?2:1)+" "+u[i]}
+  if(unit==="bytes/s")return fmt(v,"bytes")+"/s";
+  if(unit==="/s")return (Math.round(v*10)/10)+" /s";
+  if(unit==="percent")return v.toFixed(1)+"%";
+  if(unit==="ms")return v.toFixed(1)+" ms";
+  if(Math.abs(v)>=1e6)return (v/1e6).toFixed(2)+"M";
+  if(Math.abs(v)>=1000)return v.toFixed(0);
+  return String(Math.round(v*100)/100);
+}
+
+/* ---------- 数据 ---------- */
+var S=null, hosts=[], lastGood=0, fetchErr="", sig="";
+var HASH=location.hash.slice(1).split("-"),DEMO=HASH.indexOf("demo")>=0||!!window.__ND_DEMO;
+var dim=HASH.filter(function(x){return DIMS.some(function(d){return d.id===x})})[0]||store("fleet.dim")||"rack", pages=[], cur=0, backTo=null;
+if(!DIMS.some(function(d){return d.id===dim}))dim="rack";
+var dwellSel=document.getElementById("dwell");
+var dw=store("fleet.dwell"); if(dw&&/^(10|15|30|60)$/.test(dw))dwellSel.value=dw;
+
+function applyState(s){
+  S=s; hosts=s.hosts||[]; lastGood=Date.now(); fetchErr="";
+  var nsig=JSON.stringify(hosts.map(function(h){return [h.name,h.dc,h.rack,h.product,h.group,h.tags]}));
+  if(nsig!==sig){sig=nsig;renderAll(pages[cur]?pages[cur].key:null)}else refreshPages();
+  banner(); drawerFill(); if(window.skyOnState)skyOnState();
+}
+function poll(){
+  if(DEMO){applyState(demoState());return}
+  var ctl=typeof AbortController!=="undefined"?new AbortController():null;
+  var t=setTimeout(function(){if(ctl)ctl.abort()},POLL-500);
+  fetch("api/state",{cache:"no-store",signal:ctl?ctl.signal:undefined}).then(function(r){
+    if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
+  }).then(function(s){
+    clearTimeout(t);applyState(s);
+  }).catch(function(e){clearTimeout(t);fetchErr=e&&e.name==="AbortError"?"请求超时":e&&e.name==="TypeError"?"连不上（网络断了，或巡视台进程没在跑）":String(e&&e.message||e)});
+}
+
+function hostSev(h){return h.status==="lost"?"lost":h.sev||"none"}
+function pageSev(p){var w="ok";p.hosts.forEach(function(h){var v=hostSev(h);if(SEV[v]>SEV[w])w=v});return w}
+function rowOf(h,res){var rs=h.rows||[];for(var i=0;i<rs.length;i++)if(rs[i].resource===res)return rs[i];return null}
+
+/* ---------- 分页 ---------- */
+function groupKey(h,d){if(d==="rack")return h.rack?(h.dc?h.dc+" / ":"")+h.rack:"";return h[d]||""}
+function byName(a,b){return a.name.localeCompare(b.name)}
+function buildPages(){
+  if(dim==="host")return hosts.slice().sort(byName).map(function(h){return {key:h.name,title:h.name,hosts:[h],host:true}});
+  var m={};
+  hosts.forEach(function(h){
+    var ks=dim==="tags"?(h.tags&&h.tags.length?h.tags:["(无标签)"]):[groupKey(h,dim)||"(未填)"];
+    ks.forEach(function(k){(m[k]=m[k]||[]).push(h)});
+  });
+  return Object.keys(m).sort(function(a,b){return a.localeCompare(b,"zh")}).map(function(k){return {key:k,title:k,hosts:m[k].sort(byName)}});
+}
+function dimLabel(){for(var i=0;i<DIMS.length;i++)if(DIMS[i].id===dim)return DIMS[i].label}
+
+// 同时发生：同一资源、起点相差 3 分钟内的 ≥2 台。只用中心亲眼看到变坏的起点，只摆事实。
+function together(p){
+  var out=[];
+  R.forEach(function(res){
+    var xs=[];
+    p.hosts.forEach(function(h){if(h.status==="lost")return;var r=rowOf(h,res);if(r&&r.st!=="ok"&&r.st!=="none"&&r.since_known)xs.push({h:h,t:r.since,v:r.st})});
+    xs.sort(function(a,b){return a.t-b.t});
+    var i=0;
+    while(i<xs.length){
+      var j=i;while(j+1<xs.length&&xs[j+1].t-xs[i].t<=180)j++;
+      if(j>i){var g=xs.slice(i,j+1),anyBad=g.some(function(x){return x.v==="bad"});
+        out.push('<div class="f"><b>'+res+'</b>：<span class="num">'+g.length+'</span> 台 '+hm(g[0].t)+(g[g.length-1].t-g[0].t>=60?'–'+hm(g[g.length-1].t):'')+' 开始'+(anyBad?'异常或偏离':'偏离')+' <span class="who">'+g.slice(0,4).map(function(x){return esc(x.h.name)}).join("、")+(g.length>4?" 等":"")+'</span></div>')}
+      i=j+1;
+    }
+  });
+  var lost=p.hosts.filter(function(h){return h.status==="lost"&&!h.never});
+  if(lost.length>=2)out.push('<div class="f"><b>失联</b>：<span class="num">'+lost.length+'</span> 台 <span class="who">'+lost.slice(0,6).map(function(h){return esc(h.name)}).join("、")+(lost.length>6?" 等":"")+'</span></div>');
+  var skew=p.hosts.filter(function(h){return h.status==="ok"&&Math.abs(h.skew||0)>5});
+  if(out.length&&skew.length)out.push('<div class="f"><b>注意</b>：<span class="num">'+skew.length+'</span> 台时钟偏差超过 5 秒（'+skew.slice(0,3).map(function(h){return esc(h.name)+" "+(h.skew>0?"+":"")+h.skew+"s"}).join("、")+'），上面的先后不可全信</div>');
+  return out;
+}
+
+function tileSub(h){
+  if(h.status==="lost")return h.never?"从没拉到过":"失联 "+agoSec(h.last_ok);
+  return R.filter(function(r){var x=rowOf(h,r);return x&&x.st!=="ok"}).map(function(r){return r+STATE_TXT[rowOf(h,r).st]}).join(" · ");
+}
+
+function renderGroup(p){
+  var c={bad:0,dev:0,lost:0,ok:0};p.hosts.forEach(function(h){var v=hostSev(h);c[v==="none"?"ok":v]++});
+  var facts=together(p);
+  var h='<div class="ghead"><span class="kind">'+dimLabel()+'</span><h2>'+esc(p.title)+'</h2><div class="counts">';
+  ["bad","dev","lost"].forEach(function(k){if(c[k])h+='<span class="pill '+k+'">'+STATE_TXT[k]+' <span class="num">'+c[k]+'</span></span>'});
+  h+='<span class="pill ok">正常 <span class="num">'+c.ok+'</span></span><span class="pill none">共 <span class="num">'+p.hosts.length+'</span> 台</span></div></div>';
+  if(facts.length)h+='<div class="facts"><div class="lbl">同时发生（只列事实，不代表同一原因）</div>'+facts.join("")+'</div>';
+  h+='<div class="tiles'+(p.hosts.length>32?" dense":"")+'">';
+  p.hosts.forEach(function(x){
+    var sev=hostSev(x);
+    h+='<button class="tile '+sev+'" type="button" data-host="'+esc(x.name)+'" aria-label="'+esc(x.name)+' '+STATE_TXT[sev]+'"><span class="nm">'+esc(x.name)+'</span><span class="segs">';
+    R.forEach(function(r,i){var row=x.status==="lost"?null:rowOf(x,r),v=row?row.st:"none";h+='<span class="'+v+'" title="'+r+' '+STATE_TXT[v]+'">'+RS[i]+'</span>'});
+    h+='</span><span class="sub">'+esc(tileSub(x))+'</span></button>';
+  });
+  return h+'</div><div class="legend"><span>方块五格依次是 CPU · 内存 · 磁盘 · 网络 · 系统</span><span>点方块看这台主机</span></div>';
+}
+
+function factHTML(f){
+  var s=esc(f.label)+' <span class="num">'+esc(fmt(f.value,f.unit))+'</span>', ex=[];
+  if(f.base!=null)ex.push("平时 "+esc(fmt(f.base,f.unit)));
+  if(f.notable&&f.z!=null)ex.push("z="+f.z.toFixed(1));
+  else if(f.change)ex.push(esc(f.change));
+  if(ex.length)s+=' <span class="u">('+ex.join(", ")+')</span>';
+  if(f.note)s+=' <span class="note">'+esc(f.note)+'</span>';
+  return s;
+}
+function rowHTML(h,res){
+  if(h.status==="lost")return '<div class="urow none"><span class="res">'+res+'</span>'+pill("none")+'<div class="rd"><span class="u">无数据</span></div></div>';
+  var r=rowOf(h,res)||{st:"none"};
+  var t=(r.facts||[]).map(factHTML).join(" · ")||'<span class="u">'+(r.st==="none"?"这台没报这一行":"")+'</span>';
+  if(r.st!=="ok"&&r.since)t+=' <span class="u">· '+(r.since_known?hm(r.since)+" 起":"巡视台 "+hm(r.since)+" 开始看时已是这样")+'</span>';
+  (r.checks||[]).forEach(function(c){t+='<span class="chk'+(c.level<2?" warn":"")+'">['+esc(c.id)+'] '+esc(c.name)+' '+esc(c.message)+'</span>'});
+  if(r.movers&&r.movers.length)t+='<span class="who">谁干的 '+r.movers.slice(0,3).map(function(m){return esc(m.name)+(m.pid?"("+m.pid+")":"")+" "+esc(fmt(m.now,m.unit))+(m.parent?"，父进程 "+esc(m.parent):"")}).join("；")+'</span>';
+  var ck=[];
+  if(r.checked&&r.checked.length)ck.push("已查 "+r.checked.map(esc).join("、"));
+  if(r.l0_total)ck.push("硬阈值 "+r.l0_pass+"/"+r.l0_total+" 通过");
+  if(ck.length)t+='<span class="ck">'+ck.join("；")+'</span>';
+  return '<div class="urow '+r.st+'"><span class="res">'+res+'</span>'+pill(r.st)+'<div class="rd">'+t+'</div></div>';
+}
+
+function renderHost(p){
+  var x=p.hosts[0];
+  var h='<div class="hwrap"><div class="hid"><h2>'+esc(x.name)+'</h2><div class="addr">'+esc(x.addr)+'</div><dl>'+
+    '<dt>机房</dt><dd>'+esc(x.dc||"—")+'</dd><dt>机柜</dt><dd>'+esc(x.rack||"—")+'</dd><dt>产品线</dt><dd>'+esc(x.product||"—")+'</dd><dt>主机组</dt><dd>'+esc(x.group||"—")+'</dd>'+
+    '<dt>标签</dt><dd>'+(x.tags&&x.tags.length?x.tags.map(function(t){return '<span class="tag">'+esc(t)+'</span>'}).join(""):"—")+'</dd></dl>';
+  h+='<div class="seen">'+(x.last_ok?"最近拉到 "+hm(x.last_ok):"")+(x.agent?" · nodedata "+esc(x.agent):"")+'</div>';
+  if(x.status==="ok"&&Math.abs(x.skew||0)>5)h+='<div class="warn">这台的时钟比巡视台'+(x.skew>0?"快":"慢")+' '+Math.abs(x.skew)+' 秒</div>';
+  if(x.status==="ok"&&x.api===0)h+='<div class="warn">这台是旧版 nodedata（没有 /api/fleet），看不到它的时钟偏差</div>';
+  if(x.status==="ok"&&x.err)h+='<div class="warn">最近一次拉取失败：'+esc(x.err)+'</div>';
+  h+='</div><div class="use">';
+  if(x.status==="lost")h+='<div class="lostbox">'+(x.never?"巡视台启动以来一次都没拉到这台":"失联：已经 "+agoSec(x.last_ok)+"没拉到这台")+(x.err?"。原因："+esc(x.err):"")+'。下面五行没有依据，不代表正常。</div>';
+  R.forEach(function(r){h+=rowHTML(x,r)});
+  return h+'</div></div>';
+}
+
+var track=document.getElementById("track");
+function pageHTML(p){return p.host?renderHost(p):renderGroup(p)}
+function renderAll(keepKey){
+  pages=buildPages();
+  if(!pages.length){track.innerHTML='<section class="page"><div class="empty">清单里还没有主机。<br>编辑 '+esc(S&&S.inventory?S.inventory.path:"host.list")+'，一台一行：名字 地址:端口 dc=… rack=…</div></section>';updateChrome();return}
+  track.innerHTML=pages.map(function(p,i){return '<section class="page" aria-roledescription="页" aria-label="'+esc(p.title)+'">'+pageHTML(p)+'</section>'}).join("");
+  var idx=0;if(keepKey!=null)for(var i=0;i<pages.length;i++)if(pages[i].key===keepKey){idx=i;break}
+  jump(idx,false);
+  document.getElementById("cnt").textContent=hosts.length+" 台";
+  updateChrome();
+}
+function refreshPages(){
+  pages=pages.map(function(p){ // 换成新数据里的同名主机对象
+    var by={};hosts.forEach(function(h){by[h.name]=h});
+    return {key:p.key,title:p.title,host:p.host,hosts:p.hosts.map(function(h){return by[h.name]||h})};
+  });
+  var secs=track.children;
+  for(var i=0;i<pages.length&&i<secs.length;i++){var top=secs[i].scrollTop;secs[i].innerHTML=pageHTML(pages[i]);secs[i].scrollTop=top}
+  updateChrome();
+}
+
+function jump(i,smooth){
+  if(!pages.length)return;
+  var wrap=i<0||i>=pages.length;
+  i=(i+pages.length)%pages.length;cur=i;elapsed=0;
+  if(wrap&&smooth){track.classList.add("fade");setTimeout(function(){track.scrollTo({left:i*track.clientWidth,behavior:"auto"});track.classList.remove("fade")},180)}
+  else track.scrollTo({left:i*track.clientWidth,behavior:smooth?"smooth":"auto"});
+  updateChrome();
+}
+track.addEventListener("scroll",function(){
+  var i=Math.round(track.scrollLeft/Math.max(1,track.clientWidth));
+  if(i!==cur&&i>=0&&i<pages.length){cur=i;elapsed=0;updateChrome()}
+},{passive:true});
+window.addEventListener("resize",function(){track.scrollTo({left:cur*track.clientWidth,behavior:"auto"})});
+
+function updateChrome(){
+  Array.prototype.forEach.call(document.querySelectorAll("#dims button"),function(x){x.setAttribute("aria-pressed",x.dataset.d===dim?"true":"false")});
+  var p=pages[cur];
+  document.getElementById("pos").textContent=p?(cur+1)+" / "+pages.length:"– / –";
+  document.getElementById("pname").textContent=p?dimLabel()+" · "+p.title:"";
+  var L={bad:0,dev:0,lost:0},Rt={bad:0,dev:0,lost:0};
+  pages.forEach(function(q,i){if(i===cur)return;var v=pageSev(q);if(v in L)(i<cur?L:Rt)[v]++});
+  badge("lc",L);badge("rc",Rt);
+  var b=document.getElementById("back");
+  if(backTo&&(dim==="host"||backTo.sky)){b.hidden=false;b.textContent=backTo.sky?"← 回到天空":"← 回到 "+backTo.label+" · "+backTo.key}else b.hidden=true;
+}
+function badge(id,c){
+  var el=document.getElementById(id),n=c.bad+c.dev+c.lost;
+  if(!n){el.hidden=true;return}
+  el.hidden=false;el.textContent=n;el.className="cnt "+(c.bad?"bad":c.lost?"lost":"dev");
+  el.title=(c.bad?"异常 "+c.bad+" 页 ":"")+(c.dev?"偏离 "+c.dev+" 页 ":"")+(c.lost?"失联 "+c.lost+" 页":"");
+}
+
+/* ---------- 清单问题、断开 ---------- */
+function banner(){
+  var b=document.getElementById("banner"),inv=S&&S.inventory;
+  if(!inv||!inv.errors||!inv.errors.length){b.hidden=true;return}
+  b.hidden=false;
+  b.innerHTML='清单有 '+inv.errors.length+' 处问题'+(inv.stale?'，新文件没有采用，仍在用 '+(S.inventory_loaded_at?hm(S.inventory_loaded_at):"上一版")+' 的版本':'')+'：'+esc(inv.errors[0])+' <button type="button" id="bannerMore">看全部</button>';
+  document.getElementById("bannerMore").onclick=openDrawer;
+}
+function offlineState(){
+  var now=Date.now();
+  if(!lastGood)return fetchErr?{t:"连不上巡视台",d:fetchErr}:null;
+  if(now-lastGood>3*POLL+2000)return {t:"巡视台断开",d:"最后一次更新 "+hms(lastGood)+(fetchErr?" · "+fetchErr:"")};
+  if(S&&S.round_at&&S.at-S.round_at>3*S.interval)return {t:"巡视台停止拉取",d:"已经 "+(S.at-S.round_at)+" 秒没拉完一轮"};
+  if(S&&!S.round_at&&S.at-S.started>3*S.interval)return {t:"巡视台停止拉取",d:"启动后还没拉完过一轮"};
+  return null;
+}
+
+/* ---------- 抽屉 ---------- */
+var drawer=document.getElementById("drawer");
+function openDrawer(){drawer.hidden=false;drawerFill()}
+function evText(e){var n=esc(e.host);if(e.kind==="lost")return n+" 失联";if(e.kind==="back")return n+" 重新拉到了";return n+" "+esc(e.res)+" "+STATE_TXT[e.from]+"→"+STATE_TXT[e.to]}
+function evCls(e){return e.kind==="lost"?"lost":e.kind==="back"?"ok":e.to}
+function drawerFill(){
+  if(drawer.hidden||!S)return;
+  var evs=(S.events||[]).slice().reverse();
+  document.getElementById("evlog").innerHTML=evs.length?evs.map(function(e){return '<div><span class="t">'+hms(e.at*1000)+'</span><span class="e '+evCls(e)+'">'+evText(e)+'</span></div>'}).join(""):'<div>巡视台启动以来还没看到任何变化。</div>';
+  var inv=S.inventory||{};
+  document.getElementById("meta").innerHTML='<dt>清单文件</dt><dd>'+esc(inv.path)+'</dd><dt>当前版本</dt><dd>'+(S.inventory_loaded_at?hms(S.inventory_loaded_at*1000):"—")+'</dd>'+
+    '<dt>上一轮</dt><dd>'+(S.round_at?hms(S.round_at*1000)+"，用时 "+S.round_ms+" ms":"还没拉完过")+'</dd><dt>每轮间隔</dt><dd>'+S.interval+' 秒，'+S.lost_after+' 秒没拉到算失联</dd><dt>巡视台版本</dt><dd>'+esc(S.version)+'</dd>';
+  document.getElementById("invErrs").innerHTML=inv.errors&&inv.errors.length?'<ul>'+inv.errors.map(function(e){return "<li>"+esc(e)+"</li>"}).join("")+'</ul>':"";
+  var bad=hosts.filter(function(h){return h.status==="lost"||h.err});
+  document.getElementById("pulls").innerHTML=bad.length?'<table><thead><tr><th>主机</th><th>地址</th><th>情况</th></tr></thead><tbody>'+bad.map(function(h){
+    return '<tr><td class="nm">'+esc(h.name)+'</td><td class="nm">'+esc(h.addr)+'</td><td>'+(h.status==="lost"?(h.never?"从没拉到过":"失联 "+agoSec(h.last_ok)):"偶尔失败")+(h.err?"："+esc(h.err):"")+'</td></tr>'}).join("")+'</tbody></table>':'<div class="empty" style="padding:16px">全部拉取正常。</div>';
+}
+document.getElementById("invBtn").addEventListener("click",openDrawer);
+document.getElementById("invClose").addEventListener("click",function(){drawer.hidden=true});
+
+/* ---------- 层级切换 ---------- */
+var dimsEl=document.getElementById("dims");
+dimsEl.innerHTML=DIMS.map(function(d){return '<button type="button" data-d="'+d.id+'" aria-pressed="false">'+d.label+'</button>'}).join("");
+dimsEl.addEventListener("click",function(e){
+  var b=e.target.closest("button");if(!b)return;
+  backTo=null;dim=b.dataset.d;store("fleet.dim",dim);renderAll(null);touch();
+});
+track.addEventListener("click",function(e){
+  var t=e.target.closest(".tile");if(!t||!pages[cur])return;
+  backTo={dim:dim,label:dimLabel(),key:pages[cur].key};
+  dim="host";renderAll(t.dataset.host);touch();
+});
+document.getElementById("back").addEventListener("click",function(){
+  if(!backTo)return;var b=backTo;backTo=null;dim=b.dim;renderAll(b.key);touch();if(b.sky)setView("sky");
+});
+
+/* ---------- 轮播 ---------- */
+var elapsed=0,holdUntil=0,held=false,lastT=Date.now(),stage=document.getElementById("stage"),touchTimer=0;
+function dwell(){return Number(dwellSel.value)*1000}
+function touch(){
+  holdUntil=Date.now()+60e3;stage.classList.add("touched");
+  clearTimeout(touchTimer);touchTimer=setTimeout(function(){stage.classList.remove("touched")},2500);
+  wake();
+}
+["pointerdown","wheel","keydown"].forEach(function(ev){document.addEventListener(ev,touch,{passive:true})});
+document.getElementById("prev").addEventListener("click",function(){jump(cur-1,true)});
+document.getElementById("next").addEventListener("click",function(){jump(cur+1,true)});
+document.addEventListener("keydown",function(e){
+  if(!drawer.hidden)return;
+  if(e.key==="ArrowRight")jump(cur+1,true);else if(e.key==="ArrowLeft")jump(cur-1,true);
+});
+var holdBtn=document.getElementById("hold");
+holdBtn.addEventListener("click",function(){held=!held;holdBtn.textContent=held?"继续轮播":"暂停";if(!held)holdUntil=0});
+dwellSel.addEventListener("change",function(){elapsed=0;store("fleet.dwell",dwellSel.value)});
+
+setInterval(function(){
+  var t=Date.now(),dt=t-lastT;lastT=t;
+  document.getElementById("clock").textContent=hms(t);
+  var off=offlineState(),app=document.getElementById("app"),om=document.getElementById("offmsg");
+  app.classList.toggle("offline",!!off);
+  if(off){om.hidden=false;om.innerHTML="<b>"+esc(off.t)+"</b><span>"+esc(off.d)+"。现在屏上的状态不是实时的。</span>"}else om.hidden=true;
+  var bar=document.getElementById("bar"),ps=document.getElementById("pstate");
+  if(off||held||!drawer.hidden||pages.length<2){bar.classList.add("paused");ps.textContent=off?"已断开":pages.length<2?"只有一页":"已暂停";return}
+  if(t<holdUntil){bar.classList.add("paused");ps.textContent="手动操作中，"+Math.ceil((holdUntil-t)/1000)+" 秒后继续";return}
+  bar.classList.remove("paused");ps.textContent="轮播中";
+  elapsed+=dt;
+  document.getElementById("barFill").style.width=Math.min(100,elapsed/dwell()*100)+"%";
+  if(elapsed>=dwell())jump(cur+1,true);
+},250);
+
+var lock=null;
+function wake(){if(lock||!("wakeLock" in navigator))return;navigator.wakeLock.request("screen").then(function(l){lock=l;l.addEventListener("release",function(){lock=null})}).catch(function(){})}
+document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"){wake();poll()}});
+
+/* ---------- 鹈鹕的飞行骨架 ----------
+   翅膀是两节：肩→腕（臂）、腕→翼尖（手）。在三维里算（x 向前、y 向上、z 朝观众），再按 3/4 视角投影，
+   所以拍翅时近侧/远侧翅膀的长短、角度会变，而不是一张贴图在转。
+   白鹈鹕：覆羽白、飞羽黑；翼尖五根初级飞羽分开，像手指。
+   上挑时手腕折起、翼尖后收（减阻），下拍时整片展开；身体随下拍被托起。 */
+var BIRD_KX=.36,BIRD_KY=.50;
+function bproj(p){return [p[0]+p[2]*BIRD_KX,-p[1]+p[2]*BIRD_KY]}
+function blerp(a,b,t){return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]}
+function badd(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]}
+function bpath(pts){var s="";for(var i=0;i<pts.length;i++){var q=bproj(pts[i]);s+=(i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1)}return s+"Z"}
+// e：肩的抬角（弧度，向上为正）；fold：0 全展 … 1 全收；spread：翼展方向的伸出程度（收拢栖息时很小）；side：+1 近侧 / -1 远侧
+function wingGeom(e,fold,spread,side){
+  var S=[6,4,0],La=50*spread,Lh=74*(1-.42*fold)*Math.max(.35,spread);
+  var W=[S[0]-4-10*fold,S[1]+La*Math.sin(e),side*La*Math.cos(e)];
+  var eh=e*1.25-fold*.55,hx=-.16-fold*1.0,hy=Math.sin(eh),hz=Math.cos(eh)*spread,hn=Math.hypot(hx,hy,hz);
+  var T=[W[0]+Lh*hx/hn,W[1]+Lh*hy/hn,W[2]+side*Lh*hz/hn];
+  var Sb=[S[0]-50,S[1]-3,0],Wb=badd(W,[-46+10*fold,-1,0]);
+  // 后缘：翼尖 → 五根初级飞羽（分叉）→ 次级飞羽的扇贝边 → 回到身体
+  var trail=[T],n=5;
+  for(var k=n;k>=1;k--){
+    var a=(k-.35)/n,base=blerp(W,T,a),len=(30+14*a)*(1-.45*fold);
+    trail.push(badd(base,[-len,-1.5*a,0]));                 // 羽尖
+    trail.push(badd(blerp(W,T,(k-.95)/n),[-len*.45,0,0]));   // 羽根之间的缺口
+  }
+  for(var j=1;j<=4;j++){var q=blerp(Wb,Sb,j/5);trail.push(badd(q,[j%2?-3:0,0,0]))}
+  trail.push(Sb);
+  var bulge=badd(blerp(W,T,.45),[7,1.5,0]),bulge2=badd(blerp(S,W,.5),[4,1,0]);
+  var full=[S,bulge2,W,bulge,T].concat(trail);
+  // 覆羽（白）：前缘到约一半弦长
+  var cT=blerp(W,T,.7),cov=[S,bulge2,W,bulge,cT,badd(cT,[-18*(1-.4*fold),0,0]),badd(W,[-27,0,0]),badd(S,[-32,-2,0])];
+  return {full:bpath(full),cov:bpath(cov)};
+}
+// 一帧：给定相位与状态，写入四条翅膀路径，返回身体起伏量
+function drawBird(els,st){
+  var e,fold,spread=1;
+  if(st.mode==="perch"){e=-.15;fold=1;spread=.18}
+  else{
+    var ph=st.phase,amp=st.amp;
+    e=amp*Math.sin(ph)+.14;                          // 略带上反角
+    fold=Math.min(1,(amp>.3?.95:.2)*Math.max(0,Math.cos(ph))); // 上挑（相位导数为正）时收手腕
+  }
+  var nw=wingGeom(e,fold,spread,1),fw=wingGeom(e*.92,fold,spread,-1);
+  els.nf.setAttribute("d",nw.full);els.nc.setAttribute("d",nw.cov);
+  els.ff.setAttribute("d",fw.full);els.fc.setAttribute("d",fw.cov);
+  return st.mode==="perch"?0:3.2*st.amp*Math.cos(st.phase);
+}
+
+/* ════════════════ 鹈鹕巡检：天空视图 ════════════════
+   整个机群是一座城：一栋楼 = 一个机柜（或主机组 / 产品线……），一扇窗 = 一台主机，机房是城区。
+   鹈鹕在城市上空飞，它的航线就是巡检顺序：有问题的机器按严重程度排好，一台一台飞过去、
+   悬停、用探照灯照住那扇窗，旁边的"巡检报告"显示这台的 USE 五行；全部正常时它沿着楼顶滑翔，
+   拖着横幅"全部 N 台正常"。
+   规矩跟列表视图一样：它只去已经亮红/亮黄/变黑的窗，不推断任何原因。 */
+var skyEl=document.getElementById("sky"),scene=document.getElementById("scene"),cityG=document.getElementById("city"),
+    spotG=document.getElementById("spotG"),pelG=document.getElementById("pel"),pelBody=document.getElementById("pelBody"),
+    birdEls={nf:document.getElementById("wNF"),nc:document.getElementById("wNC"),ff:document.getElementById("wFF"),fc:document.getElementById("wFC")},ropeEl=document.getElementById("rope"),bannerG=document.getElementById("bannerG"),
+    bannerBody=document.getElementById("bannerBody"),bannerCloth=document.getElementById("bannerCloth"),bannerText=document.getElementById("bannerText"),
+    skycard=document.getElementById("skycard"),skytick=document.getElementById("skytick"),appEl=document.getElementById("app");
+var reduceMotion=!!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches);
+var SK={view:store("fleet.view")||"sky",built:"",W:0,H:0,ground:0,towers:[],pos:{},
+  p:{x:-160,y:140,vx:90,vy:0,face:1,phase:0,glide:0,amp:.6},b:{x:-300,y:150},
+  route:[],ri:0,arrived:0,probSig:"",lastT:0,cardKey:"",bannerMsg:"",bannerSev:""};
+if(HASH.indexOf("list")>=0)SK.view="list";
+if(HASH.indexOf("sky")>=0)SK.view="sky";
+if(DEMO)document.getElementById("demoBadge").hidden=false;
+
+/* 昼夜跟 iPad 的本地时间走：白天 7–17 点、傍晚/清晨是霞光、其余是夜。#day/#dusk/#night 可强制。 */
+function skyPhase(){
+  var f=HASH.filter(function(x){return x==="day"||x==="dusk"||x==="night"})[0];
+  if(f)return f;
+  var h=new Date().getHours();
+  return h>=7&&h<17?"day":(h>=5&&h<7)||(h>=17&&h<19)?"dusk":"night";
+}
+function applyPhase(){var ph=skyPhase();skyEl.classList.remove("day","dusk","night");skyEl.classList.add(ph)}
+applyPhase();setInterval(applyPhase,60000);
+function setView(v){
+  SK.view=v;store("fleet.view",v);appEl.classList.toggle("view-sky",v==="sky");
+  Array.prototype.forEach.call(document.querySelectorAll("#views button"),function(b){b.setAttribute("aria-pressed",b.dataset.v===v?"true":"false")});
+  if(v==="sky"){SK.built="";buildCity()}else{jump(cur,false)}
+}
+document.getElementById("views").addEventListener("click",function(e){var b=e.target.closest("button");if(b)setView(b.dataset.v)});
+function skyDim(){return dim==="host"?"rack":dim}
+
+/* ---------- 城市 ---------- */
+function skyGroups(){
+  var d=skyDim(),m={},dcOf={};
+  hosts.forEach(function(h){
+    var ks=d==="tags"?(h.tags&&h.tags.length?h.tags:["(无标签)"]):[groupKey(h,d)||"(未填)"];
+    ks.forEach(function(k){(m[k]=m[k]||[]).push(h.name);if(!(k in dcOf))dcOf[k]=h.dc||""});
+  });
+  var keys=Object.keys(m).sort(function(a,b){
+    if(d==="rack"&&dcOf[a]!==dcOf[b])return dcOf[a].localeCompare(dcOf[b]);
+    return a.localeCompare(b,"zh")});
+  return keys.map(function(k){return {key:k,title:d==="rack"&&k.indexOf(" / ")>0?k.split(" / ")[1]:k,dc:d==="rack"?dcOf[k]:"",names:m[k].sort()}});
+}
+var rnd=(function(){var x=7;return function(){x=(x*16807)%2147483647;return x/2147483647}})();
+function buildSkyDecor(W,H){
+  var st="";for(var i=0;i<70;i++){st+='<circle class="star" cx="'+(rnd()*W).toFixed(0)+'" cy="'+(rnd()*H*.45).toFixed(0)+'" r="'+(rnd()*1.1+.3).toFixed(2)+'" opacity="'+(rnd()*.6+.2).toFixed(2)+'"/>'}
+  document.getElementById("stars").innerHTML=st;
+  document.getElementById("moon").setAttribute("transform","translate("+(W*.84)+","+(H*.14)+")");
+  document.getElementById("sun").setAttribute("transform","translate("+(W*.86)+","+(H*.15)+")");
+  var cl="";for(var j=0;j<4;j++){var y=H*(.08+j*.09),sc=.7+rnd()*.8,dur=(90+rnd()*80).toFixed(0),delay=(-rnd()*150).toFixed(0);
+    cl+='<g class="cloudG" style="animation-duration:'+dur+'s;animation-delay:'+delay+'s"><g transform="translate(0,'+y.toFixed(0)+') scale('+sc.toFixed(2)+')"><ellipse class="cloud" cx="0" cy="0" rx="70" ry="14"/><ellipse class="cloud" cx="30" cy="-9" rx="40" ry="13"/><ellipse class="cloud" cx="-28" cy="-6" rx="30" ry="10"/></g></g>'}
+  document.getElementById("clouds").innerHTML=cl;
+  document.getElementById("clouds").style.transformOrigin="0 0";
+  Array.prototype.forEach.call(document.querySelectorAll("#clouds .cloudG"),function(g){g.style.transformBox="view-box";g.style.width=W+"px"});
+}
+function buildCity(){
+  if(SK.view!=="sky")return;
+  var r=skyEl.getBoundingClientRect(),W=Math.round(r.width),H=Math.round(r.height);
+  if(W<50||H<50)return;
+  var key=skyDim()+"|"+W+"x"+H+"|"+sig;
+  if(key===SK.built)return;
+  var sizeChanged=W!==SK.W||H!==SK.H;
+  SK.built=key;SK.W=W;SK.H=H;
+  scene.setAttribute("viewBox","0 0 "+W+" "+H);
+  if(sizeChanged)buildSkyDecor(W,H);
+  var gs=skyGroups(),ground=H-86,maxH=Math.max(90,ground-Math.max(190,H*.34));
+  SK.ground=ground;
+  var n=gs.length,gapT=14,gapD=38,nd=0;
+  for(var i=1;i<n;i++)if(gs[i].dc!==gs[i-1].dc)nd++;
+  var avail=W-110-(n-1)*gapT-nd*gapD,tw=Math.max(26,Math.min(128,avail/Math.max(1,n)));
+  if(n*tw+(n-1)*gapT+nd*gapD>W-40){gapT=6;gapD=16;tw=Math.max(18,(W-40-(n-1)*gapT-nd*gapD)/n)}
+  var total=n*tw+(n-1)*gapT+nd*gapD,x=(W-total)/2,h="",towers=[],pos={},districts=[];
+  h+='<rect class="groundFill" x="0" y="'+ground+'" width="'+W+'" height="'+(H-ground)+'"/><rect class="groundTop" x="0" y="'+ground+'" width="'+W+'" height="2"/>';
+  gs.forEach(function(g,gi){
+    if(gi>0&&g.dc!==gs[gi-1].dc)x+=gapD;
+    var c=g.names.length,s=Math.min(30,Math.max(12,Math.floor(tw/3.4))),cols,rows,th;
+    for(;;){cols=Math.max(1,Math.floor((tw-8)/(s+4)));rows=Math.ceil(c/cols);th=rows*(s+4)+16;if(th<=maxH||s<=6)break;s--}
+    var top=ground-th,cx=x+tw/2;
+    var style=gi%3,btop=top-16;
+    if(style===0){h+='<rect class="tower" x="'+(x+tw*.18).toFixed(1)+'" y="'+(top-10)+'" width="'+(tw*.64).toFixed(1)+'" height="11" rx="1"/><rect class="tower" x="'+(x+tw*.34).toFixed(1)+'" y="'+(top-19)+'" width="'+(tw*.32).toFixed(1)+'" height="10" rx="1"/>';btop=top-24}
+    else if(style===1){h+='<line class="roof" x1="'+cx.toFixed(1)+'" y1="'+top+'" x2="'+cx.toFixed(1)+'" y2="'+(top-22)+'"/><line class="roof" x1="'+(cx-6).toFixed(1)+'" y1="'+(top-12)+'" x2="'+(cx+6).toFixed(1)+'" y2="'+(top-12)+'"/>';btop=top-25}
+    else{h+='<rect class="tower" x="'+(x+tw*.62).toFixed(1)+'" y="'+(top-13)+'" width="'+(tw*.22).toFixed(1)+'" height="13" rx="3"/><line class="roof" x1="'+(x+tw*.62).toFixed(1)+'" y1="'+(top-4)+'" x2="'+(x+tw*.84).toFixed(1)+'" y2="'+(top-4)+'"/>';btop=top-18}
+    h+='<circle class="beacon" data-t="'+gi+'" cx="'+(style===2?x+tw*.73:cx).toFixed(1)+'" cy="'+btop+'" r="3.6"/>';
+    h+='<rect class="tower" data-key="'+esc(g.key)+'" x="'+x.toFixed(1)+'" y="'+top+'" width="'+tw.toFixed(1)+'" height="'+th+'" rx="2"/>';
+    var gw=cols*(s+4)-4,ox=x+(tw-gw)/2,oy=top+10;
+    g.names.forEach(function(nm,k){
+      var wx=ox+(k%cols)*(s+4),wy=oy+Math.floor(k/cols)*(s+4);
+      h+='<rect class="win none" data-host="'+esc(nm)+'" x="'+wx.toFixed(1)+'" y="'+wy.toFixed(1)+'" width="'+s+'" height="'+s+'" rx="1.5"><title>'+esc(nm)+'</title></rect>';
+      if(!pos[nm])pos[nm]={x:wx,y:wy,s:s,t:gi};
+    });
+    var maxc=Math.max(3,Math.floor(tw/7.5)),lbl=g.title.length>maxc?g.title.slice(0,maxc-1)+"…":g.title;
+    h+='<text class="tlabel" data-key="'+esc(g.key)+'" data-t="'+gi+'" x="'+cx.toFixed(1)+'" y="'+(ground+17)+'">'+esc(lbl)+'</text>';
+    towers.push({key:g.key,title:g.title,x:x,w:tw,top:top,cx:cx,names:g.names,dc:g.dc});
+    if(g.dc){var dd=districts[districts.length-1];if(dd&&dd.dc===g.dc)dd.x1=x+tw;else districts.push({dc:g.dc,x0:x,x1:x+tw})}
+    x+=tw+gapT;
+  });
+  districts.forEach(function(d){var y=ground+30;h+='<line class="dline" x1="'+d.x0.toFixed(1)+'" y1="'+y+'" x2="'+d.x1.toFixed(1)+'" y2="'+y+'"/><text class="dlabel" x="'+((d.x0+d.x1)/2).toFixed(1)+'" y="'+(y+15)+'">'+esc(d.dc)+'</text>'});
+  cityG.innerHTML=h;SK.towers=towers;SK.pos=pos;
+  paintCity(true);
+}
+function sevOfName(n){for(var i=0;i<hosts.length;i++)if(hosts[i].name===n)return hostSev(hosts[i]);return "none"}
+function hostByName(n){for(var i=0;i<hosts.length;i++)if(hosts[i].name===n)return hosts[i];return null}
+function paintCity(force){
+  var by={};hosts.forEach(function(h){by[h.name]=h});
+  Array.prototype.forEach.call(cityG.querySelectorAll(".win"),function(el){var h=by[el.dataset.host],v=h?hostSev(h):"none";if(force||el.__v!==v){el.setAttribute("class","win "+v);el.__v=v}});
+  SK.towers.forEach(function(t,i){
+    var w="ok";t.names.forEach(function(n){var h=by[n],v=h?hostSev(h):"none";if(SEV[v]>SEV[w])w=v});
+    t.sev=w;var b=cityG.querySelector('.beacon[data-t="'+i+'"]');if(b)b.setAttribute("class","beacon "+(w==="ok"||w==="none"?"":w));
+    var l=cityG.querySelector('.tlabel[data-t="'+i+'"]');if(l)l.setAttribute("class","tlabel"+(w==="bad"||w==="lost"||w==="dev"?" hot":""));
+  });
+  // 有问题的机器变了（新坏了、恢复了）就重排航线
+  var ps=[];hosts.forEach(function(h){var v=hostSev(h);if(v==="bad"||v==="dev"||v==="lost")ps.push(h.name+":"+v)});
+  var nsig=ps.sort().join(",");
+  if(nsig!==SK.probSig){SK.probSig=nsig;planRoute()}
+}
+window.skyOnState=function(){buildCity();paintCity(false);skyTicker();if(!SK.route.length||SK.cardKey==="")renderCard()};
+
+/* ---------- 航线 ---------- */
+function planRoute(){
+  var stops=[],seen={};
+  var prob=[];
+  SK.towers.forEach(function(t,ti){t.names.forEach(function(n){if(seen[n])return;var v=sevOfName(n);if(v==="bad"||v==="dev"||v==="lost"){seen[n]=1;prob.push({n:n,v:v,ti:ti})}})});
+  prob.sort(function(a,b){return SEV[b.v]-SEV[a.v]||a.ti-b.ti});
+  prob.slice(0,16).forEach(function(p){stops.push({kind:"host",name:p.n,sev:p.v,dwell:p.v==="bad"?9000:p.v==="dev"?12000:7000})});
+  if(!stops.length){
+    var order=SK.towers.map(function(t,i){return i});
+    if(SK.p.x>SK.W/2)order.reverse();
+    order.forEach(function(i){stops.push({kind:"tower",ti:i})});
+  }
+  SK.route=stops;SK.ri=0;SK.arrived=0;
+}
+function nextStop(){SK.ri++;SK.arrived=0;if(SK.ri>=SK.route.length)planRoute()}
+// 高度就是信号：全部正常时在高空巡航（远离楼顶），有问题才下来。
+//  异常：俯冲下去，贴着那扇窗悬停、快速拍翅，探照灯实心；
+//  偏离：下到楼顶上空，绕着那栋楼慢慢盘旋，一直盯着那扇窗；
+//  失联：贴窗悬停，头顶问号。
+function cruiseY(i){return Math.max(250,SK.H*.33)+(i%3)*16} // 在巡检报告卡片下方，仍远高于楼顶
+function stopTarget(st,t){
+  if(st.kind==="host"){
+    var w=SK.pos[st.name];if(!w)return null;
+    if(st.sev==="dev"){
+      var tw=SK.towers[w.t],cx=w.x+w.s/2,cy=Math.max(90,(tw?tw.top:w.y)-95),ang=t/2600;
+      var ccx=Math.max(170,Math.min(SK.W-170,cx)); // 靠边的楼：盘旋圈整体挪进屏幕
+      return {x:ccx+Math.cos(ang)*95,y:cy+Math.sin(ang)*30,face:0,win:w,loiter:true,cx:ccx,cy:cy};
+    }
+    var left=w.x-104>40,tx=left?w.x-104:w.x+w.s+104,ty=Math.max(70,w.y-18);
+    return {x:tx,y:ty,face:left?1:-1,win:w};
+  }
+  var tt=SK.towers[st.ti];if(!tt)return null;
+  return {x:tt.cx,y:cruiseY(st.ti),face:0};
+}
+
+/* ---------- 飞行 ---------- */
+function flyTo(tx,ty,dt,maxSp){
+  var p=SK.p,dx=tx-p.x,dy=ty-p.y,d=Math.hypot(dx,dy),sp=maxSp*Math.min(1,d/200);
+  var dvx=d>.5?dx/d*sp:0,dvy=d>.5?dy/d*sp:0,k=Math.min(1,dt*1.8);
+  p.vx+=(dvx-p.vx)*k;p.vy+=(dvy-p.vy)*k;p.x+=p.vx*dt;p.y+=p.vy*dt;
+  return d;
+}
+function tallest(){var b=null;SK.towers.forEach(function(t){if(!b||t.top<b.top)b=t});return b}
+var pelPose="";
+function setPelPose(p){if(p!==pelPose){pelPose=p;pelG.setAttribute("class","pel "+p)}}
+
+function skyFrame(t){
+  requestAnimationFrame(skyFrame);
+  if(SK.view!=="sky"||document.hidden||!SK.towers.length){SK.lastT=t;return}
+  var dt=SK.lastT?Math.min(.05,(t-SK.lastT)/1000):0;SK.lastT=t;
+  var p=SK.p,now=Date.now(),off=offlineState(),hover=false,tg=null,st=null,flap=1,rate=7;
+  if(off){
+    var tt=tallest();tg={x:tt.cx-6,y:tt.top-30,face:1};
+    var d0=flyTo(tg.x,tg.y,dt,90);
+    if(d0<4){p.x=tg.x;p.y=tg.y;p.vx=p.vy=0;flap=0;setPelPose("sleep")}else setPelPose("");
+  }else{
+    if(!SK.route.length)planRoute();
+    st=SK.route[SK.ri];tg=st&&stopTarget(st,t);
+    if(!tg){nextStop()}
+    else{
+      var cruise=st.kind==="tower"?120:st.sev==="bad"?340:220;
+      var d=reduceMotion?0:flyTo(tg.x,tg.y+(st.kind==="host"&&!tg.loiter?Math.sin(t/420)*4:0),dt,cruise);
+      if(reduceMotion){p.x=tg.x;p.y=tg.y;p.vx=p.vy=0}
+      if(st.kind==="host"){
+        if(d<(tg.loiter?60:14)||SK.arrived){
+          if(!SK.arrived)SK.arrived=now;hover=!tg.loiter;SK.watching=true;rate=st.sev==="bad"?14:9;
+          // 飞到了才发现已经恢复：不停留
+          if(sevOfName(st.name)==="ok"){nextStop()}
+          else if(now-SK.arrived>st.dwell)nextStop();
+        }
+      }else if(d<60)nextStop();
+      if(st.kind!=="host")SK.watching=false;
+      setPelPose(st.kind==="host"&&hover&&st.sev==="lost"?"puzzle":"");
+    }
+  }
+  // 朝向、姿态、翅膀
+  if(hover&&tg&&tg.face)p.face=tg.face;else if(Math.abs(p.vx)>12)p.face=p.vx>0?1:-1;
+  var watching=!!(st&&st.kind==="host"&&SK.arrived);
+  // 飞行节奏：鹈鹕是慢而深的几下拍翅 + 长滑翔。悬停（异常/失联）快而大；盘旋（偏离）以滑翔为主；睡觉收翅栖息。
+  var perched=pelPose==="sleep";
+  var targetAmp,rateHz;
+  if(perched){targetAmp=0;rateHz=0}
+  else if(hover){targetAmp=.85;rateHz=2.6}
+  else{
+    p.glide+=dt;var cyc=p.glide%(watching?5.5:4.2),flapping=cyc<(watching?.8:1.5);
+    targetAmp=flapping?.66:.1;rateHz=flapping?1.5:.35;
+  }
+  if(reduceMotion){targetAmp=.1;rateHz=0}
+  p.amp+=(targetAmp-p.amp)*Math.min(1,dt*2.5);
+  p.phase+=dt*rateHz*2*Math.PI;
+  var bob=drawBird(birdEls,{mode:perched?"perch":"fly",phase:p.phase,amp:p.amp});
+  pelBody.setAttribute("transform","translate(0,"+bob.toFixed(2)+")");
+  // 姿态：俯冲时低头，爬升时抬头；悬停时身体上扬
+  var tilt=Math.max(-24,Math.min(24,Math.atan2(p.vy,Math.abs(p.vx)+40)*57));
+  if(hover)tilt=-14+Math.sin(p.phase)*3;
+  if(perched)tilt=0;
+  var sc=SK.W<700?.6:.78;
+  pelG.setAttribute("transform","translate("+p.x.toFixed(1)+","+p.y.toFixed(1)+") scale("+(p.face*sc)+","+sc+") rotate("+tilt.toFixed(1)+")");
+  drawSpot(st,tg,watching,sc);
+  drawBanner(st,watching,off,sc,dt,t,hover);
+  if(st&&st.kind==="host"&&watching){if(SK.cardKey!==st.name)renderCard(st.name)}
+  else if(SK.cardKey!==""&&!(st&&st.kind==="host"))renderCard();
+}
+function drawSpot(st,tg,hover,sc){
+  if(!(st&&st.kind==="host"&&hover&&tg&&tg.win)){if(spotG.__on){spotG.innerHTML="";spotG.__on=false}return}
+  var w=tg.win,p=SK.p,ex=p.x+p.face*39*sc,ey=p.y-16*sc; // 眼睛
+  var cs=[[w.x-5,w.y-5],[w.x+w.s+5,w.y-5],[w.x+w.s+5,w.y+w.s+5],[w.x-5,w.y+w.s+5]];
+  var ang=cs.map(function(c){return Math.atan2(c[1]-ey,c[0]-ex)}),lo=0,hi=0;
+  for(var i=1;i<4;i++){if(ang[i]<ang[lo])lo=i;if(ang[i]>ang[hi])hi=i}
+  spotG.style.opacity=st.sev==="dev"?".55":"1";
+  var grad=st.sev==="bad"?"beamBad":st.sev==="lost"?"beamLost":"beamDev",col=st.sev==="bad"?"#ff5a4e":st.sev==="lost"?"#8b80b3":"#d8a33f";
+  var poly=ex.toFixed(1)+","+ey.toFixed(1)+" "+cs[lo][0].toFixed(1)+","+cs[lo][1].toFixed(1)+" "+cs[hi][0].toFixed(1)+","+cs[hi][1].toFixed(1);
+  var html='<polygon class="spot" points="'+poly+'" fill="url(#'+grad+')"/><rect class="halo" x="'+(w.x-5)+'" y="'+(w.y-5)+'" width="'+(w.s+10)+'" height="'+(w.s+10)+'" rx="3" stroke="'+col+'"/>';
+  if(spotG.__h!==html){spotG.innerHTML=html;spotG.__h=html}
+  spotG.__on=true;
+}
+
+/* ---------- 拖在身后的横幅 ---------- */
+function bannerMessage(st,hover,off){
+  if(off)return {m:off.t+" · 最后更新 "+(lastGood?hms(lastGood):"—"),s:"lost"};
+  var inv=S&&S.inventory;
+  if(inv&&inv.errors&&inv.errors.length)return {m:"host.list 写错了："+inv.errors[0],s:"dev"};
+  if(st&&st.kind==="host"){var h=hostByName(st.name),sub=h?tileSub(h):"";return {m:(hover?"巡检中：":"前往 ")+st.name+(sub?" · "+sub:""),s:st.sev}}
+  var c=countSev();
+  if(!c.bad&&!c.dev&&!c.lost)return {m:"全部 "+hosts.length+" 台正常 · "+hm(Math.floor(Date.now()/1000)),s:""};
+  return {m:"需要看："+[c.bad?"异常 "+c.bad:"",c.lost?"失联 "+c.lost:"",c.dev?"偏离 "+c.dev:""].filter(Boolean).join(" · "),s:c.bad?"bad":c.lost?"lost":"dev"};
+}
+function countSev(){var c={bad:0,dev:0,lost:0};hosts.forEach(function(h){var v=hostSev(h);if(v in c)c[v]++});return c}
+function drawBanner(st,watching,off,sc,dt,t,hover){
+  var bm=bannerMessage(st,watching,off);
+  if(bm.m!==SK.bannerMsg){SK.bannerMsg=bm.m;var txt=bm.m.length>46?bm.m.slice(0,45)+"…":bm.m;bannerText.textContent=txt;
+    var w=24;try{w=bannerText.getComputedTextLength()+24}catch(e){w=txt.length*14+24}bannerCloth.setAttribute("width",Math.max(80,w).toFixed(0));SK.bw=Math.max(80,w)}
+  if(bm.s!==SK.bannerSev){SK.bannerSev=bm.s;bannerG.setAttribute("class","banner "+bm.s)}
+  var p=SK.p,bw=SK.bw||120,tailX=p.x-p.face*62*sc,tailY=p.y+2*sc; // 尾巴
+  // 横幅挂在身后；悬停时垂下来。横幅本身不镜像，字总是正的。
+  var tx,ty;
+  if(pelPose==="sleep"){tx=p.x-bw/2;ty=p.y+48}
+  else if(hover){tx=tailX-(p.face>0?bw*.5:bw*.5)-p.face*10;ty=tailY+46}
+  else{tx=p.face>0?tailX-60-bw:tailX+60;ty=tailY+10+Math.sin(t/300)*3}
+  tx=Math.max(6,Math.min(SK.W-bw-6,tx));var k=Math.min(1,dt*3.2);SK.b.x+=(tx-SK.b.x)*k;SK.b.y+=(ty-SK.b.y)*k;
+  var bx=SK.b.x,by=SK.b.y,ax=p.face>0?bx+bw:bx;if(hover||pelPose==="sleep")ax=bx+bw/2;
+  var ay=hover||pelPose==="sleep"?by-14:by;
+  var skew=(Math.sin(t/260)*2.2).toFixed(2);
+  bannerBody.setAttribute("transform","translate("+bx.toFixed(1)+","+by.toFixed(1)+") skewY("+(hover?0:skew)+")");
+  var mx=(tailX+ax)/2,my=Math.max(tailY,ay)+10;
+  ropeEl.setAttribute("d","M"+tailX.toFixed(1)+","+tailY.toFixed(1)+" Q"+mx.toFixed(1)+","+my.toFixed(1)+" "+ax.toFixed(1)+","+ay.toFixed(1));
+}
+
+/* ---------- 巡检报告卡片、日记 ---------- */
+function sinceTxt(r){if(!r||!r.since)return "";return r.since_known?hm(r.since)+" 起":"巡视台来之前就这样"}
+function renderCard(name){
+  SK.cardKey=name||"";
+  if(name){
+    var h=hostByName(name);if(!h){skycard.innerHTML="";return}
+    var sev=hostSev(h),w=SK.pos[name],tw=w?SK.towers[w.t]:null;
+    var html='<div class="ttl">巡检报告 · '+esc(dimLabelOf(skyDim()))+' '+esc(tw?tw.key:"")+'</div><div class="hn">'+esc(h.name)+' '+pill(sev)+'</div><div class="meta">'+esc(h.addr)+(h.group?" · "+esc(h.group):"")+(h.product?" · "+esc(h.product):"")+'</div>';
+    if(h.status==="lost")html+='<div class="ev">'+(h.never?"巡视台启动以来一次都没拉到这台":"已经 "+agoSec(h.last_ok)+"没拉到")+(h.err?"：<b>"+esc(h.err)+"</b>":"")+'</div>';
+    else R.forEach(function(res){var r=rowOf(h,res)||{st:"none"},f=(r.facts||[])[0],v="";
+      if(f)v=esc(f.label)+' <b>'+esc(fmt(f.value,f.unit))+'</b>'+(f.base!=null?' <span class="u">平时 '+esc(fmt(f.base,f.unit))+'</span>':'');
+      if(r.st!=="ok"&&r.since)v+=' <span class="u">· '+sinceTxt(r)+'</span>';
+      if(r.checks&&r.checks.length)v='<span style="color:var(--bad)">['+esc(r.checks[0].id)+'] '+esc(r.checks[0].name)+'</span> '+v;
+      html+='<div class="r"><span class="res">'+res+'</span>'+pill(r.st)+'<span class="v">'+(v||'<span class="u">—</span>')+'</span></div>'});
+    html+='<div class="hint">点窗户看完整主机页</div>';
+    skycard.innerHTML=html;return;
+  }
+  var c=countSev(),ok=hosts.length-c.bad-c.dev-c.lost,evs=(S&&S.events||[]).slice(-3).reverse();
+  var html2='<div class="ttl">巡检报告 · 按'+esc(dimLabelOf(skyDim()))+'</div><div class="sum">'+(c.bad?'<span class="pill bad">异常 '+c.bad+'</span>':'')+(c.lost?'<span class="pill lost">失联 '+c.lost+'</span>':'')+(c.dev?'<span class="pill dev">偏离 '+c.dev+'</span>':'')+'<span class="pill ok">正常 '+ok+'</span><span class="pill none">共 '+hosts.length+' 台</span></div>';
+  html2+=evs.length?evs.map(function(e){return '<div class="ev">'+hm(e.at)+' <span class="e '+evCls(e)+'">'+evText(e)+'</span></div>'}).join(""):'<div class="ev">巡视台启动以来还没看到变化</div>';
+  html2+='<div class="hint">点一栋楼看这一组，点窗户看这台主机</div>';
+  skycard.innerHTML=html2;
+}
+function dimLabelOf(d){for(var i=0;i<DIMS.length;i++)if(DIMS[i].id===d)return DIMS[i].label;return d}
+function skyTicker(){
+  var evs=(S&&S.events||[]).slice(-5).reverse();
+  skytick.innerHTML='<b>巡检日记</b>'+(evs.length?evs.map(function(e){return '<span class="e '+evCls(e)+'">'+hm(e.at)+' '+evText(e)+'</span>'}).join(""):'<span class="e">启动以来还没看到变化</span>');
+}
+
+/* ---------- 点楼、点窗 ---------- */
+scene.addEventListener("click",function(e){
+  var w=e.target.closest(".win"),t=e.target.closest(".tower,.tlabel");
+  if(!w&&!t)return;
+  backTo={dim:skyDim(),label:"天空",key:null,sky:true};
+  if(w){dim="host";setView("list");renderAll(w.dataset.host)}
+  else{dim=skyDim();setView("list");renderAll(t.dataset.key)}
+  touch();
+});
+window.addEventListener("resize",function(){SK.built="";buildCity()});
+// 列表视图里换了"按什么分"，天空跟着换
+dimsEl.addEventListener("click",function(){if(SK.view==="sky"){SK.built="";setTimeout(function(){buildCity();planRoute();renderCard()},0)}});
+
+/* ---------- 演示模式：#demo ----------
+   不连巡视台，本地生成 100 台、随时间变化，给没部署的人看效果。页面顶部一直挂着"演示数据"。 */
+var demo=null;
+function demoState(){
+  var nowS=Math.floor(Date.now()/1000);
+  if(!demo){
+    demo={hosts:[],events:[],t0:nowS,last:nowS};
+    var roles=[["pay-db","支付","mysql-主",4,"核心,SSD"],["pay-java","支付","java-app",14,"核心"],["pay-ngx","支付","nginx",4,"核心"],["ord-java","订单","java-app",12,""],["ord-redis","订单","redis",6,"SSD"],["srch-es","搜索","es",12,"SSD"],["log-kafka","日志平台","kafka",8,"HDD"],["infra-ceph","基础设施","ceph",16,"HDD"],["infra-lvs","基础设施","lvs",4,"核心"],["infra-dns","基础设施","dns",4,""],["ord-db","订单","mysql-主",4,"SSD"],["srch-ngx","搜索","nginx",12,""]];
+    var i=0,rt=["A01","A02","A03","A04","A05","A06"],ro=["B01","B02","B03","B04"];
+    roles.forEach(function(r){for(var k=1;k<=r[3];k++){var tk=i<60;
+      demo.hosts.push({name:r[0]+"-"+pad(k,2),addr:"10."+(tk?1:2)+".0."+(i+10)+":8888",dc:tk?"tokyo1":"osaka1",rack:tk?rt[i%6]:ro[i%4],product:r[1],group:r[2],tags:r[4]?r[4].split(","):[],
+        st:{CPU:"ok",内存:"ok",磁盘:"ok",网络:"ok",系统:"ok"},since:{},lost:false,seed:i});i++}});
+    var H=demo.hosts,f=function(n){for(var j=0;j<H.length;j++)if(H[j].name===n)return H[j]};
+    f("infra-ceph-03").st.磁盘="bad";f("infra-ceph-09").st.磁盘="dev";f("srch-es-03").st.磁盘="dev";
+    f("pay-java-03").st.CPU="bad";f("log-kafka-02").st.网络="dev";f("ord-redis-02").lost=true;
+    H.forEach(function(h){R.forEach(function(r){if(h.st[r]!=="ok")h.since[r]=nowS-300})});
+  }
+  if(nowS-demo.last>=20){demo.last=nowS;
+    for(var q=0;q<2;q++){var h=demo.hosts[Math.floor(Math.random()*demo.hosts.length)],res=R[Math.floor(Math.random()*5)],o=h.st[res],n=o;
+      if(h.lost){if(Math.random()<.3){h.lost=false;demo.events.push({at:nowS,host:h.name,kind:"back"})}continue}
+      var x=Math.random();if(o==="ok"&&x<.3)n="dev";else if(o==="dev")n=x<.5?"ok":x<.62?"bad":o;else if(o==="bad"&&x<.35)n="dev";
+      if(n!==o){h.st[res]=n;if(n==="ok")delete h.since[res];else if(o==="ok")h.since[res]=nowS;demo.events.push({at:nowS,host:h.name,kind:"state",res:res,from:o,to:n})}}
+  }
+  var fact={CPU:["整机忙碌","percent",12,88],内存:["已用","percent",45,93],磁盘:["写等待","ms",1.2,160],网络:["TCP 重传","/s",2,420],系统:["进程数","",310,9800]};
+  var out=demo.hosts.map(function(h){
+    var o={name:h.name,addr:h.addr,dc:h.dc,rack:h.rack,product:h.product,group:h.group,tags:h.tags,api:1,agent:"demo"};
+    if(h.lost){o.status="lost";o.sev="lost";o.last_ok=demo.t0-120;o.err="超时：防火墙丢包，或对方机器卡住了";return o}
+    o.status="ok";o.last_ok=nowS;o.sev="ok";o.rows=R.map(function(res){var st=h.st[res],fa=fact[res],base=fa[2]*(1+(h.seed%7)/20);
+      if(SEV[st]>SEV[o.sev])o.sev=st;
+      return {resource:res,state:STATE_TXT[st],st:st,facts:[{label:fa[0],unit:fa[1],value:st==="ok"?base*(.9+Math.random()*.2):st==="dev"?(base+fa[3])/2:fa[3],base:base}],since:h.since[res]||0,since_known:true,l0_total:8,l0_pass:st==="bad"?7:8}});
+    return o});
+  return {at:nowS,started:demo.t0,interval:15,lost_after:45,round_at:nowS,round_ms:120,inventory:{path:"host.list（演示）"},inventory_loaded_at:demo.t0,hosts:out,events:demo.events.slice(-60),version:"demo"};
+}
+
+setView(SK.view);
+requestAnimationFrame(skyFrame);
+
+poll();setInterval(poll,POLL);
+})();
+</script>
+</body>
+</html>
